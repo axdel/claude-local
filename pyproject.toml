@@ -17,6 +17,11 @@ packages = ["src/claude_local"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# pytest-gremlins' coverage-guided test selection under-counts kills when per-test
+# coverage attribution is coarse (it judges each mutant with too few tests, reporting
+# false survivors the full suite demonstrably kills). Run the full suite per mutant for
+# a correct kill rate. Inert on non-mutation runs. See testing-methodology → Mutation.
+addopts = ["--gremlin-no-coverage-filter"]
 
 [dependency-groups]
 dev = [
@@ -41,6 +46,10 @@ line-length = 99
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "S", "UP", "B", "C4", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# `assert` is the test idiom; flake8-bandit's S101 targets production code, not tests.
+"tests/**" = ["S101"]
 
 [tool.basedpyright]
 pythonVersion = "3.12"
