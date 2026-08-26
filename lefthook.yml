@@ -1,0 +1,9 @@
+# lefthook transport for the claude-protocol local commit gate.
+# TRIGGER ONLY: invokes a claude-protocol quality phase by name. Contains no tool
+# names, secret patterns, or gate criteria — the quality registry is the single
+# source of truth for what the phase runs. Safe to edit — the scaffolder will
+# not overwrite a lefthook.yml whose content has changed.
+pre-commit:
+  commands:
+    quality-gate:
+      run: command -v claude-protocol >/dev/null 2>&1 || { echo 'claude-protocol not on PATH; refusing to commit — the pre-commit quality gate (including the secret scan) cannot run' >&2; exit 1; }; claude-protocol quality run --phase pre-commit-fast

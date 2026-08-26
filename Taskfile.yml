@@ -1,0 +1,9 @@
+# Taskfile.yml — optional project-ops command surface (go-task: https://taskfile.dev).
+#
+# The commit quality gate is CLI-owned (`claude-protocol quality gate`), NOT here.
+# This file is for real project operations (run, serve, release) — none exist yet.
+# Uncomment tasks as the project grows. Deleting this file leaves claude-protocol fully functional.
+
+version: '3'
+
+tasks: {}

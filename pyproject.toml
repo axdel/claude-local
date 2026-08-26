@@ -3,7 +3,9 @@ name = "claude-local"
 version = "0.0.1"
 description = "Free local models as supervised, test-first code implementers — a deterministic red→green loop driven by claude-protocol"
 requires-python = ">=3.12"
-dependencies = ["httpx>=0.27"]
+dependencies = [
+    "httpx>=0.27",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -21,6 +23,16 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.9",
     "basedpyright>=1.29",
+    "bandit>=1.9.4",
+    "pip-audit>=2.10.1",
+    "lizard>=1.24.0",
+    "pytest-gremlins>=1.9.0",
+    "vulture>=2.16",
+    "deptry>=0.25.1",
+    "import-linter>=2.13",
+    "hypothesis>=6.165.10",
+    "pytest-cov>=7.1.0",
+    "grimp>=3.15",
 ]
 
 [tool.ruff]

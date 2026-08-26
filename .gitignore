@@ -29,3 +29,5 @@ Thumbs.db
 # Local model store — the ONE place MLX model weights are downloaded/resolved (weights ignored, dir kept)
 models/*
 !models/README.md
+.justdoit-in-progress
+.diagnose-in-progress
