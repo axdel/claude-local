@@ -4,3 +4,8 @@
 
 | Resource | Area | Owner | Consumers | Enforcement | Status | Superseded By |
 |-|-|-|-|-|-|-|
+| LocalEconomyRecord | telemetry | telemetry module | loop (reads for LoopResult), contract (maps status) | single writer; orchestrator half owned externally | active |  |
+| best-passing-snapshot | loop | snapshot store | loop (restore on exit) | restore constrained by keep_only | active |  |
+| impl-file | editing | edits.apply_files under keep_only | loop (reads), runner (reads) | paths.resolve_within realpath containment; oracle test excluded from the writable set | active |  |
+| keep_only | editing | paths.resolve_within | edits (apply), snapshot (restore) | single containment rule; rejects absolutes, resolves realpath, refuses symlinks, requires worktree containment | active |  |
+| stable-prefix | prompt | prompt builder | client (sends), loop (builds once) | byte-identical per task; feedback isolated to the tail | active |  |
