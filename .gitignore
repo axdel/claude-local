@@ -26,3 +26,7 @@ Thumbs.db
 .hotfix-in-progress
 CLAUDE.md
 .claude/
+
+# Local model store — the ONE place MLX model weights are downloaded/resolved (weights ignored, dir kept)
+models/*
+!models/README.md
