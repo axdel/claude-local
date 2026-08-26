@@ -24,7 +24,6 @@ Thumbs.db
 # Workflow
 .worklog/
 .hotfix-in-progress
-CLAUDE.md
 .claude/
 
 # Local model store — the ONE place MLX model weights are downloaded/resolved (weights ignored, dir kept)
