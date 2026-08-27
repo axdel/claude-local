@@ -23,7 +23,12 @@ from pathlib import Path
 
 import pytest
 
-from claude_local.sandbox import SandboxTimeout, sandbox_available, sandboxed_spawn
+from claude_local.sandbox import (
+    SandboxTimeout,
+    SandboxUnavailable,
+    sandbox_available,
+    sandboxed_spawn,
+)
 
 pytestmark = pytest.mark.skipif(
     not sandbox_available(),
@@ -155,3 +160,19 @@ def test_a_non_timeout_interruption_still_kills_the_group(
     # land; correct teardown prevents it. The expected absence is derived from the confinement
     # requirement (no confined process outlives the harness), not from running the code.
     assert not marker.exists()
+
+
+def test_spawn_refuses_when_the_kernel_front_end_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ``sandbox-exec`` absent, the spawn REFUSES rather than run untrusted code unconfined.
+
+    This asserts the security precondition itself, so it forces ``sandbox_available`` False even
+    on a host that has the sandbox — the module skip only fires where it is genuinely absent, and
+    there this refusal is the real runtime behavior. No child is spawned: the guard raises first.
+    Oracle: the refuse-unconfined contract (D-SANDBOX-001) defines the raise; drop the guard and
+    the spawn runs confinement-less, so this test goes red — the F2P proof it bites.
+    """
+    monkeypatch.setattr("claude_local.sandbox.sandbox_available", lambda: False)
+    with pytest.raises(SandboxUnavailable):
+        sandboxed_spawn([sys.executable, "-c", "pass"], cwd=tmp_path, write_box=tmp_path)

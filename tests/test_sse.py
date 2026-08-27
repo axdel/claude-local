@@ -168,6 +168,36 @@ def test_multiline_data_frame_is_concatenated() -> None:
     assert events == [Delta("ab")]
 
 
+# --- Closed variant set: off-contract frame shapes fold into Error, never crash ---
+
+
+def test_non_dict_json_frame_becomes_error_not_crash() -> None:
+    # A frame that parses as valid JSON but is NOT an object — an untrusted model streaming
+    # `data: 42` — is off-contract. Indexing choices[...] on it would crash; the decoder must
+    # fold it into the Error channel. Oracle: the frame contract is an object, so a bare scalar
+    # is a shape error, derived from the contract and not from running the decoder.
+    events = feed(sse_frame("42"), chunk_size=4096)
+    assert len(events) == 1
+    assert isinstance(events[0], Error)
+
+
+def test_error_frame_with_a_bare_string_payload_uses_it_verbatim() -> None:
+    # The error field is usually an object with a "message", but the wire may send a bare string.
+    # Oracle: the message extraction falls back to str(error), so {"error":"boom"} surfaces
+    # Error("boom") verbatim — the fallback rule, not a value read off the decoder.
+    events = feed(sse_frame('{"error":"boom"}'), chunk_size=4096)
+    assert events == [Error("boom")]
+
+
+def test_a_leading_blank_line_before_any_data_is_ignored() -> None:
+    # A blank line with nothing accumulated before it is a bare separator, not an empty frame.
+    # Oracle: SSE blank lines delimit events, so a leading one yields nothing and only the real
+    # frame decodes — Delta("x"). Drop the empty-block guard and the "" payload would json-fail
+    # into a spurious Error, so this pins that no phantom event is conjured.
+    stream = b"\n" + sse_frame('{"choices":[{"index":0,"delta":{"content":"x"}}]}')
+    assert feed(stream, chunk_size=4096) == [Delta("x")]
+
+
 # --- Memory safety: a delimiter-less flood is capped, not buffered without bound --
 
 
