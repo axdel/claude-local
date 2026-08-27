@@ -12,6 +12,7 @@ invalid, never green.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
@@ -94,8 +95,16 @@ def score_junit(xml_text: str, expected: int) -> TestScore:
 def _default_spawn(cmd: Sequence[str], cwd: Path) -> None:
     """Run the fixed ``uv``/``pytest`` command in ``cwd`` — a constant argv, no shell, no user
     input (S603 documented-safe). A non-zero exit on test failure is expected and ignored: the
-    verdict is read from the JUnit report, not the process exit code."""
-    subprocess.run(cmd, cwd=cwd, capture_output=True, check=False)  # noqa: S603
+    verdict is read from the JUnit report, not the process exit code.
+
+    ``PYTHONDONTWRITEBYTECODE`` is forced on so no ``__pycache__`` is written. The loop rewrites
+    the impl file between attempts — often same-size and within one clock second — and CPython
+    validates a cached ``.pyc`` by ``(size, second-granularity mtime)``, so a prior attempt's
+    stale bytecode would otherwise be imported and score the wrong source (D-ORACLE-003). The
+    environment is copied, not replaced, so ``uv``'s own resolution stays intact.
+    """
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    subprocess.run(cmd, cwd=cwd, capture_output=True, check=False, env=env)  # noqa: S603
 
 
 class TestRunner:

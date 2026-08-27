@@ -1,0 +1,26 @@
+"""Immutable oracle for the end-to-end loop test — pins calculator.add across three cases.
+
+The loop writes this verbatim into the worktree root as the immutable oracle test; the model may
+never modify it. It adds the worktree's src/ (where the model writes calculator.py) to sys.path so
+the flat `uv run pytest` subprocess resolves the import from any cwd, then asserts add() against
+three hand-derived sums — specification oracles, never read from any implementation.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from calculator import add
+
+
+def test_add_two_positives() -> None:
+    assert add(2, 3) == 5
+
+
+def test_add_with_zero() -> None:
+    assert add(7, 0) == 7
+
+
+def test_add_two_negatives() -> None:
+    assert add(-4, -6) == -10
