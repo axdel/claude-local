@@ -81,7 +81,8 @@ Instead, three parties each do exactly one job, and the boundaries between them 
     <tspan x="650">local</tspan><tspan x="650" dy="16">model</tspan></text>
   <!-- top arrows -->
   <line x1="162" y1="92" x2="326" y2="92" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar-a)"/>
-  <text x="244" y="82" text-anchor="middle" font-size="12" fill="#6b7280">spec &middot; test &middot; budget</text>
+  <text x="244" y="68" text-anchor="middle" font-size="11.5" fill="#6b7280">
+    <tspan x="244">task contract &middot; budget</tspan><tspan x="244" dy="14">optional context when needed</tspan></text>
   <line x1="432" y1="92" x2="596" y2="92" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar-a)"/>
   <text x="514" y="82" text-anchor="middle" font-size="12" fill="#6b7280">prefix + feedback</text>
   <!-- bottom return arrow -->
@@ -94,13 +95,15 @@ Instead, three parties each do exactly one job, and the boundaries between them 
 
 <ul class="clean">
   <li><strong>The frontier orchestrator</strong> (a strong model, e.g. this one) writes the task
-      <em>spec</em>, writes a <em>failing test that is the sole definition of &ldquo;done&rdquo;</em>, and sets the
-      budget. It never writes the implementation.</li>
+      <em>spec</em>, writes a <em>failing test that is the sole definition of &ldquo;done&rdquo;</em>, optionally
+      supplies ordered neighbor files as read-only context, and sets the budget. It never writes
+      the implementation.</li>
   <li><strong>The loop</strong> (plain Python, no intelligence) hands the model a prompt, applies whatever
       text comes back to <em>one permitted file</em>, runs the test, and decides. It is the only actor
       allowed to call the run &ldquo;done&rdquo;.</li>
-  <li><strong>The local model</strong> (a small, free, often weak model) receives the prompt and returns
-      <em>one complete file as raw text</em>. No tools, no shell, no file access &mdash; and crucially, it
+  <li><strong>The local model</strong> (a small, free, often weak model) receives the prompt &mdash;
+      including the content of any context files &mdash; and returns <em>one complete file as raw
+      text</em>. No tools, no shell, no writable access to those neighbors &mdash; and crucially, it
       never receives a test it can edit.</li>
 </ul>
 
@@ -110,9 +113,11 @@ claiming success &mdash; because it never holds the test, and only a genuinely g
 
 <hr>
 
-<h2><span class="n">2</span>The four things the loop moves around</h2>
+<h2><span class="n">2</span>The task contract the loop moves around</h2>
 
-<p>Everything the loop needs for one task is a small, immutable <code>TaskSpec</code>:</p>
+<p>Everything the loop needs for one task lives in a small, immutable <code>TaskSpec</code>. The target
+path, implementation spec, oracle test, expected test count, and budget are required; context files
+are the one optional input:</p>
 
 <ul class="clean">
   <li><strong>impl_path</strong> &mdash; the <em>one</em> file the model is allowed to write (e.g. <code>src/calculator.py</code>).</li>
@@ -120,8 +125,13 @@ claiming success &mdash; because it never holds the test, and only a genuinely g
   <li><strong>test_text</strong> &mdash; the immutable oracle test. The loop writes it to the worktree
       <em>root</em>, on purpose: that puts it outside the model&rsquo;s writable folder and outside any snapshot,
       so it can never be overwritten.</li>
+  <li><strong>expected_tests</strong> &mdash; the exact collected-node count the oracle must expose; fewer
+      tests is an invalid verdict, not green.</li>
   <li><strong>budget</strong> &mdash; three hard caps: <code>max_attempts</code> (how many tries),
       <code>max_tokens</code> (how long each decode may run), <code>timeout_s</code> (wall-clock). All strictly positive.</li>
+  <li><strong>context_files</strong> &mdash; optional neighbor files, kept in caller order and shown to the
+      model as read-only context. Their content enters the prompt, but the path guard still permits
+      writes only to <code>impl_path</code>.</li>
 </ul>
 
 <hr>
@@ -292,26 +302,29 @@ you always walk away holding the best implementation the model produced, byte-fo
 <p>Local inference is bound by memory bandwidth, and the most expensive part of a call is re-reading a
 long prompt. Model servers cache that work &mdash; the <em>prefill KV cache</em> &mdash; but only for a prefix that
 is <strong>byte-for-byte identical</strong> to a previous call. So the loop makes the front of the prompt a hard
-invariant: the rules card, the spec, and the immutable test, in a fixed layout, with <em>no</em> timestamps,
-run ids, or absolute paths. Only the small feedback tail differs between tries.</p>
+invariant: the rules card, the spec, any optional context files in their supplied order, and the
+immutable test, in a fixed layout, with no builder-generated timestamps, run ids, or absolute
+worktree paths. Context files sit between the spec and test; when none are supplied, that segment
+disappears completely, preserving
+the original empty-context prefix bytes. Only the small feedback tail differs between tries.</p>
 
 <figure>
 <svg viewBox="0 0 760 232" role="img" aria-label="Byte-identical prefix reused across iterations">
   <text x="14" y="40" font-size="13" fill="#6b7280">try&nbsp;1</text>
   <rect x="70" y="24" width="470" height="30" rx="5" fill="#e9f7ee" stroke="#1a7f37"/>
-  <text x="305" y="44" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; immutable test</text>
+  <text x="305" y="44" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; optional context &middot; immutable test</text>
   <rect x="546" y="24" width="150" height="30" rx="5" fill="#f2f4f7" stroke="#9aa2ac" stroke-dasharray="4 3"/>
   <text x="621" y="44" text-anchor="middle" font-size="11.5" fill="#6b7280">(no feedback yet)</text>
 
   <text x="14" y="98" font-size="13" fill="#6b7280">try&nbsp;2</text>
   <rect x="70" y="82" width="470" height="30" rx="5" fill="#e9f7ee" stroke="#1a7f37"/>
-  <text x="305" y="102" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; immutable test</text>
+  <text x="305" y="102" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; optional context &middot; immutable test</text>
   <rect x="546" y="82" width="150" height="30" rx="5" fill="#fff8e6" stroke="#bf8700"/>
   <text x="621" y="102" text-anchor="middle" font-size="11.5" fill="#8a6400">feedback tail</text>
 
   <text x="14" y="156" font-size="13" fill="#6b7280">try&nbsp;3</text>
   <rect x="70" y="140" width="470" height="30" rx="5" fill="#e9f7ee" stroke="#1a7f37"/>
-  <text x="305" y="160" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; immutable test</text>
+  <text x="305" y="160" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; optional context &middot; immutable test</text>
   <rect x="546" y="140" width="150" height="30" rx="5" fill="#fff8e6" stroke="#bf8700"/>
   <text x="621" y="160" text-anchor="middle" font-size="11.5" fill="#8a6400">feedback tail</text>
 

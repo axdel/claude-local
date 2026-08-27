@@ -7,10 +7,11 @@ orchestrator-owned immutable oracle test, the derail guard, and the measurement/
 ## What this is
 
 A deterministic loop — not an agent — hands a local model a distilled rules card, a tight
-spec, and a frontier-authored **failing test the model may never write**. The model returns a
-complete implementation file as raw text; the loop applies it to the one permitted impl path,
-runs the test, and feeds the failure back under a hard token budget and a derail guard. The
-test is the oracle: green means done. Every task is metered, so the system can tell — per task
+spec, any optional ordered, read-only neighbor files, and a frontier-authored **failing test the
+model may never write**. The model returns a complete implementation file as raw text; the loop
+applies it to the one permitted impl path — never a context file — runs the test, and feeds the
+failure back under a hard token budget and a derail guard. The test is the oracle: green means
+done. Every task is metered, so the system can tell — per task
 class — whether offloading to a free local model saved net frontier tokens.
 
 ## Stack
@@ -61,9 +62,10 @@ telemetry (measure, never guess; cold paths like init and record-writing stay si
 
 Standing hot-path principles:
 
-- **KV-cache prefix reuse.** The system prefix (rules card + spec) is byte-identical across a
-  task's iterations — only the test/feedback tail changes. Stability is a hard invariant: any
-  per-call mutation silently discards the server's prefill cache.
+- **KV-cache prefix reuse.** The system prefix (rules card + spec + optional ordered context
+  files + immutable test) is byte-identical across a task's iterations — only the feedback tail
+  changes. Stability is a hard invariant: any per-call mutation silently discards the server's
+  prefill cache.
 - **One warm client, one resident model.** Reuse a single keep-alive httpx client; never
   reconnect per iteration. Local inference is memory-bandwidth-bound — keep one model resident.
 - **Stream and abort early.** Consume tokens as they decode, so the derail guard kills a

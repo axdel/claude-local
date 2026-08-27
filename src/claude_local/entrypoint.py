@@ -1,8 +1,9 @@
 """The public entry point — claude-local's owned composition root.
 
 ``implement()`` is the one front door an orchestrator drives: hand it a ``TaskSpec`` (impl path,
-spec text, an immutable oracle test the model may never write, and a budget) plus a base URL and
-model name, and it wires the whole loop — ``HttpxBackend`` → ``ModelClient`` → ``PromptBuilder`` →
+spec text, optional ordered read-only context files, an immutable oracle test the model may never
+write, and a budget) plus a base URL and model name, and it wires the whole loop —
+``HttpxBackend`` → ``ModelClient`` → ``PromptBuilder`` →
 ``TestRunner`` (under the kernel sandbox) → ``SnapshotStore`` → ``Loop`` — runs one bounded
 red→green attempt cycle in a scratch worktree, reads the best implementation back off disk, and
 returns an ``Outcome``.
@@ -128,8 +129,9 @@ def implement(
     default backstop.
 
     Args:
-        spec: The task — impl path (must be nested under a directory), spec text, the immutable
-            oracle test, expected test count, and the budget.
+        spec: The task — impl path (must be nested under a directory), spec text, optional
+            ordered read-only context files, the immutable oracle test, expected test count,
+            and the budget.
         base_url: The OpenAI-compatible server to infer against. claude-local does not serve.
         model: The model name to request from that server.
         generation_params: Optional extra generation parameters forwarded to the backend.

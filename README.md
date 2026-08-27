@@ -23,9 +23,10 @@ importantly, **measures whether they actually paid off**.
 
 ## The Idea in One Paragraph
 
-Claude Code writes a failing test and a tight spec. A **deterministic loop** — not an agent —
-hands both to a local model, applies the raw code it returns, runs the test, feeds the failure
-back, and repeats under a hard budget. The test is the oracle: green means done. The
+Claude Code writes a failing test and a tight spec, optionally attaching ordered, read-only
+neighbor files the implementation must integrate with. A **deterministic loop** — not an agent —
+hands that task context to a local model, applies the raw code it returns, runs the test, feeds
+the failure back, and repeats under a hard budget. The test is the oracle: green means done. The
 orchestrator never spends tokens *writing* the implementation — the free local model does. Every
 task is metered, so the orchestrator can tell, per task class, whether the offload saved more
 frontier tokens than it cost — and **switches itself off where it doesn't**.
@@ -54,11 +55,12 @@ is a prerequisite you provide.
    uv run python examples/quicksort/run.py --model <model-name> > quicksort.py
    ```
 
-Driving your own task is the same three inputs — an impl path, a spec, and an immutable oracle
-test — handed to the one entry point:
+Driving your own task hands one contract to the entry point: an impl path, a spec, an immutable
+oracle test, its expected test count, and a budget. When the implementation must integrate with
+existing code, add any neighbor files as optional, ordered, read-only context:
 
 ```python
-from claude_local import Budget, Status, TaskSpec, implement
+from claude_local import Budget, ContextFile, Status, TaskSpec, implement
 
 spec = TaskSpec(
     impl_path="src/thing.py",  # the one file the model may write (must be nested)
@@ -66,6 +68,7 @@ spec = TaskSpec(
     test_text="<a failing oracle test the model never sees as writable>",
     expected_tests=5,  # collected-node count the oracle must expose
     budget=Budget(max_attempts=5, max_tokens=4096, timeout_s=120.0),
+    context_files=(ContextFile(path="src/protocol.py", content="<existing neighbor source>"),),
 )
 outcome = implement(spec, base_url="http://localhost:8080/v1", model="<model-name>")
 assert outcome.status is Status.DONE
@@ -80,13 +83,13 @@ author-oracle → implement-local → verify recipe.
 ## How It Works
 
 ```
-distilled rules card + tight spec + FAILING TEST  (frontier-authored, immutable)
-        |
+distilled rules card + tight spec + optional ordered read-only context + FAILING TEST
+        |                                                         (frontier-authored, immutable)
         v
    local model  -->  a complete implementation file  (raw text, no tool calls)
         |
         v
-   loop writes ONLY the permitted impl path
+   loop writes ONLY the permitted impl path (never the context files)
         |
         v
    run the frontier's test  --red-->  feedback to model   (repeat under token cap + derail guard)
@@ -118,7 +121,7 @@ emits the **local half** of an economy record:
 - **outcome** (done / exhausted / derailed / blocked), model, attempts
 
 The driving orchestrator combines that with its own frontier-token accounting — the *paid* side:
-spec + test + feedback + review — to derive, per task class, the **net frontier tokens saved**
+spec + optional context + test + feedback + review — to derive, per task class, the **net frontier tokens saved**
 and the **time multiplier**, and to route a class back to the frontier when the offload stops
 paying. The sweet spot is narrow and counterintuitive: *high-volume but low-reasoning,
 tightly-specifiable* work (mappers, serializers, CRUD, config, repetitive transforms), where the
@@ -132,8 +135,8 @@ A weak model is only worth using if it is fast enough to be cheaper than your ow
 - **Tuned for MoE / fast local models** — fastest decode, least derail.
 - **Non-thinking generation by default, hard thinking cap** — the derail guard bounds decode by
   construction.
-- **Stable-prefix prompting** — card + spec first, only the test/feedback tail changes, so the
-  prefill is KV-cache-reused across iterations.
+- **Stable-prefix prompting** — card + spec + optional ordered context files + test stay fixed;
+  only the feedback tail changes, so the prefill is KV-cache-reused across iterations.
 - **One model resident at a time** — local inference is memory-bandwidth-bound.
 - **Derail guard** — repetition penalty + hard token cap + repetition-loop detector + graceful
   timeout, streaming so a runaway is aborted mid-generation.
