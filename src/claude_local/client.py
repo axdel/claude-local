@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from claude_local.derail import CHARS_PER_TOKEN, DerailGuard
-from claude_local.sse import Delta, Usage, decode_sse
+from claude_local.sse import Delta, Error, Usage, decode_sse
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -37,6 +37,11 @@ class GenerationResult:
     ``completion_tokens`` is the server's own count on a clean finish, else a char-count proxy
     with ``tokens_estimated`` set. ``derail_reason`` is the bound that cut the stream, or ``None``
     when the stream ended on its own (clean finish, transport truncation, or an upstream error).
+    ``fault`` carries the message from an upstream SSE error frame when one stopped the stream,
+    else ``None`` — a server-side fault the loop surfaces as ``FAULTED``, kept distinct from a
+    ``derail_reason`` (the model failing) and from silent truncation. Both name a *cause*
+    (mirroring ``derail_reason``), and ``fault`` keeps its single name across the client, loop,
+    and outcome — the value flows through unrenamed, pairing with the ``FAULTED`` status.
     """
 
     text: str
@@ -44,6 +49,7 @@ class GenerationResult:
     tokens_estimated: bool
     seconds: float
     derail_reason: DerailReason | None
+    fault: str | None = None
 
 
 class ModelClient:
@@ -79,6 +85,7 @@ class ModelClient:
         chars = 0
         server_tokens: int | None = None
         derail_reason: DerailReason | None = None
+        fault: str | None = None
         for event in decode_sse(self._backend.generate(prefix, tail, budget)):
             if isinstance(event, Delta):
                 parts.append(event.text)
@@ -88,6 +95,11 @@ class ModelClient:
                     break  # abort early — stop decoding the moment a bound trips
             elif isinstance(event, Usage):
                 server_tokens = event.completion_tokens
+            elif isinstance(event, Error):
+                # An upstream error frame is terminal: surface its message and stop decoding, so
+                # content streamed after it is never read (a server fault, not a derail).
+                fault = event.message
+                break
         seconds = self._now() - start
         if server_tokens is None:
             # No trustworthy server count (truncation, upstream error, or a derail cut the stream
@@ -104,4 +116,5 @@ class ModelClient:
             tokens_estimated=estimated,
             seconds=seconds,
             derail_reason=derail_reason,
+            fault=fault,
         )

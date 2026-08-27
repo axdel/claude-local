@@ -64,7 +64,8 @@ class Outcome:
     its best snapshot; it is ``None`` when no usable file was ever written (a derail before any
     edit, or a blocked extraction). ``files_changed`` is ``(impl_path,)`` exactly when ``code`` is
     present. ``record`` is the local half of the economy story; the orchestrator owns the
-    net-savings verdict, never this object.
+    net-savings verdict, never this object. ``fault`` carries the upstream error message when the
+    status is ``FAULTED`` (a server-side SSE error frame stopped the run), else ``None``.
     """
 
     status: Status
@@ -72,13 +73,14 @@ class Outcome:
     impl_path: str
     files_changed: tuple[str, ...]
     record: LocalEconomyRecord
+    fault: str | None = None
 
     @property
     def summary(self) -> str:
         """A past-tense, oracle-derived sentence naming the status and impl path (LLM-readable).
 
         Each arm names a word unique to its status so a caller (or an LLM reading the result) can
-        tell the four terminal outcomes apart without inspecting ``status``.
+        tell the five terminal outcomes apart without inspecting ``status``.
         """
         match self.status:
             case Status.DONE:
@@ -96,6 +98,12 @@ class Outcome:
             case Status.BLOCKED:
                 return (
                     f"Blocked on {self.impl_path}: the model returned no usable whole-file edit."
+                )
+            case Status.FAULTED:
+                detail = f" ({self.fault})" if self.fault else ""
+                return (
+                    f"Faulted on {self.impl_path}: the model server returned an error{detail}; "
+                    f"produced no passing implementation."
                 )
         assert_never(self.status)
 
@@ -167,6 +175,7 @@ def implement(
             impl_path=spec.impl_path,
             files_changed=files_changed,
             record=result.record,
+            fault=result.fault,
         )
     finally:
         if owns_client:

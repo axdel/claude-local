@@ -164,6 +164,7 @@ def test_implement_rejects_a_flat_impl_path_before_any_http_call() -> None:
         (Status.EXHAUSTED, "exhausted"),
         (Status.DERAILED, "derailed"),
         (Status.BLOCKED, "blocked"),
+        (Status.FAULTED, "faulted"),
     ],
 )
 def test_outcome_summary_names_the_status_and_path(status: Status, needle: str) -> None:
@@ -182,6 +183,26 @@ def test_outcome_summary_names_the_status_and_path(status: Status, needle: str) 
     summary = outcome.summary
     assert "src/thing.py" in summary
     assert needle in summary.lower()
+
+
+def test_faulted_summary_surfaces_the_upstream_error_message() -> None:
+    """A FAULTED outcome carries the upstream server message on ``.fault`` and in the summary.
+
+    Naming the specific fault (context length vs overload vs auth) is the actionable diagnostic —
+    a bare "the server errored" would hide which fault occurred. The message is the oracle: the
+    exact text passed in must reach the reader.
+    """
+    outcome = Outcome(
+        status=Status.FAULTED,
+        code=None,
+        impl_path="src/thing.py",
+        files_changed=(),
+        record=build_local_economy_record(status=Status.FAULTED),
+        fault="context length exceeded",
+    )
+    assert outcome.fault == "context length exceeded"
+    assert "context length exceeded" in outcome.summary
+    assert "src/thing.py" in outcome.summary
 
 
 # --- Unit: the DERAILED path (cross-platform — derail precedes any oracle run) ------

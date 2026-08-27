@@ -75,6 +75,12 @@ def _forbidden_edit_script(target: str, body: str) -> bytes:
     return _sse_script(f"FILE: {target}\n```\n{body}\n```")
 
 
+def _error_script(message: str) -> bytes:
+    """An SSE stream carrying one upstream ``{"error": ...}`` frame — a fault, not a text delta."""
+    payload = json.dumps({"error": {"message": message}})
+    return f"data: {payload}\n\n".encode()
+
+
 def _report_path(cmd: Sequence[str]) -> Path:
     """The ``--junit-xml=<path>`` target TestRunner asked the spawn to produce."""
     for arg in cmd:
@@ -161,37 +167,52 @@ def _widget(worktree: Path) -> str:
 
 
 @pytest.mark.parametrize(
-    ("best_score", "derailed", "blocked", "expected"),
+    ("best_score", "derailed", "blocked", "faulted", "expected"),
     [
-        # Best is green -> DONE, regardless of any later flag (an earlier green wins).
-        (build_test_score(passed=3, collected=3, expected=3), False, False, Status.DONE),
-        (build_test_score(passed=3, collected=3, expected=3), True, False, Status.DONE),
-        (build_test_score(passed=3, collected=3, expected=3), False, True, Status.DONE),
-        # Not green: derail outranks everything below it.
+        # Best is green -> DONE, regardless of any later flag (an earlier green wins outright).
+        (build_test_score(passed=3, collected=3, expected=3), False, False, False, Status.DONE),
+        (build_test_score(passed=3, collected=3, expected=3), True, False, False, Status.DONE),
+        (build_test_score(passed=3, collected=3, expected=3), False, True, False, Status.DONE),
+        (build_test_score(passed=3, collected=3, expected=3), False, False, True, Status.DONE),
+        # Not green: an upstream server fault outranks every model-side cause beneath it.
+        (
+            build_test_score(passed=2, failed=1, collected=3, expected=3),
+            False,
+            False,
+            True,
+            Status.FAULTED,
+        ),
+        (None, True, False, True, Status.FAULTED),
+        (None, False, True, True, Status.FAULTED),
+        # Not green, no fault: a derail outranks a block and plain exhaustion.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
             True,
             False,
+            False,
             Status.DERAILED,
         ),
-        (None, True, False, Status.DERAILED),
+        (None, True, False, False, Status.DERAILED),
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
             True,
             True,
+            False,
             Status.DERAILED,
         ),
-        # Not green, no derail: a structural block outranks plain exhaustion.
+        # Not green, no fault, no derail: a structural block outranks plain exhaustion.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
             False,
             True,
+            False,
             Status.BLOCKED,
         ),
-        (None, False, True, Status.BLOCKED),
-        # Not green, no derail, no block: the loop simply ran out of attempts.
+        (None, False, True, False, Status.BLOCKED),
+        # Not green, nothing set: the loop simply ran out of attempts.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
+            False,
             False,
             False,
             Status.EXHAUSTED,
@@ -199,11 +220,13 @@ def _widget(worktree: Path) -> str:
     ],
 )
 def test_classify_terminal_precedence(
-    best_score: object, derailed: bool, blocked: bool, expected: Status
+    best_score: object, derailed: bool, blocked: bool, faulted: bool, expected: Status
 ) -> None:
-    # Expected is hand-derived from the plan's rule "DONE(best green) > DERAILED > BLOCKED >
+    # Expected is hand-derived from the rule "DONE(best green) > FAULTED > DERAILED > BLOCKED >
     # EXHAUSTED", never from running _classify_terminal — so a reordered branch is caught.
-    assert _classify_terminal(best_score, derailed, blocked) is expected  # type: ignore[arg-type]
+    assert (
+        _classify_terminal(best_score, derailed, blocked, faulted) is expected  # type: ignore[arg-type]
+    )
 
 
 # --- Integration: each terminal path wired end-to-end through run() ----------------
@@ -304,6 +327,27 @@ def test_forbidden_target_reaches_blocked(tmp_path: Path) -> None:
     assert result.status is Status.BLOCKED
     assert result.best_score is None
     assert not (worktree / "src" / "other.py").exists()  # containment held — nothing written
+
+
+def test_server_fault_reaches_faulted(tmp_path: Path) -> None:
+    worktree = _setup_worktree(tmp_path)
+    # The server streams an upstream error frame instead of a completion — a fault, not a model
+    # failure. The loop must stop and classify FAULTED, surfacing the wire message.
+    backend = ReplayBackend([_error_script("context length exceeded")])
+    loop, client = _make_loop(worktree, backend, ScriptedSpawn())  # spawn never called
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    # Oracle: an error frame before any edit -> FAULTED, carrying the wire message; nothing was
+    # scored, and the loop stops on the fault rather than burning the whole attempt budget.
+    assert result.status is Status.FAULTED
+    assert result.fault == "context length exceeded"
+    assert result.best_score is None
+    assert client.total_calls == 1  # stopped on the fault, did not exhaust the budget
+    assert result.record.status is Status.FAULTED
 
 
 def test_regression_restores_the_best_snapshot(tmp_path: Path) -> None:

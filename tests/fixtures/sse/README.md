@@ -31,14 +31,19 @@ available it should replace these, verbatim.
 | Content delta | `delta:{"content":"..."}`, `finish_reason:null` | `Delta(text)` |
 | Finish | `delta:{}`, `finish_reason:"stop"\|"length"\|"tool_calls"` | `Finish(reason)` |
 | Usage (`include_usage`) | `choices:[]` (empty), `usage:{completion_tokens,...}` | `Usage(completion_tokens)` |
-| Mid-stream error | `{"error":{"message",...}}` | `Error(message)` |
+| Mid-stream error | `{"error":{"message","type","code"}}` | `Error(message)` |
 | Sentinel | `data: [DONE]` (not JSON) | stops the stream |
 
 ## Files
 
 - `complete_stream.bytes` — role, two content deltas, finish (`stop`), a separate
   `include_usage` chunk with empty `choices`, then `[DONE]`. The full happy path.
-- `mid_stream_error.bytes` — role, one delta, then an `{"error":...}` frame, then `[DONE]`.
+- `mid_stream_error.bytes` — role, one delta (`"Hello"`), then the OpenAI error envelope
+  `{"error":{"message":"context length exceeded","type":"invalid_request_error","code":"context_length_exceeded"}}`,
+  then `[DONE]`. The decoder yields `Delta("Hello")` then `Error("context length exceeded")`; the
+  client surfaces that message verbatim as the run's `fault` and stops decoding at the frame. The
+  message string is the oracle for the fault-surfacing tests — derived from this documented
+  envelope, never from running the client.
 - `aborted_midstream.bytes` — role, two complete deltas, then a final frame **cut off
   mid-JSON** with no terminating blank line — the network-truncation case. The decoder
   must yield the two deltas and NO phantom terminator.

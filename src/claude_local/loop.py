@@ -42,24 +42,32 @@ class LoopResult:
     """One task's loop outcome: the terminal status, the best score seen, and the economy record.
 
     Frozen — a run reports its result once. ``best_score`` is ``None`` when no attempt was ever
-    scored (the run derailed or was structurally blocked before any test ran).
+    scored (the run derailed or was structurally blocked before any test ran). ``fault`` carries
+    the upstream error message when the run terminated ``FAULTED`` (a server-side SSE error frame),
+    else ``None``.
     """
 
     status: Status
     best_score: TestScore | None
     record: LocalEconomyRecord
+    fault: str | None = None
 
 
-def _classify_terminal(best_score: TestScore | None, derailed: bool, blocked: bool) -> Status:
+def _classify_terminal(
+    best_score: TestScore | None, derailed: bool, blocked: bool, faulted: bool
+) -> Status:
     """Classify the loop's terminal status by strict precedence.
 
     A restored-best green snapshot wins outright — an earlier green is success even if a later
-    attempt derailed. Otherwise the termination CAUSE ranks, strongest first: a derail (the
-    bounded-decode kill) outranks a structural block (no usable edit for the permitted path),
-    which outranks plain budget exhaustion (attempts spent with a partial best).
+    attempt derailed. Otherwise the termination CAUSE ranks, strongest first: a server FAULT (an
+    upstream SSE error frame — the host failed, not the model) outranks a derail (the
+    bounded-decode kill), which outranks a structural block (no usable edit for the permitted
+    path), which outranks plain budget exhaustion (attempts spent with a partial best).
     """
     if best_score is not None and best_score.is_green:
         return Status.DONE
+    if faulted:
+        return Status.FAULTED
     if derailed:
         return Status.DERAILED
     if blocked:
@@ -111,6 +119,8 @@ class Loop:
         last_raw = ""
         derailed = False
         blocked = False
+        faulted = False
+        fault_message: str | None = None
         attempts = 0
 
         for index in range(spec.budget.max_attempts):
@@ -121,6 +131,11 @@ class Loop:
             gen = self._client.generate(stable, tail, spec.budget)
             results.append(gen)
             last_raw = gen.text
+            # an upstream server fault (an SSE error frame) — the host failed, not the model
+            if gen.fault is not None:
+                faulted = True
+                fault_message = gen.fault
+                break
             if gen.derail_reason is not None:
                 derailed = True
                 break
@@ -142,7 +157,7 @@ class Loop:
         self._snapshots.restore_best()
         best = self._snapshots.best()
         best_score = best.score if best is not None else None
-        status = _classify_terminal(best_score, derailed, blocked)
+        status = _classify_terminal(best_score, derailed, blocked, faulted)
         record = LocalEconomyRecord.from_run(
             model=self._model,
             results=results,
@@ -150,4 +165,4 @@ class Loop:
             attempts=attempts,
             status=status,
         )
-        return LoopResult(status=status, best_score=best_score, record=record)
+        return LoopResult(status=status, best_score=best_score, record=record, fault=fault_message)

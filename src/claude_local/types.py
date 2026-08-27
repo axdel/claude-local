@@ -15,16 +15,20 @@ from enum import StrEnum
 
 
 class Status(StrEnum):
-    """The four terminal outcomes of a loop run.
+    """The five terminal outcomes of a loop run.
 
     Values are stable lowercase strings: telemetry serializes them into the
-    economy record and the entry point surfaces them on its Outcome.
+    economy record and the entry point surfaces them on its Outcome. ``FAULTED``
+    is an upstream server fault (an SSE error frame) — distinct from a model
+    ``DERAILED``/``BLOCKED`` or a budget ``EXHAUSTED``, so a reader can tell a
+    server-side failure apart from the model failing the task.
     """
 
     DONE = "done"
     DERAILED = "derailed"
     EXHAUSTED = "exhausted"
     BLOCKED = "blocked"
+    FAULTED = "faulted"
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,9 +18,10 @@ from claude_local.types import Status
 # --- Status ---------------------------------------------------------------
 
 
-def test_status_has_exactly_the_four_terminal_states() -> None:
-    # Oracle: the spec's terminal set — nothing more, nothing less.
-    assert {s.name for s in Status} == {"DONE", "DERAILED", "EXHAUSTED", "BLOCKED"}
+def test_status_has_exactly_the_five_terminal_states() -> None:
+    # Oracle: the spec's terminal set — nothing more, nothing less. FAULTED is the upstream
+    # server-fault outcome, distinct from a model DERAILED/BLOCKED or budget EXHAUSTED.
+    assert {s.name for s in Status} == {"DONE", "DERAILED", "EXHAUSTED", "BLOCKED", "FAULTED"}
 
 
 @pytest.mark.parametrize(
@@ -30,6 +31,7 @@ def test_status_has_exactly_the_four_terminal_states() -> None:
         (Status.DERAILED, "derailed"),
         (Status.EXHAUSTED, "exhausted"),
         (Status.BLOCKED, "blocked"),
+        (Status.FAULTED, "faulted"),
     ],
 )
 def test_status_values_are_stable_lowercase(member: Status, value: str) -> None:

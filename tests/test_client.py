@@ -90,20 +90,42 @@ def test_truncated_stream_falls_back_to_char_proxy() -> None:
     )
 
 
-def test_mid_stream_error_yields_partial_text_and_proxy() -> None:
+def test_mid_stream_error_is_surfaced_and_stops_the_stream() -> None:
     client = ModelClient(
         ReplayBackend([load_bytes("mid_stream_error.bytes")]), now=ScriptedClock(0.0)
     )
     result = client.generate("prefix", "tail", build_budget())
-    # Oracle: content "Hello" (5 chars) precedes an upstream error frame; the error carries
-    # no usage and is not a derail, so the count is ceil(5/4)=2, estimated.
+    # Oracle: the fixture streams delta "Hello" then an upstream error frame whose message is
+    # "context length exceeded" (schema-derived provenance — tests/fixtures/sse/README.md).
+    # The client must SURFACE that message on fault, not silently fold it into a proxy count as
+    # if it were a truncation. The error is not a derail (derail_reason stays None); "Hello"
+    # (5 chars) with no usage frame still proxies to ceil(5/4)=2, estimated.
     assert result == GenerationResult(
         text="Hello",
         completion_tokens=2,
         tokens_estimated=True,
         seconds=0.0,
         derail_reason=None,
+        fault="context length exceeded",
     )
+
+
+def test_server_error_frame_stops_decoding_the_rest_of_the_stream() -> None:
+    # An error frame is terminal: content the server streams AFTER it must not be decoded. A delta
+    # past the error frame proves the client breaks on the error rather than reading on — had it
+    # merely captured the message and continued, text would be "beforeAFTER".
+    stream = (
+        b'data: {"choices":[{"delta":{"content":"before"}}]}\n\n'
+        b'data: {"error":{"message":"overloaded"}}\n\n'
+        b'data: {"choices":[{"delta":{"content":"AFTER"}}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+    client = ModelClient(ReplayBackend([stream]), now=ScriptedClock(0.0))
+    result = client.generate("prefix", "tail", build_budget())
+    # Oracle: "before" precedes the error; "AFTER" is past the terminal error frame and excluded.
+    assert result.text == "before"
+    assert result.fault == "overloaded"
+    assert result.derail_reason is None
 
 
 def test_char_proxy_is_exact_at_a_token_multiple() -> None:
