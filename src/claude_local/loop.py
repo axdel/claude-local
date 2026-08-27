@@ -107,7 +107,8 @@ class Loop:
         or a non-usable edit (no block, or an edit for a forbidden path) stops the loop early. On
         exit the best snapshot is restored and the terminal status classified by strict precedence.
 
-        A broken oracle (``OracleError`` from the runner) is never caught — it propagates, so a
+        A transport failure (``BackendUnavailable`` from the client — an unreachable server) and a
+        broken oracle (``OracleError`` from the runner) are never caught — they propagate, so a
         harness fault fails loud rather than masquerading as a failing implementation.
         """
         stable = self._prompt.stable_prefix(spec)  # built ONCE — the prefill-cache invariant

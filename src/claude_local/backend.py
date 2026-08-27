@@ -7,7 +7,9 @@ SSE byte chunks, under a ``Budget``. Two implementations sit behind the one Prot
   whole loop is exercisable offline. It fails loud when asked for more generations
   than it was scripted for, and counts what it served — the completion ledger.
 - ``HttpxBackend`` POSTs the OpenAI-compatible streaming chat-completions request to
-  a local server over one warm, injected client, and yields the response bytes.
+  a local server over one warm, injected client, and yields the response bytes. An
+  unreachable server or an error status is translated to ``BackendUnavailable`` — a
+  harness fault, since the running server is a prerequisite — never a raw ``httpx`` leak.
 
 The seam sits at raw bytes on purpose: decoding lives one layer up in the client, so
 neither backend knows the SSE grammar and this module never imports ``sse``.
@@ -17,10 +19,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+import httpx
+
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
-
-    import httpx
 
     from claude_local.types import Budget
 
@@ -80,6 +82,24 @@ class ReplayBackend:
         return self._served
 
 
+class BackendUnavailable(RuntimeError):
+    """The model server at ``base_url`` could not be reached, or answered with an error status.
+
+    A precondition failure, not a task outcome: claude-local requires an already-running
+    OpenAI-compatible server at ``base_url`` (it never serves one), so a server that is down,
+    unreachable, or returning a non-2xx status means the prerequisite is unmet. Carries the URL
+    and model for diagnosis and chains the originating ``httpx`` error as ``__cause__``. Like
+    ``SandboxUnavailable`` (D-SANDBOX-001), it propagates as a harness fault — never mapped to a
+    ``Status`` — so a missing server fails loud instead of masquerading as a failed task. Distinct
+    from ``FAULTED`` (D-FAULT-001), which is a *reachable* server's mid-stream error frame.
+    """
+
+    def __init__(self, url: str, model: str, reason: str) -> None:
+        self.url = url
+        self.model = model
+        super().__init__(f"model server unavailable at {url} (model {model!r}): {reason}")
+
+
 class HttpxBackend:
     """POSTs the OpenAI-compatible streaming request to a local server, yielding bytes.
 
@@ -106,7 +126,15 @@ class HttpxBackend:
         self._generation_params = dict(generation_params or {})
 
     def generate(self, prefix: str, tail: str, budget: Budget) -> Iterator[bytes]:
-        """Stream the chat-completions response bytes for one generation under ``budget``."""
+        """Stream the chat-completions response bytes for one generation under ``budget``.
+
+        Raises:
+            BackendUnavailable: the server was unreachable (a transport failure) or answered with a
+                non-2xx status. The underlying ``httpx`` error is translated at this transport
+                boundary so a missing prerequisite server surfaces as a domain fault the caller can
+                act on, not a raw ``httpx`` exception (clients translate infra errors to domain
+                errors); the original error is preserved as ``__cause__``.
+        """
         body: dict[str, object] = {
             **self._generation_params,
             "model": self._model,
@@ -118,6 +146,13 @@ class HttpxBackend:
             "stream_options": {"include_usage": True},
             "max_tokens": budget.max_tokens,
         }
-        with self._client.stream("POST", self._url, json=body) as response:
-            response.raise_for_status()
-            yield from response.iter_bytes()
+        try:
+            with self._client.stream("POST", self._url, json=body) as response:
+                response.raise_for_status()
+                yield from response.iter_bytes()
+        except httpx.HTTPStatusError as exc:
+            reason = f"HTTP {exc.response.status_code}"
+            raise BackendUnavailable(self._url, self._model, reason) from exc
+        except httpx.RequestError as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            raise BackendUnavailable(self._url, self._model, reason) from exc

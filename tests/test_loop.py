@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 import pytest
 from factories import build_budget, build_task_spec, build_test_score
 
-from claude_local.backend import ReplayBackend
+from claude_local.backend import BackendUnavailable, ReplayBackend
 from claude_local.client import ModelClient
 from claude_local.loop import _ORACLE_TEST_FILENAME, Loop, _classify_terminal
 from claude_local.prompt import PromptBuilder
@@ -122,6 +122,18 @@ class RecordingBackend:
     def generate(self, prefix: str, tail: str, budget: Budget) -> Iterator[bytes]:
         self.calls.append((prefix, tail))
         return self._inner.generate(prefix, tail, budget)
+
+
+class UnavailableBackend:
+    """A backend whose generation raises ``BackendUnavailable`` — the server-unreachable case.
+
+    Stands in for ``HttpxBackend`` translating a transport failure to the domain fault; the loop
+    must let it propagate, never fold it into a terminal ``Status``.
+    """
+
+    def generate(self, prefix: str, tail: str, budget: Budget) -> Iterator[bytes]:
+        del prefix, tail, budget  # the server is down before any request shape matters
+        raise BackendUnavailable("http://local:8080", "m", "connection refused")
 
 
 class CountingPromptBuilder(PromptBuilder):
@@ -432,4 +444,19 @@ def test_broken_oracle_propagates_and_is_not_masked(tmp_path: Path) -> None:
 
     # A broken oracle must fail loud, never be swallowed into a BLOCKED/EXHAUSTED status.
     with pytest.raises(OracleError):
+        loop.run(spec, worktree)
+
+
+def test_backend_unavailable_propagates_and_is_not_masked(tmp_path: Path) -> None:
+    worktree = _setup_worktree(tmp_path)
+    loop, _ = _make_loop(worktree, UnavailableBackend(), ScriptedSpawn())  # spawn never called
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    # An unreachable server is a harness fault, not a task outcome: BackendUnavailable must
+    # propagate, never be folded into a FAULTED/BLOCKED/EXHAUSTED status (D-BACKEND-003) — the same
+    # fail-loud contract as a broken oracle (OracleError) above. FAULTED (D-FAULT-001) is for a
+    # *reachable* server's error frame; a server that never answered is a missing prerequisite.
+    with pytest.raises(BackendUnavailable):
         loop.run(spec, worktree)

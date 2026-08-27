@@ -6,8 +6,8 @@ it served and fails loud past its supply), and the empty-supply boundary. ``Http
 is verified by asserting the request it POSTs against the OpenAI streaming request spec
 (schema-derived: model / messages / stream / stream_options.include_usage / max_tokens)
 using an httpx MockTransport — never a live server (the real run is gated). Its failure
-path (a non-2xx status raises) and warm-client reuse (the injected client is not closed)
-are pinned too.
+paths (an unreachable server and a non-2xx status both translate to the domain
+``BackendUnavailable``) and warm-client reuse (the injected client is not closed) are pinned too.
 """
 
 from __future__ import annotations
@@ -18,7 +18,12 @@ import httpx
 import pytest
 from factories import build_budget
 
-from claude_local.backend import HttpxBackend, ReplayBackend, ReplayExhausted
+from claude_local.backend import (
+    BackendUnavailable,
+    HttpxBackend,
+    ReplayBackend,
+    ReplayExhausted,
+)
 
 # --- ReplayBackend: replay determinism -------------------------------------------
 
@@ -147,15 +152,42 @@ def test_httpx_url_appends_endpoint_and_normalizes_trailing_slash() -> None:
 # --- HttpxBackend: failure path and warm-client reuse ----------------------------
 
 
-def test_httpx_raises_on_error_status() -> None:
+def test_httpx_error_status_raises_backend_unavailable() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, content=b"upstream boom")
+        return httpx.Response(503, content=b"upstream boom")
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    backend = HttpxBackend("http://local:8080", client, model="m")
-    # A non-2xx status is surfaced as an error, never yielded as if it were content.
-    with pytest.raises(httpx.HTTPStatusError):
+    backend = HttpxBackend("http://local:8080", client, model="local-model")
+    # A non-2xx status is a domain fault, not a raw httpx leak: it is translated to
+    # BackendUnavailable naming the status, the request URL, and the model, with the originating
+    # HTTPStatusError chained as __cause__. Oracle: 503 is the injected status; the URL is the
+    # constructed request URL (base_url + the /v1/chat/completions endpoint) and the model is the
+    # constructor arg; the cause type follows from raise_for_status + `raise ... from exc`.
+    with pytest.raises(BackendUnavailable) as excinfo:
         list(backend.generate("p", "t", build_budget()))
+    assert excinfo.value.url == "http://local:8080/v1/chat/completions"
+    assert excinfo.value.model == "local-model"
+    assert "503" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, httpx.HTTPStatusError)
+
+
+def test_httpx_connect_failure_raises_backend_unavailable() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    backend = HttpxBackend("http://local:8080", client, model="local-model")
+    # An unreachable server (a transport failure) is translated to the same domain fault, naming
+    # the httpx error type so the operator sees WHY it was unreachable. Oracle: ConnectError is the
+    # injected transport failure; the URL is the constructed request URL (base_url + the
+    # /v1/chat/completions endpoint) and the model is the constructor arg; the raw error is
+    # preserved as __cause__ so the transport detail is never lost.
+    with pytest.raises(BackendUnavailable) as excinfo:
+        list(backend.generate("p", "t", build_budget()))
+    assert excinfo.value.url == "http://local:8080/v1/chat/completions"
+    assert excinfo.value.model == "local-model"
+    assert "ConnectError" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, httpx.ConnectError)
 
 
 def test_httpx_yields_response_bytes_verbatim() -> None:

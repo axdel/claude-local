@@ -15,8 +15,9 @@ model nor serves one; ``base_url`` names an already-running OpenAI-compatible se
 
 This module is the single owner of the wiring: it constructs every collaborator and owns the
 lifecycle of the resources it creates (the scratch worktree and, unless one is injected, the HTTP
-client). Harness faults — an unavailable sandbox, a broken oracle — propagate rather than being
-mapped to a status, so a broken host fails loud instead of masquerading as a failed task.
+client). Harness faults — an unreachable server, an unavailable sandbox, a broken oracle —
+propagate rather than being mapped to a status, so a broken host fails loud instead of
+masquerading as a failed task.
 """
 
 from __future__ import annotations
@@ -145,6 +146,9 @@ def implement(
     Raises:
         ValueError: ``spec.impl_path`` is not nested under a directory, so the writable subtree
             would collide with the worktree-root oracle test.
+        BackendUnavailable: the model server at ``base_url`` was unreachable or returned an error
+            status — a harness fault (the running server is a prerequisite), propagated, never
+            mapped to a status.
         SandboxUnavailable: the host lacks the kernel sandbox — a harness fault, not a task
             outcome (propagated, never mapped to a status).
         OracleError: the oracle produced no verdict — a broken oracle, propagated as a fault.

@@ -20,6 +20,7 @@ import httpx
 import pytest
 from factories import build_budget, build_local_economy_record, build_task_spec
 
+from claude_local.backend import BackendUnavailable
 from claude_local.entrypoint import Outcome, _writable_subtree, implement
 from claude_local.sandbox import sandbox_available
 from claude_local.types import Status
@@ -97,6 +98,19 @@ def _mock_client(reply: bytes) -> httpx.Client:
 
     def _handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=reply)
+
+    return httpx.Client(transport=httpx.MockTransport(_handler))
+
+
+def _unreachable_client() -> httpx.Client:
+    """An httpx client whose transport refuses the connection — the server-down case.
+
+    Raising ``ConnectError`` from the handler reproduces an unreachable server; the backend must
+    translate it to ``BackendUnavailable`` and the whole stack must let that propagate.
+    """
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
 
     return httpx.Client(transport=httpx.MockTransport(_handler))
 
@@ -259,6 +273,34 @@ def test_implement_closes_an_http_client_it_created(monkeypatch: pytest.MonkeyPa
 
     assert outcome.status is Status.DERAILED
     assert created.is_closed is True  # implement closed the client it created
+
+
+# --- Unit: an unreachable server propagates as a harness fault ----------------------
+
+
+def test_implement_propagates_backend_unavailable_when_the_server_is_unreachable() -> None:
+    """A down server surfaces as ``BackendUnavailable`` through the stack — never a ``Status``.
+
+    The transport refuses the connection on the first generation, before any oracle runs, so the
+    fault propagates backend → client → loop → implement() as a harness fault (fail loud), and the
+    injected client — the caller's — is left open. Cross-platform: the connect failure precedes
+    the sandboxed oracle. Oracle: the fault names the constructed request URL (base_url + the
+    /v1/chat/completions endpoint) and the model, both derivable from the inputs.
+    """
+    spec = build_task_spec(
+        impl_path="src/adder.py",
+        test_text=_ADDER_ORACLE,
+        expected_tests=2,
+        budget=build_budget(max_attempts=3),
+    )
+    client = _unreachable_client()
+
+    with pytest.raises(BackendUnavailable) as excinfo:
+        implement(spec, base_url="http://local", model=_MODEL, http_client=client)
+
+    assert excinfo.value.url == "http://local/v1/chat/completions"
+    assert excinfo.value.model == _MODEL
+    assert client.is_closed is False  # an injected client is the caller's — never closed
 
 
 # --- E2E: the DONE front door through the real kernel sandbox -----------------------
