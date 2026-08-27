@@ -71,12 +71,16 @@ def main(argv: list[str] | None = None) -> int:
 
     record = outcome.record
     estimated = "  (tokens estimated)" if record.tokens_estimated else ""
+    # mean_tokens_per_second is None when no model-seconds elapsed (the div-by-zero guard); show
+    # "n/a" rather than crash the summary line on a run that decoded instantly.
+    mean = record.mean_tokens_per_second
+    rate = f"{mean:.1f}" if mean is not None else "n/a"
     print(outcome.summary, file=sys.stderr)
     print(
         f"[economy] {record.total_calls} call(s), "
         f"{record.total_completion_tokens} completion tokens, "
         f"{record.total_model_seconds:.1f}s decode, "
-        f"{record.mean_tokens_per_second:.1f} tok/s{estimated}",
+        f"{rate} tok/s{estimated}",
         file=sys.stderr,
     )
     if outcome.code is not None:
