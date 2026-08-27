@@ -52,6 +52,12 @@ select = ["E", "F", "W", "I", "S", "UP", "B", "C4", "SIM", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 # `assert` is the test idiom; flake8-bandit's S101 targets production code, not tests.
 "tests/**" = ["S101"]
+# Example oracle files use the `assert` idiom (S101) and import the impl the loop
+# generates into a nested `src/` after a `sys.path` insert (E402) — the oracle pattern,
+# not production smells. Named `*_oracle.py`, never `test_*.py`: the impl an oracle imports
+# exists only inside the loop's worktree, so a `test_` name would make the repo's own pytest
+# (and the quality runner) try to collect it and fail on the missing import.
+"examples/**/*_oracle.py" = ["S101", "E402"]
 
 [tool.basedpyright]
 pythonVersion = "3.12"
@@ -60,3 +66,8 @@ typeCheckingMode = "standard"
 # "src" for the package, "tests" so shared test helpers (factories.py) resolve —
 # mirrors the pytest pythonpath so the type checker and the runner agree.
 extraPaths = ["src", "tests"]
+# Example oracle files (`*_oracle.py`) import the implementation the loop generates into a temp
+# worktree, so their import target never exists in-repo and cannot be resolved statically.
+# Overriding `exclude` replaces pyright's defaults, so the three defaults are restated alongside
+# the glob.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/**/*_oracle.py"]
