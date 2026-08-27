@@ -1,0 +1,12 @@
+# Task record field reference
+| field         | type    | notes                          |
+| ------------- | ------- | ------------------------------ |
+| task_id       | str     | stable identifier for the task |
+| impl_path     | str     | the single writable target     |
+| spec_text     | str     | the distilled task spec        |
+| test_text     | str     | the immutable oracle test      |
+| expected      | int     | collected test-node count      |
+| max_attempts  | int     | hard repair-loop ceiling       |
+| max_tokens    | int     | hard decode ceiling            |
+| timeout_s     | float   | wall-clock ceiling in seconds  |
+| status        | enum    | terminal task outcome          |
