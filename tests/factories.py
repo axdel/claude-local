@@ -81,6 +81,7 @@ def build_local_economy_record(**overrides: object) -> LocalEconomyRecord:
         "total_model_seconds": 2.0,
         "mean_tokens_per_second": 20.0,
         "tokens_estimated": False,
+        "length_capped": 0,
         "status": Status.DONE,
         "attempts": 1,
     }

@@ -70,7 +70,41 @@ def test_clean_stream_reports_server_usage_and_full_text() -> None:
         tokens_estimated=False,
         seconds=0.0,
         derail_reason=None,
+        finish_reason="stop",
     )
+
+
+# --- Finish frame: the server's own terminal reason -------------------------------
+
+
+def test_finish_reason_length_is_captured_from_the_terminal_event() -> None:
+    # A server that stops at its own token cap emits Finish("length"); the client records that
+    # reason verbatim. Oracle: the OpenAI SSE contract — finish_reason "length" means the server
+    # hit max_tokens — read off the wire, never from the client. A second, distinct reason
+    # ("length" here vs "stop" in the clean-finish test) proves the client copies event.reason
+    # rather than pinning one value. No usage frame, so tokens fall back to the char proxy — that
+    # is orthogonal; a server length cap is not a client derail (derail_reason stays None).
+    stream = (
+        b'data: {"choices":[{"delta":{"content":"Partial"},"finish_reason":"length"}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+    client = ModelClient(ReplayBackend([stream]), now=ScriptedClock(0.0))
+    result = client.generate("prefix", "tail", build_budget())
+    assert result.finish_reason == "length"
+    assert result.derail_reason is None
+
+
+def test_derail_before_the_finish_frame_leaves_finish_reason_unset() -> None:
+    # The guard aborts on "Artificial" (10 chars > cap 8) — BEFORE the terminal frame decodes — so
+    # the server never gets to report a reason. Oracle: a client-side derail and a server-side
+    # finish_reason are distinct signals; cutting the stream early means finish_reason is None, not
+    # inherited from a frame that was never read. Pins that the two never conflate.
+    client = ModelClient(
+        ReplayBackend([load_bytes("complete_stream.bytes")]), now=ScriptedClock(0.0)
+    )
+    result = client.generate("prefix", "tail", build_budget(max_tokens=2))
+    assert result.derail_reason is DerailReason.TOKEN_CAP
+    assert result.finish_reason is None
 
 
 # --- No usage block: fall back to the char proxy ----------------------------------

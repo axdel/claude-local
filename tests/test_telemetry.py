@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 def _record(**overrides: object) -> LocalEconomyRecord:
     """A fully-specified record for the write tests — construction independent of ``from_run``."""
-    # Every scalar is numerically distinct (3 / 300 / 6.0 / 50.0 / 4) so a field-swap mutant in
+    # Every scalar is numerically distinct (3 / 300 / 6.0 / 50.0 / 2 / 4) so a field-swap mutant in
     # write cannot survive the round-trip equality — 3 == 3.0 would mask a calls/seconds swap.
     fields: dict[str, object] = {
         "model": "mlx-community/Qwen2.5-Coder-7B",
@@ -33,6 +33,7 @@ def _record(**overrides: object) -> LocalEconomyRecord:
         "total_model_seconds": 6.0,
         "mean_tokens_per_second": 50.0,
         "tokens_estimated": True,
+        "length_capped": 2,
         "status": Status.DONE,
         "attempts": 4,
     }
@@ -102,6 +103,28 @@ def test_tokens_estimated_is_false_when_every_attempt_was_server_counted() -> No
     assert record.tokens_estimated is False
 
 
+def test_length_capped_counts_only_the_server_length_finishes() -> None:
+    # Hand-derived: of these 5 attempts, exactly 3 carry finish_reason "length" (the server hit its
+    # own token cap). "stop" (a clean finish) and None (a derail cut the stream before any terminal
+    # frame) must NOT count. The answer 3 is chosen ASYMMETRICALLY — the complement (non-"length")
+    # is 2, so an ``==`` → ``!=`` mutant reads 2, not 3, and cannot hide behind an equal split. It
+    # is also distinct from the count of non-None reasons (4), of every attempt (5), and of any
+    # single wrong reason ("stop" → 1), so counting the wrong terminal or dropping the predicate
+    # all diverge. Oracle: the tally is defined by the SSE contract (finish_reason=="length"),
+    # derived without running from_run.
+    results = [
+        build_generation_result(finish_reason="length"),
+        build_generation_result(finish_reason="stop"),
+        build_generation_result(finish_reason="length"),
+        build_generation_result(finish_reason=None),
+        build_generation_result(finish_reason="length"),
+    ]
+    record = LocalEconomyRecord.from_run(
+        model="m", results=results, total_calls=5, attempts=5, status=Status.EXHAUSTED
+    )
+    assert record.length_capped == 3
+
+
 def test_total_calls_is_the_client_count_not_the_timeline_length() -> None:
     # The off-by-one guard: a call that raised produced no result, so total_calls (3, from the
     # client) exceeds len(results) (2). The record must carry the passed count, not len().
@@ -140,6 +163,7 @@ def test_write_round_trips_every_field_as_json_and_returns_the_path(tmp_path: Pa
         "total_model_seconds": 6.0,
         "mean_tokens_per_second": 50.0,
         "tokens_estimated": True,
+        "length_capped": 2,
         "status": "done",
         "attempts": 4,
     }

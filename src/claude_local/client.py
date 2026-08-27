@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from claude_local.derail import CHARS_PER_TOKEN, DerailGuard
-from claude_local.sse import Delta, Error, Usage, decode_sse
+from claude_local.sse import Delta, Error, Finish, Usage, decode_sse
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -42,6 +42,14 @@ class GenerationResult:
     ``derail_reason`` (the model failing) and from silent truncation. Both name a *cause*
     (mirroring ``derail_reason``), and ``fault`` keeps its single name across the client, loop,
     and outcome — the value flows through unrenamed, pairing with the ``FAULTED`` status.
+
+    ``finish_reason`` is the server's own terminal reason from the SSE ``Finish`` frame —
+    ``"stop"`` on a clean finish, ``"length"`` when the server hit *its* token cap — or ``None``
+    when no such frame arrived (a derail broke before it, transport truncation cut it off, or an
+    error frame ended the stream). It is the SERVER's account of why generation ended, distinct on
+    both sides: from ``derail_reason``, the CLIENT-side guard abort, and from the char-proxy
+    ``truncation`` that fires when the bytes were cut off with no terminal frame at all. Telemetry
+    reads it to count how often the server capped a generation at ``length``.
     """
 
     text: str
@@ -50,6 +58,7 @@ class GenerationResult:
     seconds: float
     derail_reason: DerailReason | None
     fault: str | None = None
+    finish_reason: str | None = None
 
 
 class ModelClient:
@@ -91,6 +100,7 @@ class ModelClient:
         server_tokens: int | None = None
         derail_reason: DerailReason | None = None
         fault: str | None = None
+        finish_reason: str | None = None
         for event in decode_sse(self._backend.generate(prefix, tail, budget)):
             if isinstance(event, Delta):
                 parts.append(event.text)
@@ -100,6 +110,8 @@ class ModelClient:
                     break  # abort early — stop decoding the moment a bound trips
             elif isinstance(event, Usage):
                 server_tokens = event.completion_tokens
+            elif isinstance(event, Finish):
+                finish_reason = event.reason  # the server's own terminal reason (stop / length)
             elif isinstance(event, Error):
                 # An upstream error frame is terminal: surface its message and stop decoding, so
                 # content streamed after it is never read (a server fault, not a derail).
@@ -122,4 +134,5 @@ class ModelClient:
             seconds=seconds,
             derail_reason=derail_reason,
             fault=fault,
+            finish_reason=finish_reason,
         )

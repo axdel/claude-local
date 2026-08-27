@@ -3,8 +3,9 @@
 claude-local writes only the local half; the orchestrator half and the shared correlation keys are
 owned by the driving orchestrator (D-TELEMETRY-001). ``LocalEconomyRecord`` is that half: which
 model ran, how many logical calls and loop attempts it took, how many completion tokens it decoded
-over how many model-seconds, the mean decode rate, whether any count was estimated, and the final
-status. The telemetry module is its single writer (RESOURCE_OWNERSHIP).
+over how many model-seconds, the mean decode rate, whether any count was estimated, how many
+generations the server capped at its own token limit, and the final status. The telemetry module is
+its single writer (RESOURCE_OWNERSHIP).
 
 ``from_run`` AGGREGATES a timeline of per-attempt ``GenerationResult`` (client token usage
 and timing) into those scalars. Two counts are deliberately NOT derived from the timeline.
@@ -14,7 +15,11 @@ survives a call that raised mid-stream and left the timeline one result short �
 neither. ``mean_tokens_per_second`` is a guarded quotient (completion tokens only — it
 excludes the cached prompt prefix) that is ``None``, never a crash, when no model-seconds
 elapsed. ``tokens_estimated`` rises to True if any attempt fell back to the char proxy, so
-a reader never mistakes an estimate for a server-counted total.
+a reader never mistakes an estimate for a server-counted total. ``length_capped`` tallies the
+attempts whose server ``finish_reason`` was ``length`` — the server ran out of its OWN token
+allowance mid-generation. It is distinct from a client-side derail (which breaks before any
+terminal frame, so its reason stays unset) and from transport truncation (no terminal frame at
+all): a persistent ``length_capped`` count says the token budget, not the model, is the limit.
 
 Cold path by construction: aggregation and the JSON write run once at loop exit, off the inference
 hot path, so this module favours plain sums and ``json.dumps`` over anything built for speed (E6).
@@ -39,13 +44,18 @@ if TYPE_CHECKING:
 # filename characters to a single '-' so the record lands as one flat file, not a subtree.
 _UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
+# The OpenAI ``finish_reason`` a server emits when it stops at its OWN token cap. Counting these is
+# how the record distinguishes a server-side length cap from a clean stop or a client-side derail.
+_LENGTH_FINISH_REASON = "length"
+
 
 @dataclass(frozen=True, slots=True)
 class LocalEconomyRecord:
     """The local half of one task's economy record — aggregated once, written once, never mutated.
 
     ``total_calls`` (client logical calls) and ``attempts`` (loop cycles) are distinct counts, both
-    supplied by the caller; the token and timing totals are aggregated from the run's timeline.
+    supplied by the caller; the token and timing totals are aggregated from the run's timeline, as
+    is ``length_capped`` — the number of attempts the server ended at its own token cap.
     ``mean_tokens_per_second`` is ``None`` when no model-seconds elapsed.
     """
 
@@ -55,6 +65,7 @@ class LocalEconomyRecord:
     total_model_seconds: float
     mean_tokens_per_second: float | None
     tokens_estimated: bool
+    length_capped: int
     status: Status
     attempts: int
 
@@ -83,6 +94,7 @@ class LocalEconomyRecord:
             total_model_seconds=total_model_seconds,
             mean_tokens_per_second=mean,
             tokens_estimated=any(r.tokens_estimated for r in results),
+            length_capped=sum(r.finish_reason == _LENGTH_FINISH_REASON for r in results),
             status=status,
             attempts=attempts,
         )
@@ -111,6 +123,7 @@ class LocalEconomyRecord:
             "total_model_seconds": self.total_model_seconds,
             "mean_tokens_per_second": self.mean_tokens_per_second,
             "tokens_estimated": self.tokens_estimated,
+            "length_capped": self.length_capped,
             "status": self.status.value,
             "attempts": self.attempts,
         }
