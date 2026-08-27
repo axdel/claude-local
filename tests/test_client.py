@@ -10,6 +10,7 @@ of four, so a floor mutant diverges). Time is an injected clock, so elapsed seco
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from factories import build_budget
 from claude_local.backend import ReplayBackend, ReplayExhausted
 from claude_local.client import GenerationResult, ModelClient
 from claude_local.derail import DerailReason
+from claude_local.types import Budget
 
 FIXTURES = Path(__file__).parent / "fixtures" / "sse"
 
@@ -175,6 +177,36 @@ def test_timeout_derail_uses_the_clients_injected_clock() -> None:
     result = client.generate("prefix", "tail", build_budget(timeout_s=1.0))
     assert result.derail_reason is DerailReason.TIMEOUT
     assert result.tokens_estimated is True
+
+
+# --- Resource lifecycle: the transport is released on abort ------------------------
+
+
+def test_aborted_stream_releases_the_transport_before_generate_returns() -> None:
+    # Resource-lifecycle contract (D-CLIENT-001): on an early abort the client must release the
+    # byte stream by the time generate() returns. HttpxBackend keeps ONE warm connection reused
+    # across generations, so a stream left pinned until a later GC would starve the next call.
+    # The backend's generator records GeneratorExit in a finally — the exact analog of
+    # HttpxBackend's `with client.stream(...)` __exit__; consuming it with no lingering reference
+    # closes it synchronously at the abort. The oracle is the confinement requirement (an aborted
+    # read closes its source), derived without running the client.
+    closed: list[bool] = []
+
+    def recording_stream() -> Iterator[bytes]:
+        try:
+            yield b'data: {"choices":[{"delta":{"content":"Artificial"}}]}\n\n'  # 10 chars > cap
+            yield b'data: {"choices":[{"delta":{"content":"never"}}]}\n\n'  # unreached
+        finally:
+            closed.append(True)
+
+    class RecordingBackend:
+        def generate(self, prefix: str, tail: str, budget: Budget) -> Iterator[bytes]:
+            return recording_stream()
+
+    client = ModelClient(RecordingBackend(), now=ScriptedClock(0.0))
+    result = client.generate("prefix", "tail", build_budget(max_tokens=2))
+    assert result.derail_reason is DerailReason.TOKEN_CAP  # the abort actually fired
+    assert closed == [True]  # and the transport was released by the time generate() returned
 
 
 # --- Timing and the logical-call ledger -------------------------------------------

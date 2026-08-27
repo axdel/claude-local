@@ -77,7 +77,12 @@ class ModelClient:
         return self._total_calls
 
     def generate(self, prefix: str, tail: str, budget: Budget) -> GenerationResult:
-        """Stream one generation, aborting on the first derail; return its metered result."""
+        """Stream one generation, aborting on the first derail; return its metered result.
+
+        The stream iterator is consumed inline with no lingering reference, so an early abort
+        drops its last reference at the break and CPython refcount finalization closes the
+        transport synchronously — no explicit close is needed on this runtime (D-CLIENT-001).
+        """
         self._total_calls += 1  # a logical call — counted at entry so it survives any later raise
         start = self._now()
         guard = self._derail_factory(budget, self._now)
