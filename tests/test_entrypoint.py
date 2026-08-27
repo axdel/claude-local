@@ -20,7 +20,7 @@ import httpx
 import pytest
 from factories import build_budget, build_local_economy_record, build_task_spec
 
-from claude_local.implement import Outcome, _writable_subtree, implement
+from claude_local.entrypoint import Outcome, _writable_subtree, implement
 from claude_local.sandbox import sandbox_available
 from claude_local.types import Status
 
@@ -232,7 +232,7 @@ def test_implement_closes_an_http_client_it_created(monkeypatch: pytest.MonkeyPa
         budget=build_budget(max_attempts=1, max_tokens=2),
     )
     created = _mock_client(_runaway_reply(size=256))
-    monkeypatch.setattr("claude_local.implement._new_http_client", lambda timeout_s: created)
+    monkeypatch.setattr("claude_local.entrypoint._new_http_client", lambda timeout_s: created)
 
     outcome = implement(spec, base_url="http://local", model=_MODEL)  # no http_client → owned
 

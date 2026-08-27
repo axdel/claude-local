@@ -13,16 +13,16 @@
 | derail | types | may-import | Guard consumes Budget. | active |  |
 | edits | paths | may-import | Writes only through realpath containment. | active |  |
 | edits | types | may-import | Consumes value objects. | active |  |
-| implement | backend | may-import | Constructs HttpxBackend, the transport to the model server. | active |  |
-| implement | client | may-import | Wraps the backend in ModelClient. | active |  |
-| implement | httpx | may-import | Constructs the keep-alive httpx.Client for an owned-lifecycle call. | active |  |
-| implement | loop | may-import | Constructs and runs the Loop, the red->green driver. | active |  |
-| implement | prompt | may-import | Builds PromptBuilder from the rules card. | active |  |
-| implement | runner | may-import | Constructs TestRunner over the budget-bound sandbox spawn. | active |  |
-| implement | sandbox | may-import | Binds the oracle budget timeout into sandboxed_spawn. | active |  |
-| implement | snapshot | may-import | Constructs SnapshotStore over the writable subtree. | active |  |
-| implement | telemetry | may-import | Surfaces LocalEconomyRecord on the Outcome. | active |  |
-| implement | types | may-import | Consumes TaskSpec and Status. | active |  |
+| entrypoint | backend | may-import | Constructs HttpxBackend, the transport to the model server. | active |  |
+| entrypoint | client | may-import | Wraps the backend in ModelClient. | active |  |
+| entrypoint | httpx | may-import | Constructs the keep-alive httpx.Client for an owned-lifecycle call. | active |  |
+| entrypoint | loop | may-import | Constructs and runs the Loop, the red->green driver. | active |  |
+| entrypoint | prompt | may-import | Builds PromptBuilder from the rules card. | active |  |
+| entrypoint | runner | may-import | Constructs TestRunner over the budget-bound sandbox spawn. | active |  |
+| entrypoint | sandbox | may-import | Binds the oracle budget timeout into sandboxed_spawn. | active |  |
+| entrypoint | snapshot | may-import | Constructs SnapshotStore over the writable subtree. | active |  |
+| entrypoint | telemetry | may-import | Surfaces LocalEconomyRecord on the Outcome. | active |  |
+| entrypoint | types | may-import | Consumes TaskSpec and Status. | active |  |
 | loop | client | may-import | Drives one generation per attempt. | active |  |
 | loop | edits | may-import | Applies whole-file blocks. | active |  |
 | loop | prompt | may-import | Builds the stable prefix once per task. | active |  |

@@ -19,8 +19,7 @@ import os
 import sys
 from pathlib import Path
 
-from claude_local.implement import implement
-from claude_local.types import Budget, Status, TaskSpec
+from claude_local import Budget, Status, TaskSpec, implement
 
 _HERE = Path(__file__).parent
 _IMPL_PATH = "src/quicksort.py"
