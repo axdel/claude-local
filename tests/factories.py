@@ -8,6 +8,7 @@ a test specifies only the field it exercises and takes sensible defaults for the
 from __future__ import annotations
 
 from claude_local.client import GenerationResult
+from claude_local.runner import TestScore
 from claude_local.types import Budget, TaskSpec
 
 
@@ -46,3 +47,21 @@ def build_task_spec(**overrides: object) -> TaskSpec:
     }
     fields.update(overrides)
     return TaskSpec(**fields)  # type: ignore[arg-type]
+
+
+def build_test_score(**overrides: object) -> TestScore:
+    """Canonical valid TestScore; a test overrides only the counts it exercises.
+
+    Defaults describe one green run (1 of 1 passed); a precedence test overrides ``passed`` /
+    ``failed`` / ``errors`` / ``collected`` / ``expected`` to shape a green or partial verdict.
+    """
+    fields: dict[str, object] = {
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "collected": 1,
+        "skipped": 0,
+        "expected": 1,
+    }
+    fields.update(overrides)
+    return TestScore(**fields)  # type: ignore[arg-type]
