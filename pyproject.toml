@@ -77,3 +77,15 @@ extraPaths = ["src", "tests"]
 # Overriding `exclude` replaces pyright's defaults, so the three defaults are restated alongside
 # the glob.
 exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/**/*_oracle.py"]
+
+[tool.deptry]
+# Scanned from the repo root, deptry cannot infer that this src-layout package is first-party,
+# so every intra-package `from claude_local...` import reads as a transitive-dependency error
+# (DEP003). Naming the package fixes it — the runtime surface is genuinely httpx-only.
+known_first_party = ["claude_local"]
+
+[tool.deptry.per_rule_ignores]
+# The example oracle imports the loop-generated implementation module (`quicksort`), which by
+# design exists only inside the loop's worktree, never as a declared dependency — a permanent,
+# expected DEP001 for that one module name.
+DEP001 = ["quicksort"]
