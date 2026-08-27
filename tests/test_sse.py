@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from sse_wire import sse_frame
+
 from claude_local.sse import _MAX_FRAME_BYTES, Delta, Error, Finish, SSEEvent, Usage, decode_sse
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "sse"
@@ -28,11 +30,6 @@ def feed(data: bytes, chunk_size: int) -> list[SSEEvent]:
     """Decode ``data`` delivered in fixed-size byte chunks — models arbitrary splits."""
     chunks = [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
     return list(decode_sse(chunks))
-
-
-def frame(payload: str) -> bytes:
-    """One spec-faithful SSE frame: a single ``data:`` line plus the blank separator."""
-    return f"data: {payload}\n\n".encode()
 
 
 # --- Known-fixture oracle: the full happy path -----------------------------------
@@ -103,9 +100,9 @@ def test_mid_stream_error_becomes_error_event() -> None:
 
 def test_stops_at_done_sentinel_ignoring_trailing_bytes() -> None:
     stream = (
-        frame('{"choices":[{"index":0,"delta":{"content":"kept"},"finish_reason":null}]}')
+        sse_frame('{"choices":[{"index":0,"delta":{"content":"kept"},"finish_reason":null}]}')
         + b"data: [DONE]\n\n"
-        + frame('{"choices":[{"index":0,"delta":{"content":"dropped"},"finish_reason":null}]}')
+        + sse_frame('{"choices":[{"index":0,"delta":{"content":"dropped"},"finish_reason":null}]}')
     )
     events = feed(stream, chunk_size=4096)
     # Spec: [DONE] is the terminal sentinel. Anything after it must never decode.
@@ -117,7 +114,9 @@ def test_stops_at_done_sentinel_ignoring_trailing_bytes() -> None:
 
 def test_each_finish_reason_yields_exactly_one_finish() -> None:
     for reason in ("stop", "length", "tool_calls"):
-        stream = frame(f'{{"choices":[{{"index":0,"delta":{{}},"finish_reason":"{reason}"}}]}}')
+        stream = sse_frame(
+            f'{{"choices":[{{"index":0,"delta":{{}},"finish_reason":"{reason}"}}]}}'
+        )
         events = feed(stream, chunk_size=4096)
         # Lifecycle invariant over the finish-reason enum: exactly one Finish, carrying
         # the reason verbatim — no reason is dropped, none is duplicated.
@@ -128,7 +127,7 @@ def test_each_finish_reason_yields_exactly_one_finish() -> None:
 
 
 def test_usage_frame_with_empty_choices_does_not_crash() -> None:
-    stream = frame('{"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7}}')
+    stream = sse_frame('{"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7}}')
     events = feed(stream, chunk_size=4096)
     # The real wire puts usage on a trailer frame with choices == [] (NOT on the
     # finish frame). Indexing choices[0] here would crash; the decoder must not.
@@ -136,7 +135,7 @@ def test_usage_frame_with_empty_choices_does_not_crash() -> None:
 
 
 def test_role_chunk_with_empty_content_yields_no_delta() -> None:
-    stream = frame(
+    stream = sse_frame(
         '{"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}'
     )
     events = feed(stream, chunk_size=4096)
@@ -148,7 +147,7 @@ def test_role_chunk_with_empty_content_yields_no_delta() -> None:
 
 
 def test_malformed_json_frame_becomes_error_not_crash() -> None:
-    stream = frame('{"choices":[{"index":0,"delta":{"content":"oops"')  # truncated JSON
+    stream = sse_frame('{"choices":[{"index":0,"delta":{"content":"oops"')  # truncated JSON
     events = feed(stream, chunk_size=4096)
     # A complete (blank-line-terminated) frame whose JSON will not parse folds into
     # the Error channel — the decoder must not raise into the supervising loop.
@@ -200,7 +199,9 @@ def test_many_frames_in_one_chunk_decode_in_order_and_match_one_byte_chunking() 
     # Oracle: the 50 contents are hand-constructed, so the expected deltas are known without
     # running the decoder; the two chunkings are a metamorphic relation over the same bytes.
     stream = b"".join(
-        frame(f'{{"choices":[{{"index":0,"delta":{{"content":"d{i}"}},"finish_reason":null}}]}}')
+        sse_frame(
+            f'{{"choices":[{{"index":0,"delta":{{"content":"d{i}"}},"finish_reason":null}}]}}'
+        )
         for i in range(50)
     )
     expected = [Delta(f"d{i}") for i in range(50)]

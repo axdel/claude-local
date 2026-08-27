@@ -23,12 +23,12 @@ tmp_path worktree regardless of how this suite was launched.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from factories import build_budget, build_task_spec
+from sse_wire import sse_frame_json
 
 from claude_local.backend import ReplayBackend
 from claude_local.client import ModelClient
@@ -54,28 +54,12 @@ _TOKENS_PER_REPLY = (
 _CHUNK: dict[str, object] = {"id": "chatcmpl-e2e", "object": "chat.completion.chunk"}
 
 
-# --- environment & SSE assembly ----------------------------------------------------
-
-
-@pytest.fixture
-def _project_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin VIRTUAL_ENV to the active venv so the inner `uv run pytest` resolves from a temp cwd.
-
-    TestRunner's default spawn passes no env=, so the child inherits this process's environment;
-    pinning VIRTUAL_ENV to sys.prefix lets uv resolve pytest from the external tmp_path worktree
-    regardless of how this suite was launched. monkeypatch restores the prior value after the test.
-    """
-    monkeypatch.setenv("VIRTUAL_ENV", sys.prefix)
+# --- fixtures & SSE assembly -------------------------------------------------------
 
 
 def _read_fixture(name: str) -> str:
     """Read a captured e2e fixture (an oracle test or an implementation template) as text."""
     return (_FIXTURES / name).read_text(encoding="utf-8")
-
-
-def _frame(payload: dict[str, object]) -> bytes:
-    """One `data:`-prefixed, blank-line-terminated SSE frame — the wire's framing."""
-    return f"data: {json.dumps(payload)}\n\n".encode()
 
 
 def _clean_reply(content: str) -> bytes:
@@ -86,12 +70,14 @@ def _clean_reply(content: str) -> bytes:
     client reports a server-counted token total (the non-estimated path).
     """
     return (
-        _frame(
+        sse_frame_json(
             {**_CHUNK, "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]}
         )
-        + _frame({**_CHUNK, "choices": [{"index": 0, "delta": {"content": content}}]})
-        + _frame({**_CHUNK, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
-        + _frame(
+        + sse_frame_json({**_CHUNK, "choices": [{"index": 0, "delta": {"content": content}}]})
+        + sse_frame_json(
+            {**_CHUNK, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+        )
+        + sse_frame_json(
             {
                 **_CHUNK,
                 "choices": [],
@@ -112,9 +98,9 @@ def _impl_reply(fixture_name: str) -> bytes:
 
 def _runaway_reply(size: int = 256) -> bytes:
     """A single oversized content delta, no usage trailer — trips the derail guard mid-decode."""
-    return _frame(
+    return sse_frame_json(
         {**_CHUNK, "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]}
-    ) + _frame({**_CHUNK, "choices": [{"index": 0, "delta": {"content": "z" * size}}]})
+    ) + sse_frame_json({**_CHUNK, "choices": [{"index": 0, "delta": {"content": "z" * size}}]})
 
 
 # --- worktree, loop, and record helpers --------------------------------------------

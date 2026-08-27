@@ -13,7 +13,6 @@ sandbox that runs the real ``uv run pytest`` oracle.
 from __future__ import annotations
 
 import json
-import sys
 import time
 
 import httpx
@@ -113,18 +112,6 @@ def _unreachable_client() -> httpx.Client:
         raise httpx.ConnectError("connection refused")
 
     return httpx.Client(transport=httpx.MockTransport(_handler))
-
-
-@pytest.fixture
-def _project_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin VIRTUAL_ENV to the active venv so the sandboxed ``uv run pytest`` resolves from a
-    temp cwd.
-
-    The default spawn passes no env=, and the inner uv resolves its interpreter from the
-    environment; pinning VIRTUAL_ENV to sys.prefix lets the child resolve pytest from the scratch
-    worktree regardless of how this suite was launched. monkeypatch restores the prior value.
-    """
-    monkeypatch.setenv("VIRTUAL_ENV", sys.prefix)
 
 
 # --- Unit: the writable-subtree derivation -----------------------------------------

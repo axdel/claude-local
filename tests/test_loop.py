@@ -15,12 +15,12 @@ crash), and the restored bytes are the exact whole-file text the winning script 
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from factories import build_budget, build_task_spec, build_test_score
+from sse_wire import sse_frame_json
 
 from claude_local.backend import BackendUnavailable, ReplayBackend
 from claude_local.client import ModelClient
@@ -61,8 +61,7 @@ def _sse_script(text: str) -> bytes:
     Mirrors the wire shape captured in the sse fixtures (one ``data:`` frame, no usage trailer), so
     the real client decodes it to exactly ``text`` — a transport carrier, not a hand-read protocol.
     """
-    payload = json.dumps({"choices": [{"delta": {"content": text}}]})
-    return f"data: {payload}\n\n".encode()
+    return sse_frame_json({"choices": [{"delta": {"content": text}}]})
 
 
 def _edit_script(body: str) -> bytes:
@@ -77,8 +76,7 @@ def _forbidden_edit_script(target: str, body: str) -> bytes:
 
 def _error_script(message: str) -> bytes:
     """An SSE stream carrying one upstream ``{"error": ...}`` frame — a fault, not a text delta."""
-    payload = json.dumps({"error": {"message": message}})
-    return f"data: {payload}\n\n".encode()
+    return sse_frame_json({"error": {"message": message}})
 
 
 def _report_path(cmd: Sequence[str]) -> Path:
