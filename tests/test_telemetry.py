@@ -19,7 +19,10 @@ from claude_local.telemetry import LocalEconomyRecord
 from claude_local.types import Status
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
+
+    from claude_local.client import GenerationResult
 
 
 def _record(**overrides: object) -> LocalEconomyRecord:
@@ -41,6 +44,24 @@ def _record(**overrides: object) -> LocalEconomyRecord:
     return LocalEconomyRecord(**fields)  # type: ignore[arg-type]
 
 
+def _from_run(
+    results: Sequence[GenerationResult],
+    *,
+    total_calls: int,
+    attempts: int,
+    status: Status = Status.DONE,
+) -> LocalEconomyRecord:
+    """Invoke the SUT over a timeline, defaulting only what no ``from_run`` test varies.
+
+    ``total_calls`` and ``attempts`` stay REQUIRED and are never derived from ``len(results)`` —
+    that client-count-vs-timeline-length gap is the off-by-one this suite guards. ``model`` is
+    fixed to ``"m"``; the lone test that asserts model is carried through constructs directly.
+    """
+    return LocalEconomyRecord.from_run(
+        model="m", results=results, total_calls=total_calls, attempts=attempts, status=status
+    )
+
+
 # --- from_run: aggregation over the timeline --------------------------------------
 
 
@@ -50,9 +71,7 @@ def test_from_run_sums_completion_tokens_and_model_seconds_over_the_timeline() -
         build_generation_result(completion_tokens=60, seconds=1.5),
         build_generation_result(completion_tokens=40, seconds=0.5),
     ]
-    record = LocalEconomyRecord.from_run(
-        model="m", results=results, total_calls=2, attempts=2, status=Status.DONE
-    )
+    record = _from_run(results, total_calls=2, attempts=2)
     assert record.total_completion_tokens == 100
     assert record.total_model_seconds == 2.0
 
@@ -63,18 +82,14 @@ def test_mean_tokens_per_second_is_total_completion_over_total_seconds() -> None
         build_generation_result(completion_tokens=60, seconds=1.5),
         build_generation_result(completion_tokens=40, seconds=0.5),
     ]
-    record = LocalEconomyRecord.from_run(
-        model="m", results=results, total_calls=2, attempts=2, status=Status.DONE
-    )
+    record = _from_run(results, total_calls=2, attempts=2)
     assert record.mean_tokens_per_second == 50.0
 
 
 def test_mean_tokens_per_second_is_none_when_total_model_seconds_is_zero() -> None:
     # Div-by-zero guard: nonzero tokens over 0.0 seconds must yield None, never a crash or 0.0.
     results = [build_generation_result(completion_tokens=100, seconds=0.0)]
-    record = LocalEconomyRecord.from_run(
-        model="m", results=results, total_calls=1, attempts=1, status=Status.DONE
-    )
+    record = _from_run(results, total_calls=1, attempts=1)
     assert record.total_model_seconds == 0.0
     assert record.mean_tokens_per_second is None
 
@@ -85,9 +100,7 @@ def test_tokens_estimated_is_true_when_any_attempt_used_the_proxy() -> None:
         build_generation_result(tokens_estimated=False),
         build_generation_result(tokens_estimated=True),
     ]
-    record = LocalEconomyRecord.from_run(
-        model="m", results=results, total_calls=2, attempts=2, status=Status.DONE
-    )
+    record = _from_run(results, total_calls=2, attempts=2)
     assert record.tokens_estimated is True
 
 
@@ -97,9 +110,7 @@ def test_tokens_estimated_is_false_when_every_attempt_was_server_counted() -> No
         build_generation_result(tokens_estimated=False),
         build_generation_result(tokens_estimated=False),
     ]
-    record = LocalEconomyRecord.from_run(
-        model="m", results=results, total_calls=2, attempts=2, status=Status.DONE
-    )
+    record = _from_run(results, total_calls=2, attempts=2)
     assert record.tokens_estimated is False
 
 
@@ -119,9 +130,7 @@ def test_length_capped_counts_only_the_server_length_finishes() -> None:
         build_generation_result(finish_reason=None),
         build_generation_result(finish_reason="length"),
     ]
-    record = LocalEconomyRecord.from_run(
-        model="m", results=results, total_calls=5, attempts=5, status=Status.EXHAUSTED
-    )
+    record = _from_run(results, total_calls=5, attempts=5, status=Status.EXHAUSTED)
     assert record.length_capped == 3
 
 
@@ -129,9 +138,7 @@ def test_total_calls_is_the_client_count_not_the_timeline_length() -> None:
     # The off-by-one guard: a call that raised produced no result, so total_calls (3, from the
     # client) exceeds len(results) (2). The record must carry the passed count, not len().
     results = [build_generation_result(), build_generation_result()]
-    record = LocalEconomyRecord.from_run(
-        model="m", results=results, total_calls=3, attempts=3, status=Status.DONE
-    )
+    record = _from_run(results, total_calls=3, attempts=3)
     assert record.total_calls == 3
 
 
