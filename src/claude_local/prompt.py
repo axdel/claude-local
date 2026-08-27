@@ -1,10 +1,11 @@
 """Prompt assembly — the byte-stable KV-cacheable prefix and the bounded volatile tail.
 
-D-PROMPT-001: the loop reuses the server's prefill KV cache by sending a prefix that is
-byte-identical across a task's iterations — the static rules card, the task spec, and the
-IMMUTABLE test, in a fixed layout with no timestamps, run ids, or absolute paths. Pinning the
-test in the prefix also blocks the model from rewriting or importing it away. Only the tail
-varies: distilled feedback, byte-capped and path-stripped so a failure never primes a derail.
+D-PROMPT-001, amended by D-CONTEXT-001: the loop reuses the server's prefill KV cache by
+sending a prefix that is byte-identical across a task's iterations — the static rules card,
+the task spec, any ordered read-only context files, and the IMMUTABLE test, in a fixed layout
+with no builder-generated timestamps, run ids, or absolute worktree paths. Pinning the test in
+the prefix also blocks the model from rewriting or importing it away. Only the tail varies:
+distilled feedback, byte-capped and path-stripped so a failure never primes a derail.
 
 Assembly is a pure function of (card, spec): ``stable_prefix`` returns identical bytes for the
 same spec, which is what the prefill cache keys on. The card is read once at construction (a
@@ -32,6 +33,9 @@ _TRUNCATION_MARKER = "\n[...truncated]"
 # Static prefix scaffolding — part of the byte-stable prefix, so these are frozen constants.
 _SPEC_HEADER = "## Implementation task"
 _TARGET_LABEL = "Target file:"
+_CONTEXT_HEADER = (
+    "## Existing files — read-only, integrate with them, do NOT reimplement or output them."
+)
 _TEST_HEADER = "## The test — immutable; do not modify or import it away. Make it pass."
 
 # An absolute POSIX directory prefix, anchored at a token boundary (line start, whitespace, or an
@@ -50,19 +54,29 @@ class PromptBuilder:
         self._card = card_path.read_text(encoding="utf-8").rstrip("\n")
 
     def stable_prefix(self, spec: TaskSpec) -> str:
-        """The KV-cacheable prefix: rules card + task spec + the immutable test.
+        """Build the KV-cacheable rules, task, context-file, and immutable-test prefix.
 
-        Byte-identical for a given spec (D-PROMPT-001). Carries no timestamps, run ids, or
-        absolute paths, so no per-call mutation discards the server's prefill cache.
+        Byte-identical for a given spec (D-PROMPT-001). Introduces no timestamps, run ids, or
+        absolute worktree paths that would discard the server's prefill cache.
         """
-        return (
-            f"{self._card}\n\n"
-            f"{_SPEC_HEADER}\n"
-            f"{_TARGET_LABEL} {spec.impl_path}\n\n"
-            f"{spec.spec_text}\n\n"
-            f"{_TEST_HEADER}\n\n"
-            f"{spec.test_text}\n"
-        )
+        parts = [
+            self._card,
+            "\n\n",
+            _SPEC_HEADER,
+            "\n",
+            _TARGET_LABEL,
+            " ",
+            spec.impl_path,
+            "\n\n",
+            spec.spec_text,
+            "\n\n",
+        ]
+        if spec.context_files:
+            parts.extend((_CONTEXT_HEADER, "\n\n"))
+            for context_file in spec.context_files:
+                parts.extend(("### ", context_file.path, "\n\n", context_file.content, "\n\n"))
+        parts.extend((_TEST_HEADER, "\n\n", spec.test_text, "\n"))
+        return "".join(parts)
 
     def distill_feedback(self, score: TestScore, raw_output: str) -> str:
         """Distill a failing run into a compact, path-stripped, byte-capped tail.

@@ -1,11 +1,11 @@
 """Shared value objects — the leaf vocabulary of the loop.
 
 Only genuinely cross-module types live here: ``Status`` (the terminal outcome),
-``Budget`` (the hard per-task bounds), and ``TaskSpec`` (one implementation
-task). Per-owner records — ``TestScore`` (runner), ``LocalEconomyRecord``
-(telemetry), ``GenerationResult`` (client), ``LoopResult`` (loop) — live with
-their owners, so this module imports nothing from the package and stays a leaf
-every other module can depend inward on.
+``Budget`` (the hard per-task bounds), ``ContextFile`` (a read-only neighbor), and
+``TaskSpec`` (one implementation task). Per-owner records — ``TestScore`` (runner),
+``LocalEconomyRecord`` (telemetry), ``GenerationResult`` (client), and ``LoopResult``
+(loop) — live with their owners, so this module imports nothing from the package
+and stays a leaf every other module can depend inward on.
 """
 
 from __future__ import annotations
@@ -52,11 +52,25 @@ class Budget:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextFile:
+    """An existing neighbor file shown to the model as read-only context."""
+
+    path: str
+    content: str
+
+    def __post_init__(self) -> None:
+        if not self.path.strip():
+            raise ValueError("path must name a context file, got empty or whitespace")
+
+
+@dataclass(frozen=True, slots=True)
 class TaskSpec:
     """One implementation task handed to the loop.
 
     ``expected_tests`` pins the collected-node count the oracle validates against,
     so a reply that imports tests away fails the count check instead of passing.
+    ``context_files`` carries ordered, read-only neighbors the implementation must
+    integrate with and defaults to none for existing callers.
     """
 
     impl_path: str
@@ -64,6 +78,7 @@ class TaskSpec:
     test_text: str
     expected_tests: int
     budget: Budget
+    context_files: tuple[ContextFile, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.impl_path.strip():

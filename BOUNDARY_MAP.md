@@ -5,7 +5,7 @@
 | Module | Target | Rule | Notes | Status | Superseded By |
 |-|-|-|-|-|-|
 | __init__ | entrypoint | may-import | Public front door re-exports implement and Outcome. | active |  |
-| __init__ | types | may-import | Public front door re-exports Budget, Status, TaskSpec. | active |  |
+| __init__ | types | may-import | Public front door re-exports task value objects. | active |  |
 | backend | httpx | may-import | Only external transport dependency. | active |  |
 | backend | types | may-import | Transport consumes Budget. | active |  |
 | client | backend | may-import | Streams raw SSE bytes from the transport. | active |  |

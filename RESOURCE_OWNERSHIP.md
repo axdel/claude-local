@@ -9,4 +9,4 @@
 | impl-file | editing | edits.apply_files under keep_only | loop (reads), runner (reads) | paths.resolve_within realpath containment; oracle test excluded from the writable set | active |  |
 | keep_only | editing | paths.resolve_within | edits (apply), snapshot (restore) | single containment rule; rejects absolutes, resolves realpath, refuses symlinks, requires worktree containment | active |  |
 | oracle-sandbox | oracle | sandbox.sandboxed_spawn | runner (default spawn) | deny-default SBPL via sandbox-exec + post-fork setrlimit CPU/FSIZE + wall-clock SIGKILL of the process group; writable only within the caller-supplied box, no network, secrets dropped; fail-closed if sandbox-exec absent | active |  |
-| stable-prefix | prompt | prompt builder | client (sends), loop (builds once) | byte-identical per task; feedback isolated to the tail | active |  |
+| stable-prefix | prompt | PromptBuilder | loop (builds once), client (sends) | PromptBuilder is the single writer; feedback remains isolated to the tail. | active |  |

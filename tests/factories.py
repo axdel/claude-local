@@ -10,7 +10,7 @@ from __future__ import annotations
 from claude_local.client import GenerationResult
 from claude_local.runner import TestScore
 from claude_local.telemetry import LocalEconomyRecord
-from claude_local.types import Budget, Status, TaskSpec
+from claude_local.types import Budget, ContextFile, Status, TaskSpec
 
 
 def build_generation_result(**overrides: object) -> GenerationResult:
@@ -35,6 +35,16 @@ def build_budget(**overrides: object) -> Budget:
     fields: dict[str, object] = {"max_attempts": 3, "max_tokens": 2048, "timeout_s": 30.0}
     fields.update(overrides)
     return Budget(**fields)  # type: ignore[arg-type]
+
+
+def build_context_file(**overrides: object) -> ContextFile:
+    """Canonical valid ContextFile; a test overrides only the field it exercises."""
+    fields: dict[str, object] = {
+        "path": "src/claude_local/neighbor.py",
+        "content": "VALUE = 1\n",
+    }
+    fields.update(overrides)
+    return ContextFile(**fields)  # type: ignore[arg-type]
 
 
 def build_task_spec(**overrides: object) -> TaskSpec:
