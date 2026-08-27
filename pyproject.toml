@@ -16,7 +16,9 @@ packages = ["src/claude_local"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "src" for the package under test; "tests" so shared helpers (factories.py) import
+# as top-level modules regardless of pytest's import mode.
+pythonpath = ["src", "tests"]
 # pytest-gremlins' coverage-guided test selection under-counts kills when per-test
 # coverage attribution is coarse (it judges each mutant with too few tests, reporting
 # false survivors the full suite demonstrably kills). Run the full suite per mutant for
@@ -55,3 +57,6 @@ select = ["E", "F", "W", "I", "S", "UP", "B", "C4", "SIM", "RUF"]
 pythonVersion = "3.12"
 pythonPlatform = "All"
 typeCheckingMode = "standard"
+# "src" for the package, "tests" so shared test helpers (factories.py) resolve —
+# mirrors the pytest pythonpath so the type checker and the runner agree.
+extraPaths = ["src", "tests"]
