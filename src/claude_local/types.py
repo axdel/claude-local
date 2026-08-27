@@ -18,7 +18,7 @@ class Status(StrEnum):
     """The four terminal outcomes of a loop run.
 
     Values are stable lowercase strings: telemetry serializes them into the
-    economy record and the contract adapter maps them to a BuildStatus.
+    economy record and the entry point surfaces them on its Outcome.
     """
 
     DONE = "done"

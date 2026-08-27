@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from claude_local.client import GenerationResult
 from claude_local.runner import TestScore
-from claude_local.types import Budget, TaskSpec
+from claude_local.telemetry import LocalEconomyRecord
+from claude_local.types import Budget, Status, TaskSpec
 
 
 def build_generation_result(**overrides: object) -> GenerationResult:
@@ -65,3 +66,23 @@ def build_test_score(**overrides: object) -> TestScore:
     }
     fields.update(overrides)
     return TestScore(**fields)  # type: ignore[arg-type]
+
+
+def build_local_economy_record(**overrides: object) -> LocalEconomyRecord:
+    """Canonical valid LocalEconomyRecord; a test overrides only the field it exercises.
+
+    Defaults describe one clean, server-counted DONE run; a test shaping an Outcome overrides
+    only ``status`` (or the count it asserts on) and takes the rest.
+    """
+    fields: dict[str, object] = {
+        "model": "test/model",
+        "total_calls": 1,
+        "total_completion_tokens": 40,
+        "total_model_seconds": 2.0,
+        "mean_tokens_per_second": 20.0,
+        "tokens_estimated": False,
+        "status": Status.DONE,
+        "attempts": 1,
+    }
+    fields.update(overrides)
+    return LocalEconomyRecord(**fields)  # type: ignore[arg-type]
