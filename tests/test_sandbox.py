@@ -2,10 +2,12 @@
 
 The sandbox is the kernel boundary that executes untrusted model code (the impl file,
 imported by ``uv run pytest``). These tests drive ``sandboxed_spawn`` with real
-subprocesses on the live kernel and assert the two security properties hold — a write
-*outside* the writable box is denied, and network egress is denied — plus the one
-capability it must preserve (a write *inside* the box) and the hang backstop (a
-wall-clock timeout that kills a runaway process group).
+subprocesses on the live kernel and assert its security properties hold — a write
+*outside* the writable box is denied, network egress is denied, and the child's HOME is
+the disposable box (never the developer's real home) — plus the one capability it must
+preserve (a write *inside* the box) and the two teardown backstops: a wall-clock timeout
+that kills a runaway process group, and an unconditional group kill so a non-timeout
+interruption never orphans the confined process tree.
 
 Skipped where ``sandbox-exec`` is unavailable (non-macOS CI): the property under test is
 a macOS-kernel fact, so there is nothing meaningful to assert without the kernel.
@@ -14,6 +16,7 @@ a macOS-kernel fact, so there is nothing meaningful to assert without the kernel
 from __future__ import annotations
 
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -92,3 +95,63 @@ def test_a_hanging_command_is_killed_at_the_timeout(tmp_path: Path) -> None:
         _run("import time; time.sleep(30)", box, timeout_s=2.0)
     # Oracle: the 2s wall-clock cap fires long before the 30s sleep would return.
     assert time.monotonic() - started < 15.0
+
+
+def test_home_points_into_the_box_not_the_developer_home(tmp_path: Path) -> None:
+    box = tmp_path / "box"
+    box.mkdir()
+    outcome = box / "home.txt"  # inside the box, so the child can always record what it saw
+    payload = (
+        "import os, pathlib; "
+        f"pathlib.Path({str(outcome)!r}).write_text(os.environ.get('HOME', ''))"
+    )
+    _run(payload, box)
+    # Oracle: the confined child's HOME is the disposable box, never the developer's real home,
+    # so a credential reader keyed on $HOME (~/.ssh, ~/.aws, ~/.netrc, ~/.config/gh) resolves into
+    # an empty box. The box path is the caller's input, derivable without running the sandbox.
+    assert outcome.read_text() == str(box)
+
+
+def test_a_non_timeout_interruption_still_kills_the_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    box = tmp_path / "box"
+    box.mkdir()
+    started = box / "started.txt"  # the child's "I am running" signal, written inside the box
+    marker = box / "leaked.txt"  # a delayed write; lands only if the group outlives the failure
+    # The child announces startup, then writes its real marker only after a delay. The delay is the
+    # window a leaked (un-torn-down) process group would survive to complete.
+    payload = (
+        "import time, pathlib; "
+        f"pathlib.Path({str(started)!r}).write_text('go'); "
+        "time.sleep(2); "
+        f"pathlib.Path({str(marker)!r}).write_text('leaked')"
+    )
+    real_communicate = subprocess.Popen.communicate
+    injected = {"pending": True}
+
+    def interrupt_once(
+        self: subprocess.Popen[bytes], *_args: object, **_kwargs: object
+    ) -> tuple[bytes, bytes]:
+        # Fail the FIRST communicate (the timed wait) with a NON-timeout error — but only once the
+        # confined child has actually started, so the fault lands on a live process group rather
+        # than one still bootstrapping. The teardown's own reap call (the second communicate, after
+        # the group kill) has pending cleared and delegates to the real, argless communicate.
+        if injected["pending"]:
+            for _ in range(250):  # ~5s ceiling; child signals startup within a few hundred ms
+                if started.exists():
+                    break
+                time.sleep(0.02)
+            injected["pending"] = False
+            raise RuntimeError("injected non-timeout interruption")
+        return real_communicate(self)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", interrupt_once)
+    with pytest.raises(RuntimeError, match="injected non-timeout"):
+        _run(payload, box, timeout_s=30.0)
+    time.sleep(3)  # past the child's ~2s delayed write, with margin, before asserting
+    # Oracle: teardown must SIGKILL the whole group on ANY communicate failure, not only a timeout,
+    # so the orphaned child never reaches its delayed write. Kill-on-timeout-only lets the marker
+    # land; correct teardown prevents it. The expected absence is derived from the confinement
+    # requirement (no confined process outlives the harness), not from running the code.
+    assert not marker.exists()

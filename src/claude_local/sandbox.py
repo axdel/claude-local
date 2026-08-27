@@ -12,9 +12,10 @@ command in macOS ``sandbox-exec`` under a deny-by-default SBPL profile, so the s
 - and nothing else — no network, no write anywhere else on disk.
 
 Layered on top: a hard CPU/file-size ``setrlimit`` cap (Layer 1) and a wall-clock timeout
-that SIGKILLs the whole process group (Layer 2), so a hang or runaway cannot outlive its
-budget. The module is a stdlib-only leaf — it takes a plain ``timeout_s`` float, never a
-domain type — so it stays decoupled and reusable.
+whose teardown SIGKILLs the whole process group — on overrun, and on any other interrupted
+wait — so no hang, runaway, or mid-run failure leaves a confined process behind (Layer 2).
+The module is a stdlib-only leaf — it takes a plain ``timeout_s`` float, never a domain
+type — so it stays decoupled and reusable.
 
 Fail-closed: if ``sandbox-exec`` is absent the spawn raises rather than running untrusted
 code unconfined. Since the local models are Apple-silicon MLX, the real path is always
@@ -27,9 +28,8 @@ import contextlib
 import os
 import resource
 import signal
-import subprocess  # nosec B404 (D-SANDBOX-001: argv is an orchestrator-controlled constant)
+import subprocess  # nosec B404 (D-SANDBOX-001: argv carries no model input, not shell-interpreted)
 import sys
-import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -95,34 +95,31 @@ def sandboxed_spawn(
         raise SandboxUnavailable(
             "sandbox-exec is unavailable; refusing to run untrusted code unconfined"
         )
-    profile = _build_profile(write_box)
-    env = _sandbox_env(write_box)
-    # The profile lives in a parent-owned temp file OUTSIDE the box, so the confined child
-    # (which cannot write outside the box) can never rewrite the policy judging it.
-    with tempfile.NamedTemporaryFile("w", suffix=".sb", prefix="oracle-", delete=False) as handle:
-        handle.write(profile)
-        profile_path = handle.name
+    # The profile is passed inline with -p, never via a temp file: there is no policy file on
+    # disk for the confined child to rewrite, and nothing to unlink — so no cleanup can race
+    # sandbox-exec's lazy, post-fork profile read and orphan (or incidentally kill) the child.
+    full_cmd = [_SANDBOX_EXEC, "-p", _build_profile(write_box), *cmd]
+    proc = subprocess.Popen(  # noqa: S603 # nosec B603 (D-SANDBOX-001)
+        full_cmd,
+        cwd=cwd,
+        env=_sandbox_env(write_box),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,  # own session/group, so a hang's whole tree is killable
+        preexec_fn=_apply_rlimits,
+    )
     try:
-        full_cmd = [_SANDBOX_EXEC, "-f", profile_path, *cmd]
-        proc = subprocess.Popen(  # noqa: S603 # nosec B603 (D-SANDBOX-001)
-            full_cmd,
-            cwd=cwd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,  # own session/group, so a hang's whole tree is killable
-            preexec_fn=_apply_rlimits,
-        )
-        try:
-            proc.communicate(timeout=timeout_s)
-        except subprocess.TimeoutExpired as expired:
+        proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired as expired:
+        raise SandboxTimeout(f"oracle exceeded the {timeout_s:g}s wall-clock budget") from expired
+    finally:
+        # Tear the whole group down on ANY exit where the child is still live — a timeout OR an
+        # unexpected interruption of communicate() — so no confined process is ever orphaned. The
+        # poll guard skips the kill when communicate() already reaped the child (the success path),
+        # so killpg never targets a since-recycled PID.
+        if proc.poll() is None:
             _kill_session(proc)
             proc.communicate()
-            raise SandboxTimeout(
-                f"oracle exceeded the {timeout_s:g}s wall-clock budget"
-            ) from expired
-    finally:
-        os.unlink(profile_path)
 
 
 def _build_profile(write_box: Path) -> str:
@@ -137,12 +134,17 @@ def _sbpl_quote(path: str) -> str:
 
 
 def _sandbox_env(write_box: Path) -> dict[str, str]:
-    """Minimal allowlisted environment — drops every parent secret (no API tokens)."""
+    """Minimal allowlisted environment — drops every parent secret, and points HOME at the box.
+
+    HOME is the disposable box, never the developer's real home, so a credential reader keyed on
+    ``$HOME`` (``~/.ssh``, ``~/.aws``, ``~/.netrc``, ``~/.config/gh``) resolves into an empty
+    directory rather than the operator's secrets. No parent API tokens are forwarded at all.
+    """
     box = str(write_box)
     parent = os.environ
     return {
         "PATH": parent.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
-        "HOME": parent.get("HOME", box),
+        "HOME": box,
         "LANG": parent.get("LANG", "en_US.UTF-8"),
         "TMPDIR": box,
         "UV_CACHE_DIR": str(Path(box) / "uvcache"),
@@ -161,7 +163,7 @@ def _kill_session(proc: subprocess.Popen[bytes]) -> None:
     """SIGKILL the child's whole process group (it leads a new session).
 
     ``ProcessLookupError`` is suppressed for the benign race where the child has already
-    exited between the timeout firing and the signal landing — the group is gone either way.
+    exited between the wait ending and the signal landing — the group is gone either way.
     """
     with contextlib.suppress(ProcessLookupError):
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
