@@ -1,0 +1,14 @@
+# Pre-commit gate — the fast, deterministic checks every commit must pass.
+# Plain project tooling only (ruff, basedpyright, pytest — all dev dependencies), so a
+# fresh clone works after `lefthook install` with no other CLI on PATH. Safe to edit.
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      run: uv run ruff check
+    format:
+      run: uv run ruff format --check
+    types:
+      run: uv run basedpyright
+    tests:
+      run: uv run pytest -q

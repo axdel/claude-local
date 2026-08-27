@@ -1,0 +1,2 @@
+FILE: src/claude_local/bar.py
+BAR = 7

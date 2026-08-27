@@ -1,26 +1,51 @@
 [project]
 name = "claude-local"
-version = "0.0.1"
-description = "Free local models as supervised, test-first code implementers — a deterministic red→green loop driven by claude-protocol"
+dynamic = ["version"]
+description = "Free local models as supervised, test-first code implementers — a deterministic red→green loop driven by Claude Code"
 requires-python = ">=3.12"
-dependencies = ["httpx>=0.27"]
+dependencies = [
+    "httpx>=0.27",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Single source of truth for the version: src/claude_local/__init__.py __version__.
+# hatchling reads that literal at build time (DERIVATION_MAP: PackageVersion), so the
+# package attribute and the wheel metadata can never drift.
+[tool.hatch.version]
+path = "src/claude_local/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/claude_local"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "src" for the package under test; "tests" so shared helpers (factories.py) import
+# as top-level modules regardless of pytest's import mode.
+pythonpath = ["src", "tests"]
+# pytest-gremlins' coverage-guided test selection under-counts kills when per-test
+# coverage attribution is coarse (it judges each mutant with too few tests, reporting
+# false survivors the full suite demonstrably kills). Run the full suite per mutant for
+# a correct kill rate. Inert on non-mutation runs. See testing-methodology → Mutation.
+addopts = ["--gremlin-no-coverage-filter"]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "ruff>=0.9",
     "basedpyright>=1.29",
+    "bandit>=1.9.4",
+    "pip-audit>=2.10.1",
+    "lizard>=1.24.0",
+    "pytest-gremlins>=1.9.0",
+    "vulture>=2.16",
+    "deptry>=0.25.1",
+    "import-linter>=2.13",
+    "hypothesis>=6.165.10",
+    "pytest-cov>=7.1.0",
+    "grimp>=3.15",
 ]
 
 [tool.ruff]
@@ -30,7 +55,61 @@ line-length = 99
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "S", "UP", "B", "C4", "SIM", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+# `assert` is the test idiom; flake8-bandit's S101 targets production code, not tests.
+"tests/**" = ["S101"]
+# Example oracle files use the `assert` idiom (S101) and import the impl the loop
+# generates into a nested `src/` after a `sys.path` insert (E402) — the oracle pattern,
+# not production smells. Named `*_oracle.py`, never `test_*.py`: the impl an oracle imports
+# exists only inside the loop's worktree, so a `test_` name would make the repo's own pytest
+# (and the quality runner) try to collect it and fail on the missing import.
+"examples/**/*_oracle.py" = ["S101", "E402"]
+
 [tool.basedpyright]
 pythonVersion = "3.12"
 pythonPlatform = "All"
 typeCheckingMode = "standard"
+# "src" for the package, "tests" so shared test helpers (factories.py) resolve —
+# mirrors the pytest pythonpath so the type checker and the runner agree.
+extraPaths = ["src", "tests"]
+# Example oracle files (`*_oracle.py`) import the implementation the loop generates into a temp
+# worktree, so their import target never exists in-repo and cannot be resolved statically.
+# Overriding `exclude` replaces pyright's defaults, so the three defaults are restated alongside
+# the glob.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/**/*_oracle.py"]
+
+[tool.deptry]
+# Scanned from the repo root, deptry cannot infer that this src-layout package is first-party,
+# so every intra-package `from claude_local...` import reads as a transitive-dependency error
+# (DEP003). Naming the package fixes it — the runtime surface is genuinely httpx-only.
+known_first_party = ["claude_local"]
+
+[tool.deptry.per_rule_ignores]
+# The example oracle imports the loop-generated implementation module (`quicksort`), which by
+# design exists only inside the loop's worktree, never as a declared dependency — a permanent,
+# expected DEP001 for that one module name.
+DEP001 = ["quicksort"]
+
+[tool.importlinter]
+# BOUNDARY_MAP.md declares the per-module import directions in prose; this layers contract is the
+# mechanical enforcement of the one-way flow it documents (orchestration → adapters → leaves).
+# grimp builds the STATIC import graph, so an upward import or a cycle fails the contract even when
+# it would import cleanly at runtime. `exhaustive` makes an unplaced new module a hard failure, so
+# the contract and the package stay in lockstep. Verified against import-linter 2.13: `|` marks
+# independent siblings (a layer's modules may not import each other), which the real graph
+# satisfies — no two modules in any single layer cross-import.
+root_package = "claude_local"
+
+[[tool.importlinter.contracts]]
+name = "claude_local dependencies flow one way (no cycles, no upward imports)"
+type = "layers"
+containers = ["claude_local"]
+exhaustive = true
+layers = [
+    "entrypoint",
+    "loop",
+    "telemetry",
+    "client | prompt | snapshot",
+    "backend | derail | edits | runner",
+    "paths | sandbox | sse | types",
+]

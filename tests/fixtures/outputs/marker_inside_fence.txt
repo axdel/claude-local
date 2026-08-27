@@ -1,0 +1,8 @@
+FILE: src/claude_local/baz.py
+```python
+DOC = """
+FILE: inner/marker.py
+"""
+def baz() -> str:
+    return DOC
+```

@@ -1,0 +1,8 @@
+Option one:
+```python
+CHOICE = 1
+```
+Or option two:
+```python
+CHOICE = 2
+```

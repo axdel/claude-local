@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the claude-local loop works</title>
+<style>
+  :root{
+    --ink:#23272e; --muted:#6b7280; --accent:#2f6feb;
+    --green:#1a7f37; --amber:#bf8700; --red:#cf222e;
+    --line:#e2e6ea; --code:#f6f8fa;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:#fff; color:var(--ink);
+    font:17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:820px; margin:0 auto; padding:56px 24px 110px}
+  h1{font-size:31px; line-height:1.18; letter-spacing:-.02em; margin:0 0 10px}
+  .sub{color:var(--muted); font-size:17px; margin:0}
+  h2{font-size:21px; letter-spacing:-.01em; margin:54px 0 14px}
+  h2 .n{color:var(--accent); font-variant-numeric:tabular-nums; margin-right:12px; font-weight:600}
+  h3{font-size:16px; margin:30px 0 8px; color:var(--ink)}
+  p{margin:14px 0}
+  strong{font-weight:640}
+  a{color:var(--accent); text-decoration:none; border-bottom:1px solid rgba(47,111,235,.28)}
+  hr{border:0; border-top:1px solid var(--line); margin:46px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; background:var(--code);
+       padding:1px 5px; border-radius:5px; font-size:.85em}
+  pre{background:var(--code); padding:16px 18px; border-radius:10px; overflow-x:auto;
+      font-size:13.5px; line-height:1.55; margin:18px 0}
+  pre code{background:none; padding:0; font-size:inherit}
+  figure{margin:28px 0; text-align:center}
+  figure svg{max-width:100%; height:auto}
+  figcaption{color:var(--muted); font-size:13.5px; font-style:italic; margin-top:10px}
+  .note{border-left:3px solid var(--accent); padding:3px 0 3px 16px; margin:22px 0; color:#3a4048}
+  ul.clean{list-style:none; padding-left:0; margin:16px 0}
+  ul.clean li{position:relative; padding:6px 0 6px 26px}
+  ul.clean li::before{content:""; position:absolute; left:2px; top:15px; width:8px; height:8px;
+      border-radius:50%; background:var(--accent)}
+  ul.out{list-style:none; padding-left:0; margin:16px 0}
+  ul.out li{position:relative; padding:9px 0 9px 30px; border-top:1px solid var(--line)}
+  ul.out li:first-child{border-top:0}
+  ul.out li::before{content:""; position:absolute; left:2px; top:16px; width:11px; height:11px; border-radius:50%}
+  li.done::before{background:var(--green)} li.derail::before{background:var(--red)}
+  li.block::before{background:var(--muted)} li.exhaust::before{background:var(--amber)}
+  .k{color:var(--muted)}
+  .foot{color:var(--muted); font-size:14px; margin-top:60px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>How the claude-local loop works</h1>
+<p class="sub">A deterministic red&thinsp;&rarr;&thinsp;green loop that drives a free local model to write code &mdash; and can never be talked into declaring itself done.</p>
+
+<hr>
+
+<h2><span class="n">1</span>The shape of it: three actors, one barrier</h2>
+
+<p>claude-local is <strong>a loop, not an agent</strong>. Nobody hands a chat model a repo and hopes.
+Instead, three parties each do exactly one job, and the boundaries between them are the whole design.</p>
+
+<figure>
+<svg viewBox="0 0 760 250" role="img" aria-label="Three actors: orchestrator, loop, model">
+  <defs>
+    <marker id="ar-a" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#6b7280"/></marker>
+  </defs>
+  <!-- actors -->
+  <circle cx="110" cy="115" r="48" fill="#eaf1ff" stroke="#2f6feb" stroke-width="2"/>
+  <text x="110" y="110" text-anchor="middle" font-size="13.5" fill="#1a3a7a">
+    <tspan x="110">Frontier</tspan><tspan x="110" dy="16">orchestrator</tspan></text>
+  <circle cx="380" cy="115" r="48" fill="#e9f7ee" stroke="#1a7f37" stroke-width="2"/>
+  <text x="380" y="110" text-anchor="middle" font-size="13.5" fill="#12591f">
+    <tspan x="380">the loop</tspan><tspan x="380" dy="16">deterministic</tspan></text>
+  <circle cx="650" cy="115" r="48" fill="#f2f4f7" stroke="#6b7280" stroke-width="2"/>
+  <text x="650" y="110" text-anchor="middle" font-size="13.5" fill="#3a4048">
+    <tspan x="650">local</tspan><tspan x="650" dy="16">model</tspan></text>
+  <!-- top arrows -->
+  <line x1="162" y1="92" x2="326" y2="92" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar-a)"/>
+  <text x="244" y="82" text-anchor="middle" font-size="12" fill="#6b7280">spec &middot; test &middot; budget</text>
+  <line x1="432" y1="92" x2="596" y2="92" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar-a)"/>
+  <text x="514" y="82" text-anchor="middle" font-size="12" fill="#6b7280">prefix + feedback</text>
+  <!-- bottom return arrow -->
+  <line x1="598" y1="140" x2="434" y2="140" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar-a)"/>
+  <text x="514" y="158" text-anchor="middle" font-size="12" fill="#6b7280">one whole file (raw text)</text>
+  <text x="650" y="192" text-anchor="middle" font-size="12" fill="#cf222e">never a writable test</text>
+</svg>
+<figcaption>The orchestrator writes the rules; the loop enforces them; the model only ever returns text.</figcaption>
+</figure>
+
+<ul class="clean">
+  <li><strong>The frontier orchestrator</strong> (a strong model, e.g. this one) writes the task
+      <em>spec</em>, writes a <em>failing test that is the sole definition of &ldquo;done&rdquo;</em>, and sets the
+      budget. It never writes the implementation.</li>
+  <li><strong>The loop</strong> (plain Python, no intelligence) hands the model a prompt, applies whatever
+      text comes back to <em>one permitted file</em>, runs the test, and decides. It is the only actor
+      allowed to call the run &ldquo;done&rdquo;.</li>
+  <li><strong>The local model</strong> (a small, free, often weak model) receives the prompt and returns
+      <em>one complete file as raw text</em>. No tools, no shell, no file access &mdash; and crucially, it
+      never receives a test it can edit.</li>
+</ul>
+
+<p class="note">The single load-bearing idea: <strong>the test is the oracle, and the model can never
+touch it.</strong> A weak model cannot &ldquo;win&rdquo; by deleting an assertion, importing the test away, or
+claiming success &mdash; because it never holds the test, and only a genuinely green run ends the loop.</p>
+
+<hr>
+
+<h2><span class="n">2</span>The four things the loop moves around</h2>
+
+<p>Everything the loop needs for one task is a small, immutable <code>TaskSpec</code>:</p>
+
+<ul class="clean">
+  <li><strong>impl_path</strong> &mdash; the <em>one</em> file the model is allowed to write (e.g. <code>src/calculator.py</code>).</li>
+  <li><strong>spec_text</strong> &mdash; the plain-English description of what to build.</li>
+  <li><strong>test_text</strong> &mdash; the immutable oracle test. The loop writes it to the worktree
+      <em>root</em>, on purpose: that puts it outside the model&rsquo;s writable folder and outside any snapshot,
+      so it can never be overwritten.</li>
+  <li><strong>budget</strong> &mdash; three hard caps: <code>max_attempts</code> (how many tries),
+      <code>max_tokens</code> (how long each decode may run), <code>timeout_s</code> (wall-clock). All strictly positive.</li>
+</ul>
+
+<hr>
+
+<h2><span class="n">3</span>One turn of the loop, step by step</h2>
+
+<p>The loop builds the prompt&rsquo;s stable front <strong>once</strong>, writes the oracle test <strong>once</strong>,
+then repeats a tight cycle until the test passes or the budget runs out.</p>
+
+<figure>
+<svg viewBox="0 0 760 300" role="img" aria-label="The generate-apply-test-feedback cycle">
+  <defs>
+    <marker id="ar-b" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#6b7280"/></marker>
+    <marker id="ar-g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#1a7f37"/></marker>
+    <marker id="ar-r" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#bf8700"/></marker>
+  </defs>
+  <!-- feedback arc (drawn first, sits behind) -->
+  <path d="M560,120 C560,44 92,44 92,122" fill="none" stroke="#bf8700" stroke-width="1.6"
+        stroke-dasharray="5 4" marker-end="url(#ar-r)"/>
+  <text x="326" y="38" text-anchor="middle" font-size="12.5" fill="#8a6400">
+    red &rarr; distill the failure into a &le;4&nbsp;KB feedback tail</text>
+
+  <!-- nodes -->
+  <circle cx="92" cy="158" r="36" fill="#eaf1ff" stroke="#2f6feb" stroke-width="1.8"/>
+  <text x="92" y="162" text-anchor="middle" font-size="13" fill="#1a3a7a">generate</text>
+
+  <circle cx="252" cy="158" r="36" fill="#f2f4f7" stroke="#6b7280" stroke-width="1.8"/>
+  <text x="252" y="154" text-anchor="middle" font-size="12.5" fill="#3a4048">
+    <tspan x="252">apply to</tspan><tspan x="252" dy="15">impl file</tspan></text>
+
+  <circle cx="412" cy="158" r="36" fill="#f2f4f7" stroke="#6b7280" stroke-width="1.8"/>
+  <text x="412" y="154" text-anchor="middle" font-size="12.5" fill="#3a4048">
+    <tspan x="412">run the</tspan><tspan x="412" dy="15">oracle</tspan></text>
+
+  <circle cx="560" cy="158" r="34" fill="#fff8e6" stroke="#bf8700" stroke-width="1.8"/>
+  <text x="560" y="162" text-anchor="middle" font-size="13" fill="#8a6400">green?</text>
+
+  <circle cx="690" cy="158" r="36" fill="#e9f7ee" stroke="#1a7f37" stroke-width="2"/>
+  <text x="690" y="162" text-anchor="middle" font-size="13" fill="#12591f">DONE</text>
+
+  <!-- straight arrows -->
+  <line x1="130" y1="158" x2="214" y2="158" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar-b)"/>
+  <line x1="290" y1="158" x2="374" y2="158" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar-b)"/>
+  <line x1="450" y1="158" x2="524" y2="158" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar-b)"/>
+  <line x1="596" y1="158" x2="652" y2="158" stroke="#1a7f37" stroke-width="1.8" marker-end="url(#ar-g)"/>
+  <text x="624" y="148" text-anchor="middle" font-size="12" fill="#1a7f37">yes</text>
+
+  <!-- once note -->
+  <text x="92" y="216" text-anchor="middle" font-size="11.5" fill="#6b7280">prefix built once &middot; cached</text>
+
+  <!-- early exits -->
+  <line x1="92" y1="194" x2="92" y2="256" stroke="#cf222e" stroke-width="1.4" marker-end="url(#ar-b)"/>
+  <text x="92" y="274" text-anchor="middle" font-size="11.5" fill="#cf222e">bad decode &rarr; DERAILED</text>
+  <line x1="252" y1="194" x2="252" y2="256" stroke="#6b7280" stroke-width="1.4" marker-end="url(#ar-b)"/>
+  <text x="252" y="274" text-anchor="middle" font-size="11.5" fill="#6b7280">no usable file &rarr; BLOCKED</text>
+</svg>
+<figcaption>Only the tail of the prompt changes between tries. Green ends the loop; a red run feeds its own failure back.</figcaption>
+</figure>
+
+<p>In order, each attempt does exactly this:</p>
+
+<ul class="clean">
+  <li><strong>Generate.</strong> Send the stable prefix plus (after the first try) a distilled feedback
+      tail. Stream the tokens back.</li>
+  <li><strong>Guard the decode.</strong> If the derail guard trips mid-stream (see &sect;6), abort and stop &mdash; this run is <em>DERAILED</em>.</li>
+  <li><strong>Extract the whole file.</strong> Pull the complete file block out of the raw text. If the
+      model returned only prose with no usable block, stop &mdash; <em>BLOCKED</em>.</li>
+  <li><strong>Apply it &mdash; to one path only.</strong> Write it to <code>impl_path</code>. If the extracted
+      edit aims anywhere else, the path guard refuses it and the run stops &mdash; <em>BLOCKED</em>.</li>
+  <li><strong>Run the oracle.</strong> Execute the frozen test in a subprocess and read a structured score.</li>
+  <li><strong>Snapshot.</strong> Capture the attempt and its score (see &sect;5).</li>
+  <li><strong>Decide.</strong> Green &rarr; break, we&rsquo;re <em>DONE</em>. Otherwise loop again with the failure as feedback.</li>
+</ul>
+
+<p>The score is never scraped from console text &mdash; the loop runs <code>uv&nbsp;run&nbsp;pytest</code> with a
+JUnit-XML report and parses that. A run counts as green only when <strong>exactly the expected number
+of tests ran</strong> and all passed. That count-pin is what stops a model from &ldquo;passing&rdquo; by making the
+tests disappear: skip one, import it away, or break collection, and the count falls short &mdash; invalid, not green.</p>
+
+<hr>
+
+<h2><span class="n">4</span>A worked example: teaching a model to add</h2>
+
+<p>The spec asks for <code>add(a, b)</code>. The orchestrator&rsquo;s oracle pins three sums it worked out by
+hand &mdash; never by running any code:</p>
+
+<pre><code>from calculator import add
+
+def test_add_two_positives():  assert add(2, 3)   == 5
+def test_add_with_zero():      assert add(7, 0)   == 7
+def test_add_two_negatives():  assert add(-4, -6) == -10</code></pre>
+
+<p>Now watch a weak model fumble toward the answer. It cannot see these are the assertions&rsquo; <em>reasons</em>
+&mdash; it only ever gets told how many passed and which failed.</p>
+
+<figure>
+<svg viewBox="0 0 760 268" role="img" aria-label="Three attempts scored against the oracle">
+  <text x="30" y="30" font-size="12.5" fill="#6b7280">cases &rarr; &nbsp; (2,&#8202;3)=5 &nbsp;&nbsp; (7,&#8202;0)=7 &nbsp;&nbsp; (&minus;4,&#8202;&minus;6)=&minus;10</text>
+
+  <!-- row 1 -->
+  <text x="30" y="86" font-size="14" font-family="ui-monospace,Menlo,monospace" fill="#23272e">abs(a)+abs(b)</text>
+  <g>
+    <rect x="288" y="66" width="32" height="32" rx="6" fill="#e9f7ee" stroke="#1a7f37"/><text x="304" y="88" text-anchor="middle" font-size="16" fill="#1a7f37">&#10003;</text>
+    <rect x="332" y="66" width="32" height="32" rx="6" fill="#e9f7ee" stroke="#1a7f37"/><text x="348" y="88" text-anchor="middle" font-size="16" fill="#1a7f37">&#10003;</text>
+    <rect x="376" y="66" width="32" height="32" rx="6" fill="#fdeaea" stroke="#cf222e"/><text x="392" y="88" text-anchor="middle" font-size="16" fill="#cf222e">&#10007;</text>
+  </g>
+  <text x="430" y="86" font-size="13.5" fill="#23272e">2 / 3</text>
+  <text x="500" y="86" font-size="13" fill="#6b7280">best so far: 2 / 3</text>
+
+  <!-- row 2 -->
+  <text x="30" y="151" font-size="14" font-family="ui-monospace,Menlo,monospace" fill="#23272e">a &minus; b</text>
+  <g>
+    <rect x="288" y="131" width="32" height="32" rx="6" fill="#fdeaea" stroke="#cf222e"/><text x="304" y="153" text-anchor="middle" font-size="16" fill="#cf222e">&#10007;</text>
+    <rect x="332" y="131" width="32" height="32" rx="6" fill="#e9f7ee" stroke="#1a7f37"/><text x="348" y="153" text-anchor="middle" font-size="16" fill="#1a7f37">&#10003;</text>
+    <rect x="376" y="131" width="32" height="32" rx="6" fill="#fdeaea" stroke="#cf222e"/><text x="392" y="153" text-anchor="middle" font-size="16" fill="#cf222e">&#10007;</text>
+  </g>
+  <text x="430" y="151" font-size="13.5" fill="#23272e">1 / 3</text>
+  <text x="500" y="151" font-size="13" fill="#bf8700">best still 2 / 3 &mdash; repair regressed, ignored</text>
+
+  <!-- row 3 -->
+  <text x="30" y="216" font-size="14" font-family="ui-monospace,Menlo,monospace" fill="#23272e">a + b</text>
+  <g>
+    <rect x="288" y="196" width="32" height="32" rx="6" fill="#e9f7ee" stroke="#1a7f37"/><text x="304" y="218" text-anchor="middle" font-size="16" fill="#1a7f37">&#10003;</text>
+    <rect x="332" y="196" width="32" height="32" rx="6" fill="#e9f7ee" stroke="#1a7f37"/><text x="348" y="218" text-anchor="middle" font-size="16" fill="#1a7f37">&#10003;</text>
+    <rect x="376" y="196" width="32" height="32" rx="6" fill="#e9f7ee" stroke="#1a7f37"/><text x="392" y="218" text-anchor="middle" font-size="16" fill="#1a7f37">&#10003;</text>
+  </g>
+  <text x="430" y="216" font-size="13.5" fill="#12591f">3 / 3</text>
+  <text x="500" y="216" font-size="13" fill="#1a7f37">green &rarr; DONE</text>
+</svg>
+<figcaption>Attempt&nbsp;2 is <em>worse</em> than attempt&nbsp;1 &mdash; and the loop simply keeps the better one.</figcaption>
+</figure>
+
+<ul class="clean">
+  <li><strong>Attempt 1 &mdash; <code>abs(a) + abs(b)</code>.</strong> Passes the two non-negative cases, fails the
+      negatives (it returns +10, not &minus;10). Score: <strong>2/3</strong>. The failure &mdash; the failing test&rsquo;s
+      name and a slice of the traceback &mdash; becomes the feedback for the next try.</li>
+  <li><strong>Attempt 2 &mdash; <code>a - b</code>.</strong> The model over-corrects and <em>regresses</em> to
+      <strong>1/3</strong>. This is the exact trap the loop is built to survive: repair feedback can make
+      things worse. The loop keeps attempt&nbsp;1 as the best-so-far and moves on.</li>
+  <li><strong>Attempt 3 &mdash; <code>a + b</code>.</strong> All three sums match. The run is <strong>green</strong>,
+      the loop breaks, and the task is <strong>DONE</strong>.</li>
+</ul>
+
+<hr>
+
+<h2><span class="n">5</span>The safety net: never end worse than your best</h2>
+
+<p>Because a repair can regress (attempt&nbsp;2 above), the loop treats every attempt as a candidate and
+keeps a <strong>snapshot</strong> of each. After the loop ends &mdash; for <em>any</em> reason &mdash; it restores the
+single best one it ever saw. &ldquo;Best&rdquo; is a strict ranking: <strong>most tests passed</strong>, then fewest
+crashes, then fewest failures, then earliest attempt to break a tie. A crashed attempt (zero passing)
+always ranks below any attempt that ran even one test.</p>
+
+<p>So imagine the model never stumbles onto <code>a + b</code> and the budget runs out at <code>2/3&nbsp;&rarr;&nbsp;1/3&nbsp;&rarr;&nbsp;0/3</code>.
+The loop doesn&rsquo;t leave you with the last, worst attempt. It rewinds the file to the <strong>2/3</strong> version
+from attempt&nbsp;1 and reports <strong>EXHAUSTED</strong> &mdash; the most-correct code it managed, not the most-recent.</p>
+
+<p class="note">This is why a green result is trustworthy and a non-green result is still useful:
+you always walk away holding the best implementation the model produced, byte-for-byte.</p>
+
+<hr>
+
+<h2><span class="n">6</span>Why the front of the prompt never changes</h2>
+
+<p>Local inference is bound by memory bandwidth, and the most expensive part of a call is re-reading a
+long prompt. Model servers cache that work &mdash; the <em>prefill KV cache</em> &mdash; but only for a prefix that
+is <strong>byte-for-byte identical</strong> to a previous call. So the loop makes the front of the prompt a hard
+invariant: the rules card, the spec, and the immutable test, in a fixed layout, with <em>no</em> timestamps,
+run ids, or absolute paths. Only the small feedback tail differs between tries.</p>
+
+<figure>
+<svg viewBox="0 0 760 232" role="img" aria-label="Byte-identical prefix reused across iterations">
+  <text x="14" y="40" font-size="13" fill="#6b7280">try&nbsp;1</text>
+  <rect x="70" y="24" width="470" height="30" rx="5" fill="#e9f7ee" stroke="#1a7f37"/>
+  <text x="305" y="44" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; immutable test</text>
+  <rect x="546" y="24" width="150" height="30" rx="5" fill="#f2f4f7" stroke="#9aa2ac" stroke-dasharray="4 3"/>
+  <text x="621" y="44" text-anchor="middle" font-size="11.5" fill="#6b7280">(no feedback yet)</text>
+
+  <text x="14" y="98" font-size="13" fill="#6b7280">try&nbsp;2</text>
+  <rect x="70" y="82" width="470" height="30" rx="5" fill="#e9f7ee" stroke="#1a7f37"/>
+  <text x="305" y="102" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; immutable test</text>
+  <rect x="546" y="82" width="150" height="30" rx="5" fill="#fff8e6" stroke="#bf8700"/>
+  <text x="621" y="102" text-anchor="middle" font-size="11.5" fill="#8a6400">feedback tail</text>
+
+  <text x="14" y="156" font-size="13" fill="#6b7280">try&nbsp;3</text>
+  <rect x="70" y="140" width="470" height="30" rx="5" fill="#e9f7ee" stroke="#1a7f37"/>
+  <text x="305" y="160" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; immutable test</text>
+  <rect x="546" y="140" width="150" height="30" rx="5" fill="#fff8e6" stroke="#bf8700"/>
+  <text x="621" y="160" text-anchor="middle" font-size="11.5" fill="#8a6400">feedback tail</text>
+
+  <line x1="70" y1="188" x2="540" y2="188" stroke="#1a7f37" stroke-width="1.4"/>
+  <text x="305" y="210" text-anchor="middle" font-size="12" fill="#12591f">identical every try &rarr; served from the prefill cache, not recomputed</text>
+  <line x1="546" y1="188" x2="696" y2="188" stroke="#bf8700" stroke-width="1.4"/>
+  <text x="621" y="210" text-anchor="middle" font-size="12" fill="#8a6400">the only bytes that change</text>
+</svg>
+<figcaption>Keeping the prefix stable turns every retry after the first into a cheap, warm call.</figcaption>
+</figure>
+
+<p>The feedback tail is deliberately small &mdash; a one-line score, the failing test names, and the last
+lines of output, stripped of absolute paths and capped at 4&nbsp;KB. Enough signal to fix the bug; too
+little to flood the decode or accidentally look like a repetition loop to the guard.</p>
+
+<hr>
+
+<h2><span class="n">7</span>The derail guard: bounded decode by construction</h2>
+
+<p>Small models get <em>stuck</em> &mdash; repeating a line forever, rambling past any useful length, or simply
+hanging. Waiting for a full completion to notice is wasted time and tokens. So the loop consumes the
+stream as it decodes and watches it with three trip-wires, checked on every chunk. The first to trip
+aborts the generation immediately.</p>
+
+<figure>
+<svg viewBox="0 0 760 190" role="img" aria-label="Three streaming trip-wires that abort a stuck decode">
+  <defs>
+    <marker id="ar-s" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#6b7280"/></marker>
+  </defs>
+  <!-- stream -->
+  <line x1="40" y1="120" x2="600" y2="120" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar-s)"/>
+  <text x="40" y="146" font-size="12" fill="#6b7280">tokens decoding &rarr;</text>
+  <!-- cut -->
+  <line x1="612" y1="104" x2="636" y2="136" stroke="#cf222e" stroke-width="2"/>
+  <line x1="636" y1="104" x2="612" y2="136" stroke="#cf222e" stroke-width="2"/>
+  <text x="668" y="124" font-size="12.5" fill="#cf222e">abort</text>
+  <!-- taps -->
+  <line x1="170" y1="120" x2="170" y2="70" stroke="#bf8700" stroke-width="1.3"/>
+  <circle cx="170" cy="66" r="5" fill="#fff8e6" stroke="#bf8700"/>
+  <text x="170" y="52" text-anchor="middle" font-size="12" fill="#8a6400">timeout</text>
+  <text x="170" y="160" text-anchor="middle" font-size="11" fill="#6b7280">clock past deadline</text>
+
+  <line x1="330" y1="120" x2="330" y2="70" stroke="#bf8700" stroke-width="1.3"/>
+  <circle cx="330" cy="66" r="5" fill="#fff8e6" stroke="#bf8700"/>
+  <text x="330" y="52" text-anchor="middle" font-size="12" fill="#8a6400">token cap</text>
+  <text x="330" y="160" text-anchor="middle" font-size="11" fill="#6b7280">chars &gt; max_tokens &times; 4</text>
+
+  <line x1="500" y1="120" x2="500" y2="70" stroke="#cf222e" stroke-width="1.3"/>
+  <circle cx="500" cy="66" r="5" fill="#fdeaea" stroke="#cf222e"/>
+  <text x="500" y="52" text-anchor="middle" font-size="12" fill="#cf222e">repetition</text>
+  <text x="500" y="160" text-anchor="middle" font-size="11" fill="#6b7280">same long line &times; 6</text>
+</svg>
+<figcaption>The guard reads the decoded text, not the chunk boundaries &mdash; the verdict is identical however the server splits the stream.</figcaption>
+</figure>
+
+<ul class="clean">
+  <li><strong>Timeout</strong> &mdash; an injected wall clock passes the deadline. (Injected, so tests drive it deterministically.)</li>
+  <li><strong>Token cap</strong> &mdash; decoded characters exceed <code>max_tokens &times; 4</code>, a lenient client-side
+      backstop behind the server&rsquo;s own hard token limit.</li>
+  <li><strong>Repetition</strong> &mdash; a substantial line (&ge;&nbsp;24 chars) repeats 6 times in a row after a short
+      warmup. Short lines like <code>}</code> or <code>pass</code> are transparent &mdash; they repeat harmlessly in real
+      code. Detection rides a fixed <code>deque(maxlen=6)</code> ring buffer: when it&rsquo;s full and every entry is
+      identical, that <em>is</em> the trip &mdash; no growing scan, no accidental slowdown in the hot loop.</li>
+</ul>
+
+<p>This bounds the <em>decode</em>. Bounding the <em>test run</em> the model&rsquo;s code triggers &mdash; and every
+local-server failure mode around it &mdash; is a separate, ongoing hardening concern.</p>
+
+<hr>
+
+<h2><span class="n">8</span>How a run ends</h2>
+
+<p>Every run resolves to exactly one of four outcomes, chosen by strict precedence &mdash; a real green
+always wins, even if a <em>later</em> attempt then derailed:</p>
+
+<ul class="out">
+  <li class="done"><strong>DONE</strong> &mdash; a snapshot went green. Success, full stop.</li>
+  <li class="derail"><strong>DERAILED</strong> &mdash; a decode was cut by the guard and nothing ever passed.</li>
+  <li class="block"><strong>BLOCKED</strong> &mdash; the model never produced a usable whole file for the permitted path (only prose, or an edit aimed elsewhere).</li>
+  <li class="exhaust"><strong>EXHAUSTED</strong> &mdash; the attempts ran out; the best partial was restored.</li>
+</ul>
+
+<p>On every terminal outcome, the loop also emits its half of a per-task <strong>economy record</strong> &mdash;
+tokens spent, attempts used, wall-clock, outcome. That&rsquo;s the point of the whole exercise: to measure,
+task class by task class, whether handing work to a free local model actually saved frontier tokens,
+rather than assuming it did.</p>
+
+<hr>
+
+<h2><span class="n">9</span>Design lineage &mdash; Aider, and the papers</h2>
+
+<p>An honest answer, because it was asked directly: <strong>no code, format, or algorithm here was copied
+from Aider or from any specific paper</strong>, and the repository cites none &mdash; the only external references
+in the tree are the OpenAI streaming-API docs and the mlx-lm server, used to get the wire format of the
+token stream right.</p>
+
+<p>That said, this design lives in a well-explored neighbourhood, and it would be dishonest to claim the
+ideas are unprecedented. Several elements <em>rhyme</em> with established work &mdash; convergent solutions to
+shared problems, not borrowings:</p>
+
+<ul class="clean">
+  <li><strong>Whole-file edits.</strong> Returning a complete file as text is the most robust edit format for
+      a weak model &mdash; no diff to misalign, no line numbers to miscount. Aider is well known for making
+      whole-file and diff edit formats a first-class concern; landing on whole-file for weak local models
+      is the same reasoning reaching the same place.</li>
+  <li><strong>An &ldquo;architect vs editor&rdquo; split.</strong> Separating the party that decides <em>what&rsquo;s correct</em>
+      from the party that <em>writes the code</em> is a pattern Aider also uses. Here the split is sharper and
+      adversarial: the &ldquo;architect&rdquo; ships an <em>immutable test</em> the &ldquo;editor&rdquo; can never see or edit.</li>
+  <li><strong>Test-failure feedback loops.</strong> Feeding failing test output back to a model is the backbone
+      of many agentic coding systems. claude-local&rsquo;s twist is that the test is the <em>sole, count-pinned
+      oracle</em> and the model has no way to declare victory &mdash; only a green run can.</li>
+</ul>
+
+<p>What is genuinely particular to this loop, and where its value concentrates:</p>
+
+<ul class="clean">
+  <li>an orchestrator-owned <strong>immutable oracle</strong> the model can neither edit nor import away, enforced by a pinned test count;</li>
+  <li>the <strong>best-passing snapshot</strong> &mdash; repair can regress freely, and you still keep the best result;</li>
+  <li>a <strong>derail guard</strong> shaped around the specific failure modes of small local models;</li>
+  <li>the <strong>byte-stable prefix</strong> treated as a hard invariant so the prefill cache is actually reused;</li>
+  <li>and <strong>per-task economy metering</strong>, so &ldquo;offload it to a free model&rdquo; is a measured claim, not a hope.</li>
+</ul>
+
+<p class="foot">A page about the loop engine of claude-local &mdash; generated from the engine&rsquo;s own source.
+Every mechanism above is implemented in <code>src/claude_local/</code>; the worked example is the project&rsquo;s
+end-to-end fixture.</p>
+
+</div>
+</body>
+</html>
