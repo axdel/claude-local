@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from claude_local.runner import OracleError, TestRunner, TestScore, score_junit
+from claude_local.sandbox import SandboxTimeout
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -95,13 +96,17 @@ def test_is_green_false_when_count_mismatched_though_every_run_test_passed() -> 
 # --- TestRunner.run: spawn -> report -> score ---------------------------------------
 
 
-def _writing_spawn(report_xml: str) -> Callable[[Sequence[str], Path], None]:
+def _writing_spawn(report_xml: str) -> Callable[[Sequence[str], Path, Path], None]:
     """A fake pytest: write the given JUnit-XML to the --junit-xml=<path> the command requested."""
 
-    def spawn(cmd: Sequence[str], cwd: Path) -> None:
+    def spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> None:
         for arg in cmd:
             if arg.startswith("--junit-xml="):
-                Path(arg.split("=", 1)[1]).write_text(report_xml, encoding="utf-8")
+                report = Path(arg.split("=", 1)[1])
+                # The report path MUST lie inside the box the runner declares writable — the
+                # invariant the real sandbox relies on (the child may write only there).
+                assert write_box in report.parents, "report path escapes the writable box"
+                report.write_text(report_xml, encoding="utf-8")
                 return
         raise AssertionError("run() did not request a --junit-xml=<path>")
 
@@ -124,7 +129,7 @@ def test_run_reports_a_collection_error_as_invalid(tmp_path: Path) -> None:
 
 
 def test_run_raises_oracle_error_when_no_report_is_written(tmp_path: Path) -> None:
-    def silent_spawn(cmd: Sequence[str], cwd: Path) -> None:
+    def silent_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> None:
         return  # pytest crashed before writing the report — a broken oracle, not a failing impl
 
     runner = TestRunner(spawn=silent_spawn)
@@ -139,3 +144,16 @@ def test_run_wraps_a_malformed_report_in_oracle_error(tmp_path: Path) -> None:
     runner = TestRunner(spawn=_writing_spawn("this is not junit xml <<<"))
     with pytest.raises(OracleError):
         runner.run(tmp_path / "test_oracle.py", tmp_path, expected=1)
+
+
+def test_run_maps_a_sandbox_timeout_to_a_zero_verdict_score(tmp_path: Path) -> None:
+    # A non-terminating impl: the spawn kills it and raises SandboxTimeout. run() maps that to a
+    # non-green, invalid score (zero verdicts reached) so the loop retries a hang, never crashes.
+    def hanging_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> None:
+        raise SandboxTimeout("oracle exceeded its wall-clock budget")
+
+    runner = TestRunner(spawn=hanging_spawn)
+    score = runner.run(tmp_path / "test_oracle.py", tmp_path, expected=3)
+    assert score == TestScore(0, 0, 0, 0, 0, 3)
+    assert score.is_valid is False
+    assert score.is_green is False

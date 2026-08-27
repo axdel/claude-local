@@ -8,17 +8,21 @@ running the frozen oracle test under ``uv``. The verdict is pinned against an ex
 verdict, and *green* only when all of them passed. ``collected`` counts verdicts —
 ``tests - skipped`` — so a skipped or imported-away test drops it below the pin and reads as
 invalid, never green.
+
+Because that pytest run *imports and executes the untrusted impl*, it runs under kernel
+confinement (``sandbox``): the subprocess may write only the disposable report dir and reach no
+network, and a non-terminating impl is killed at a wall-clock budget rather than hanging the loop.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
 import tempfile
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosec B405 (D-ORACLE-002)
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
+
+from claude_local.sandbox import SandboxTimeout, sandboxed_spawn
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -92,35 +96,29 @@ def score_junit(xml_text: str, expected: int) -> TestScore:
     )
 
 
-def _default_spawn(cmd: Sequence[str], cwd: Path) -> None:
-    """Run the fixed ``uv``/``pytest`` command in ``cwd`` — a constant argv, no shell, no user
-    input (S603 documented-safe). A non-zero exit on test failure is expected and ignored: the
-    verdict is read from the JUnit report, not the process exit code.
-
-    ``PYTHONDONTWRITEBYTECODE`` is forced on so no ``__pycache__`` is written. The loop rewrites
-    the impl file between attempts — often same-size and within one clock second — and CPython
-    validates a cached ``.pyc`` by ``(size, second-granularity mtime)``, so a prior attempt's
-    stale bytecode would otherwise be imported and score the wrong source (D-ORACLE-003). The
-    environment is copied, not replaced, so ``uv``'s own resolution stays intact.
-    """
-    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-    subprocess.run(cmd, cwd=cwd, capture_output=True, check=False, env=env)  # noqa: S603
-
-
 class TestRunner:
     """Runs the frozen oracle test under ``uv`` and scores its JUnit-XML report.
 
     The ``spawn`` seam is the pytest-subprocess boundary (a true-external tool): the default runs
-    the process, and tests inject a fake that writes a captured report to the requested path.
+    the process under kernel confinement (``sandbox.sandboxed_spawn`` — writable only within the
+    disposable report dir, no network, no inherited secrets), and tests inject a fake that writes a
+    captured report to the requested path. A spawn signals a non-terminating impl by raising
+    ``SandboxTimeout``, which ``run`` maps to a zero-verdict score.
     """
 
     __test__ = False
 
-    def __init__(self, spawn: Callable[[Sequence[str], Path], None] = _default_spawn) -> None:
+    def __init__(
+        self, spawn: Callable[[Sequence[str], Path, Path], None] = sandboxed_spawn
+    ) -> None:
         self._spawn = spawn
 
     def run(self, test_path: Path, worktree: Path, expected: int) -> TestScore:
         """Run ``test_path`` under ``uv`` in ``worktree`` and score it against ``expected``.
+
+        The command runs under kernel confinement; a non-terminating impl raises ``SandboxTimeout``
+        from the spawn, which maps to a zero-verdict (non-green, invalid) score — the loop treats a
+        hang as a failed attempt and retries, never a harness fault.
 
         Raises:
             OracleError: the run produced no JUnit report, or an unparseable one — a broken
@@ -136,8 +134,15 @@ class TestRunner:
                 f"--junit-xml={report}",
                 "-o",
                 "junit_family=xunit2",
+                "-p",
+                "no:cacheprovider",
             ]
-            self._spawn(cmd, worktree)
+            try:
+                self._spawn(cmd, worktree, Path(tmp))
+            except SandboxTimeout:
+                return TestScore(
+                    passed=0, failed=0, errors=0, collected=0, skipped=0, expected=expected
+                )
             if not report.is_file():
                 raise OracleError(f"pytest produced no JUnit report at {report}")
             try:

@@ -94,16 +94,16 @@ class ScriptedSpawn:
         self._reports = list(reports)
         self._i = 0
 
-    def __call__(self, cmd: Sequence[str], cwd: Path) -> None:
-        del cwd  # the fake ignores the worktree; it writes only where argv points
+    def __call__(self, cmd: Sequence[str], cwd: Path, write_box: Path) -> None:
+        del cwd, write_box  # the fake ignores the worktree/box; it writes only where argv points
         body = self._reports[self._i]
         self._i += 1
         _report_path(cmd).write_text(body, encoding="utf-8")
 
 
-def _silent_spawn(cmd: Sequence[str], cwd: Path) -> None:
+def _silent_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> None:
     """A spawn that produces NO report — TestRunner.run must raise OracleError (broken oracle)."""
-    del cmd, cwd  # intentionally produce no JUnit report, to exercise the broken-oracle path
+    del cmd, cwd, write_box  # intentionally produce no JUnit report, to exercise broken-oracle
 
 
 class RecordingBackend:

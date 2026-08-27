@@ -23,6 +23,7 @@
 | loop | telemetry | may-import | Writes the local economy record. | active |  |
 | loop | types | may-import | Returns LoopResult. | active |  |
 | prompt | types | may-import | Assembles the stable prefix from TaskSpec. | active |  |
+| runner | sandbox | may-import | Runs the oracle under kernel confinement. | active |  |
 | runner | types | may-import | Oracle returns a score value object. | active |  |
 | snapshot | paths | may-import | Restore constrained by keep_only containment. | active |  |
 | snapshot | runner | may-import | Ranks attempts by the oracle score. | active |  |
