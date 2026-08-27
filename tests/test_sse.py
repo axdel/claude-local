@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sse_wire import sse_frame
+from hypothesis import given
+from hypothesis import strategies as st
+from sse_wire import sse_frame, sse_frame_json
 
 from claude_local.sse import _MAX_FRAME_BYTES, Delta, Error, Finish, SSEEvent, Usage, decode_sse
 
@@ -207,3 +209,34 @@ def test_many_frames_in_one_chunk_decode_in_order_and_match_one_byte_chunking() 
     expected = [Delta(f"d{i}") for i in range(50)]
     assert feed(stream, chunk_size=len(stream)) == expected
     assert feed(stream, chunk_size=1) == expected
+
+
+# --- Property: chunking-invariance generalized over all inputs and splits ---------
+
+
+@given(
+    contents=st.lists(
+        st.text(alphabet=st.characters(exclude_categories=("Cs",)), min_size=1, max_size=24),
+        min_size=1,
+        max_size=8,
+    ),
+    chunk_size=st.integers(min_value=1, max_value=48),
+)
+def test_content_deltas_survive_any_chunking_property(
+    contents: list[str], chunk_size: int
+) -> None:
+    """Each non-empty content delta decodes to exactly ``Delta(content)``, in order, for ANY
+    split of the byte stream.
+
+    The two example tests above fix the chunk size at 1 and 4096; this generalizes the
+    chunking-invariance relation over generated contents and every chunk size in [1, 48],
+    killing any frame-boundary bug those miss. The expected events come from the wire shape
+    (one content chunk yields one Delta), never from running the decoder. Surrogates ('Cs')
+    are excluded: a real UTF-8 model wire never carries lone surrogates (Boundary Fixture
+    Fidelity), and ``json.dumps`` escapes every other character — quotes, backslashes,
+    newlines — so the framing stays intact.
+    """
+    stream = b"".join(
+        sse_frame_json({"choices": [{"index": 0, "delta": {"content": c}}]}) for c in contents
+    )
+    assert feed(stream, chunk_size) == [Delta(c) for c in contents]
