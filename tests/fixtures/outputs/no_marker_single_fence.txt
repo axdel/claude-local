@@ -1,0 +1,5 @@
+Here is the implementation you asked for:
+```python
+ANSWER = 42
+```
+Let me know if you need changes.

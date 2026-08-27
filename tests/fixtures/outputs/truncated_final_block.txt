@@ -1,0 +1,4 @@
+FILE: src/claude_local/trunc.py
+```python
+def trunc() -> int:
+    return 1 +

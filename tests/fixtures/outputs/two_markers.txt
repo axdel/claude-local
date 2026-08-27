@@ -1,0 +1,8 @@
+FILE: src/claude_local/first.py
+```python
+FIRST = 1
+```
+FILE: src/claude_local/second.py
+```python
+SECOND = 2
+```

@@ -1,0 +1,2 @@
+I cannot complete this without seeing the expected function signature.
+Please provide the test and I will implement against it.
