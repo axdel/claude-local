@@ -7,7 +7,25 @@ a test specifies only the field it exercises and takes sensible defaults for the
 
 from __future__ import annotations
 
+from claude_local.client import GenerationResult
 from claude_local.types import Budget, TaskSpec
+
+
+def build_generation_result(**overrides: object) -> GenerationResult:
+    """Canonical valid GenerationResult; a telemetry test overrides only the field it needs.
+
+    Defaults describe one clean, server-counted generation (exact tokens, no derail); a test
+    aggregating a timeline sets only ``completion_tokens`` / ``seconds`` / ``tokens_estimated``.
+    """
+    fields: dict[str, object] = {
+        "text": "impl",
+        "completion_tokens": 100,
+        "tokens_estimated": False,
+        "seconds": 2.0,
+        "derail_reason": None,
+    }
+    fields.update(overrides)
+    return GenerationResult(**fields)  # type: ignore[arg-type]
 
 
 def build_budget(**overrides: object) -> Budget:
