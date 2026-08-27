@@ -54,6 +54,12 @@ SSEEvent = Delta | Finish | Usage | Error
 
 _DONE = "[DONE]"
 
+# The decode buffer holds at most one incomplete frame between chunks; a delimiter-less run of
+# bytes larger than this is a runaway stream, not real traffic. Capping it bounds decoder memory
+# against an untrusted model that never sends a frame terminator. 1 MiB dwarfs any legitimate
+# frame (deltas are token-sized), so the cap never rejects real data — it only stops a flood.
+_MAX_FRAME_BYTES = 1 << 20
+
 
 def decode_sse(chunks: Iterable[bytes]) -> Iterator[SSEEvent]:
     """Decode an SSE byte stream into a lazy sequence of typed events.
@@ -65,6 +71,12 @@ def decode_sse(chunks: Iterable[bytes]) -> Iterator[SSEEvent]:
     whose JSON will not parse is folded into an ``Error`` event rather than raised —
     the decoder must never crash the loop it feeds.
 
+    Buffered bytes drain in linear time: a scan offset advances through completed
+    lines and the buffer is compacted once per chunk, never per line. The retained
+    tail is a single incomplete frame; if it grows past ``_MAX_FRAME_BYTES`` with no
+    delimiter, the decoder yields an ``Error`` and stops — an untrusted stream that
+    never terminates a frame cannot exhaust memory.
+
     Args:
         chunks: The raw response body, delivered in arbitrary byte slices.
 
@@ -75,9 +87,10 @@ def decode_sse(chunks: Iterable[bytes]) -> Iterator[SSEEvent]:
     data_lines: list[str] = []
     for chunk in chunks:
         buffer += chunk
-        while (newline := buffer.find(b"\n")) >= 0:
-            line = bytes(buffer[:newline]).rstrip(b"\r").decode("utf-8", "replace")
-            del buffer[: newline + 1]
+        start = 0  # scan offset; drained lines are compacted once per chunk, not per line
+        while (newline := buffer.find(b"\n", start)) >= 0:
+            line = bytes(buffer[start:newline]).rstrip(b"\r").decode("utf-8", "replace")
+            start = newline + 1
             if line:
                 if line.startswith("data:"):
                     data_lines.append(line[len("data:") :].removeprefix(" "))
@@ -91,6 +104,10 @@ def decode_sse(chunks: Iterable[bytes]) -> Iterator[SSEEvent]:
             if payload == _DONE:
                 return
             yield from _events(payload)
+        del buffer[:start]  # compact drained lines in one shift, not one per line (avoids O(n^2))
+        if len(buffer) > _MAX_FRAME_BYTES:
+            yield Error(f"SSE frame exceeded {_MAX_FRAME_BYTES} bytes with no delimiter")
+            return
     # End of stream: an unterminated trailing frame is intentionally NOT flushed.
 
 

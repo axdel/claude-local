@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from claude_local.sse import Delta, Error, Finish, SSEEvent, Usage, decode_sse
+from claude_local.sse import _MAX_FRAME_BYTES, Delta, Error, Finish, SSEEvent, Usage, decode_sse
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "sse"
 
@@ -165,3 +165,44 @@ def test_multiline_data_frame_is_concatenated() -> None:
     events = feed(stream, chunk_size=4096)
     # The two data lines join into one valid JSON object -> one Delta("ab").
     assert events == [Delta("ab")]
+
+
+# --- Memory safety: a delimiter-less flood is capped, not buffered without bound --
+
+
+def test_delimiterless_flood_beyond_the_cap_yields_error_and_stops() -> None:
+    # An untrusted model that streams bytes with no frame delimiter must not grow the buffer
+    # without bound. Oracle: the cap is _MAX_FRAME_BYTES; one byte past it with no "\n" MUST
+    # surface an Error and end the stream — the memory-safety contract, derived from the
+    # constant, never from running the decoder. (A stream with no delimiter would otherwise
+    # buffer every byte and yield nothing, so [Error] vs [] is the falsifying difference.)
+    flood = b"x" * (_MAX_FRAME_BYTES + 1)
+    events = list(decode_sse([flood]))
+    assert len(events) == 1
+    assert isinstance(events[0], Error)
+
+
+def test_bytes_up_to_the_cap_without_a_delimiter_do_not_error() -> None:
+    # The boundary's other side: exactly _MAX_FRAME_BYTES delimiter-less bytes is within
+    # budget — no Error, and (being unterminated) no event at all. Paired with the cap+1
+    # case above, this pins the comparison as a strict ">" — a ">=" mutant fires here and
+    # is killed. Oracle: an unterminated frame at the limit yields nothing (lifecycle
+    # invariant), and the limit itself is derived from the constant.
+    at_cap = b"x" * _MAX_FRAME_BYTES
+    assert list(decode_sse([at_cap])) == []
+
+
+def test_many_frames_in_one_chunk_decode_in_order_and_match_one_byte_chunking() -> None:
+    # Stress the scan-offset drain: 50 frames in a single chunk must decode in order, and
+    # identically to the same bytes fed one byte at a time. A drain that mishandled the scan
+    # offset or the per-chunk compaction would drop, duplicate, or reorder frames — and
+    # under 1-byte chunking, a broken compaction would re-decode already-drained frames.
+    # Oracle: the 50 contents are hand-constructed, so the expected deltas are known without
+    # running the decoder; the two chunkings are a metamorphic relation over the same bytes.
+    stream = b"".join(
+        frame(f'{{"choices":[{{"index":0,"delta":{{"content":"d{i}"}},"finish_reason":null}}]}}')
+        for i in range(50)
+    )
+    expected = [Delta(f"d{i}") for i in range(50)]
+    assert feed(stream, chunk_size=len(stream)) == expected
+    assert feed(stream, chunk_size=1) == expected
