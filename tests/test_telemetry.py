@@ -152,7 +152,7 @@ def test_write_serializes_a_none_mean_as_json_null(tmp_path: Path) -> None:
 
 
 def test_write_creates_the_economy_directory_when_absent(tmp_path: Path) -> None:
-    # The economy dir (~/.claude-protocol/economy/<project>/) may not exist yet; write makes it.
+    # The orchestrator's target economy dir may not exist yet; write must create it.
     target = tmp_path / "economy" / "claude-local"
     path = _record().write(target)
     assert target.is_dir()

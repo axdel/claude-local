@@ -6,7 +6,7 @@
 |-|-|-|-|-|-|-|
 | Budget | generation | The value object bounding one task: max_attempts, max_tokens, timeout_s. | limits, quota, caps | The hard token cap is the real decode bound (D-PERF-001). | active |  |
 | DerailGuard | generation | The bounded-decode enforcer: repetition-loop detector plus hard token cap plus wall-clock timeout that aborts a runaway generation. | watchdog, limiter, safety-net | Non-thinking by default (D-LOOP-002). | active |  |
-| LocalEconomyRecord | telemetry | The local half of the per-task economy record: model, calls, completion tokens, model-seconds, tokens-per-second, status, attempts. | metrics, stats, usage-blob | Orchestrator half owned by claude-protocol (D-TELEMETRY-001). | active |  |
+| LocalEconomyRecord | telemetry | The local half of the per-task economy record: model, calls, completion tokens, model-seconds, tokens-per-second, status, attempts. | metrics, stats, usage-blob | Orchestrator half owned by the driving orchestrator (D-TELEMETRY-001). | active |  |
 | REPAIR | loop | The retry step: on a failing attempt, feed distilled failure back to the model without clobbering the best-passing snapshot. | retry, fix-mode, feedback-loop | Distinct from a naive clobber-latest retry. | active |  |
 | ReplayBackend | transport | The stub Backend that replays captured SSE bytes verbatim, driving the loop deterministically with no model download. | stub, mock, canned-backend | Raises ReplayExhausted on over-read. | active |  |
 | attempt | loop | One bounded model generation plus apply plus oracle run; the unit the loop repeats, capped by Budget.max_attempts. | iteration, try, round | Canonical over 'iteration'; the code identifier is max_attempts. | active |  |

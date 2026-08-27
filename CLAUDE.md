@@ -27,7 +27,7 @@ class — whether offloading to a free local model saved net frontier tokens.
 - Test: `uv run pytest`
 - Lint / format: `uv run ruff check` · `uv run ruff format`
 - Types: `uv run basedpyright`
-- Commit quality gate: `claude-protocol quality gate`
+- Commit gate (pre-commit): `lefthook run pre-commit` — ruff check + format --check + basedpyright + pytest
 
 ## Architecture overview
 
@@ -45,10 +45,11 @@ The loop engine decomposes into single-responsibility modules, dependencies flow
   prefix (byte-identical across calls, so the prefill is KV-cache-reused).
 - **telemetry** — a run-scoped writer for the **local half** of the per-task economy record.
 
-Two seams are **external, owned by claude-protocol**, and are consumed here as stubs: the
-**builder-adapter contract** (`build(task_spec, worktree, context_tier) -> {status, files_changed,
-notes, telemetry}`) and the **orchestrator half** of the economy record. claude-local implements
-the loop behind the contract and writes only the local half.
+claude-local's own entry point is `implement()` — it owns the whole loop behind that one typed
+seam (see README). One thing stays **external to claude-local**: the **orchestrator half** of the
+economy record — the frontier-token accounting and the net-savings verdict that decide whether
+offloading a task actually paid off. claude-local writes only the **local half** (what it produced
+and burned); the driving orchestrator (Claude Code) owns the comparison.
 
 ## Performance & inference efficiency — a first-class requirement
 

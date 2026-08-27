@@ -1,10 +1,10 @@
 """The local economy record — the LOCAL half of the per-task economy measurement.
 
 claude-local writes only the local half; the orchestrator half and the shared correlation keys are
-owned by claude-protocol (D-TELEMETRY-001). ``LocalEconomyRecord`` is that half: which model ran,
-how many logical calls and loop attempts it took, how many completion tokens it decoded over how
-many model-seconds, the mean decode rate, whether any count was estimated, and the final status.
-The telemetry module is its single writer (RESOURCE_OWNERSHIP).
+owned by the driving orchestrator (D-TELEMETRY-001). ``LocalEconomyRecord`` is that half: which
+model ran, how many logical calls and loop attempts it took, how many completion tokens it decoded
+over how many model-seconds, the mean decode rate, whether any count was estimated, and the final
+status. The telemetry module is its single writer (RESOURCE_OWNERSHIP).
 
 ``from_run`` AGGREGATES a timeline of per-attempt ``GenerationResult`` (client token usage
 and timing) into those scalars. Two counts are deliberately NOT derived from the timeline.
