@@ -89,3 +89,27 @@ known_first_party = ["claude_local"]
 # design exists only inside the loop's worktree, never as a declared dependency — a permanent,
 # expected DEP001 for that one module name.
 DEP001 = ["quicksort"]
+
+[tool.importlinter]
+# BOUNDARY_MAP.md declares the per-module import directions in prose; this layers contract is the
+# mechanical enforcement of the one-way flow it documents (orchestration → adapters → leaves).
+# grimp builds the STATIC import graph, so an upward import or a cycle fails the contract even when
+# it would import cleanly at runtime. `exhaustive` makes an unplaced new module a hard failure, so
+# the contract and the package stay in lockstep. Verified against import-linter 2.13: `|` marks
+# independent siblings (a layer's modules may not import each other), which the real graph
+# satisfies — no two modules in any single layer cross-import.
+root_package = "claude_local"
+
+[[tool.importlinter.contracts]]
+name = "claude_local dependencies flow one way (no cycles, no upward imports)"
+type = "layers"
+containers = ["claude_local"]
+exhaustive = true
+layers = [
+    "entrypoint",
+    "loop",
+    "telemetry",
+    "client | prompt | snapshot",
+    "backend | derail | edits | runner",
+    "paths | sandbox | sse | types",
+]
