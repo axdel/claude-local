@@ -1,6 +1,8 @@
 """Immutable behavioral oracle for the minimal health application case."""
 
+import sqlite3
 from inspect import signature
+from typing import cast
 
 import app.db as database_defaults
 import pytest
@@ -9,29 +11,48 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 
-class _OracleDatabaseUrl(str):
+class _OracleDatabasePath(str):
     """Unique identity sentinel proving the factory default comes from the db neighbor."""
 
 
-_ORACLE_DATABASE_URL = _OracleDatabaseUrl("sqlite:///oracle-health.db")
-database_defaults.DEFAULT_DATABASE_URL = _ORACLE_DATABASE_URL
+_ORACLE_DATABASE_PATH = _OracleDatabasePath(":memory:")
+database_defaults.DEFAULT_DATABASE_PATH = _ORACLE_DATABASE_PATH
 
 from app.main import HealthResponse, create_app
 
 
 def test_health_factory_integrates_database_neighbor_and_isolates_apps() -> None:
     """The factory derives its default from app.db and keeps per-app state isolated."""
-    default_parameter = signature(create_app).parameters["database_url"]
-    assert default_parameter.annotation in {"str", str}
+    default_parameter = signature(create_app).parameters["database_path"]
+    assert default_parameter.annotation in {"DatabasePath", database_defaults.DatabasePath}
     assert signature(create_app).return_annotation in {"FastAPI", FastAPI}
-    assert default_parameter.default is _ORACLE_DATABASE_URL
+    assert default_parameter.default is _ORACLE_DATABASE_PATH
 
     default_app = create_app()
-    overridden_app = create_app("sqlite:///second-health.db")
+    overridden_app = create_app("second-health.db")
 
     assert default_app is not overridden_app
-    assert default_app.state.database_url == _ORACLE_DATABASE_URL
-    assert overridden_app.state.database_url == "sqlite:///second-health.db"
+    assert default_app.state.database_path == _ORACLE_DATABASE_PATH
+    assert overridden_app.state.database_path == "second-health.db"
+
+
+def test_health_lifespan_initializes_and_closes_one_database_connection() -> None:
+    """The running app exposes initialized storage and releases it at shutdown."""
+    app = create_app()
+
+    with TestClient(app):
+        connection = cast(sqlite3.Connection, app.state.database_connection)
+        table_names = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+
+    assert table_names == {"users", "schedules", "sqlite_sequence"}
+    assert not hasattr(app.state, "database_connection")
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
 
 
 def test_health_endpoint_returns_declared_payload() -> None:

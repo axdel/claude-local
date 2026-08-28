@@ -50,7 +50,7 @@ def test_health_case_contract_carries_golden_tree_stub_and_neighbor() -> None:
     assert tuple(file.path for file in case.task.context_files) == ("app/db.py",)
     assert "FastAPI" in case.task.spec_text
     assert "create_app" not in case.blank_stub
-    assert case.task.expected_tests == 3
+    assert case.task.expected_tests == 4
 
 
 def test_case_counts_only_module_level_oracle_tests() -> None:
@@ -87,7 +87,7 @@ def test_case_rejects_the_target_file_as_model_context() -> None:
 def test_case_rejects_context_that_does_not_match_the_golden_tree() -> None:
     """Model-visible neighbors must be byte-identical to their assembled golden files."""
     case = _build_health_case()
-    drifted_context = ContextFile(path="app/db.py", content="DEFAULT_DATABASE_URL = 'wrong'\n")
+    drifted_context = ContextFile(path="app/db.py", content="DEFAULT_DATABASE_PATH = 'wrong'\n")
 
     with pytest.raises(ValueError, match="must match its golden file"):
         replace(case, task=replace(case.task, context_files=(drifted_context,)))
@@ -107,7 +107,7 @@ def test_case_rejects_duplicate_or_missing_golden_target() -> None:
 def test_case_rejects_case_insensitive_golden_path_collisions() -> None:
     """Fixture identity cannot depend on the host filesystem's case-sensitivity."""
     case = _build_health_case()
-    colliding_db = ContextFile(path="APP/DB.PY", content="DATABASE_URL = 'collision'\n")
+    colliding_db = ContextFile(path="APP/DB.PY", content="DATABASE_PATH = 'collision'\n")
 
     with pytest.raises(ValueError, match="case-insensitive golden-tree path"):
         replace(case, golden_tree=(*case.golden_tree, colliding_db))
