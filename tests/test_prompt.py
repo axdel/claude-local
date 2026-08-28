@@ -41,7 +41,7 @@ def _spec(
 
 
 def _card(
-    tmp_path: Path, content: str = "# Rules\nWrite the whole file in one fenced block.\n"
+    tmp_path: Path, content: str = "# Rules\nReturn the complete implementation file.\n"
 ) -> Path:
     card = tmp_path / "card.md"
     card.write_text(content, encoding="utf-8")

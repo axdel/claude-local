@@ -1,0 +1,4 @@
+data: {"id":"chatcmpl-invalid-finish-array","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"FILE: src/widget.py\nUTF8-BYTES: 9\n\nVALUE = 1"},"finish_reason":[]},{"index":1,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+

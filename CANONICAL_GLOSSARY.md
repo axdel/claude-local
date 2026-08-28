@@ -26,6 +26,7 @@
 | rules_card | prompt | The static, token-budgeted engineering-rules card injected as a stable system prefix, byte-identical across a task's calls for KV-cache reuse. | system-prompt, guidelines, instructions | Static committed asset: src/claude_local/rules_card.md. | active |  |
 | scorecard | model-evaluation | The comparable per-model aggregate of case correctness and local economy measurements. | report, result | Produced from per-case Outcomes. | active |  |
 | stable-prefix | prompt | The byte-identical prompt head (rules card + spec + ordered context files + immutable test) assembled once per task so only the feedback tail varies, preserving the server prefill cache. | prefix, system-prefix | Owned by PromptBuilder (D-PROMPT-001, amended by D-CONTEXT-001). | active |  |
+| whole-file-reply | editing | One model-produced implementation value carrying its declared target path and validated UTF-8 payload bytes. | fenced-reply, code-block, file-block | Framed on the wire by FILE/UTF8-BYTES; exact after terminal stop; short only when GenerationResult.is_incomplete (D-LOOP-003). | active |  |
 
 ## Track Prefixes
 

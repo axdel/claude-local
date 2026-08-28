@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from factories import build_budget, build_task_spec
+from factories import build_budget, build_task_spec, build_whole_file_reply
 from sse_wire import sse_frame_json
 
 from claude_local.backend import ReplayBackend
@@ -92,8 +92,9 @@ def _clean_reply(content: str) -> bytes:
 
 
 def _impl_reply(fixture_name: str) -> bytes:
-    """A clean reply whose one delta is a fenced whole-file block — the returned impl file."""
-    return _clean_reply(f"```python\n{_read_fixture(fixture_name)}```")
+    """A clean reply whose one delta is the canonical byte-counted implementation frame."""
+    payload = _read_fixture(fixture_name)
+    return _clean_reply(build_whole_file_reply(_IMPL_PATH, payload))
 
 
 def _runaway_reply(size: int = 256) -> bytes:
@@ -120,7 +121,7 @@ class RecordingReplayBackend:
 
 
 def _make_worktree(tmp_path: Path) -> Path:
-    """A temp worktree with the permitted src/ subtree that apply_files and SnapshotStore need."""
+    """A temp worktree with the permitted src/ subtree that apply_file and SnapshotStore need."""
     (tmp_path / "src").mkdir()
     return tmp_path
 

@@ -13,6 +13,12 @@ from claude_local.telemetry import LocalEconomyRecord
 from claude_local.types import Budget, ContextFile, Status, TaskSpec
 
 
+def build_whole_file_reply(implementation_path: str, implementation_source: str) -> str:
+    """Frame implementation source exactly as the model-facing whole-file reply protocol."""
+    payload_size = len(implementation_source.encode("utf-8"))
+    return f"FILE: {implementation_path}\nUTF8-BYTES: {payload_size}\n\n{implementation_source}"
+
+
 def build_generation_result(**overrides: object) -> GenerationResult:
     """Canonical valid GenerationResult; a telemetry test overrides only the field it needs.
 

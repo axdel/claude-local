@@ -1,0 +1,9 @@
+FILE: src/claude_local/fenced.py
+UTF8-BYTES: 60
+
+DOC = """
+```python
+FILE: inner/marker.py
+```
+"""
+VALUE = 42

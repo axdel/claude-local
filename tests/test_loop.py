@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from factories import build_budget, build_task_spec, build_test_score
+from factories import build_budget, build_task_spec, build_test_score, build_whole_file_reply
 from sse_wire import sse_frame_json
 
 from claude_local.backend import BackendUnavailable, ReplayBackend
@@ -42,9 +42,9 @@ JUNIT = Path(__file__).parent / "fixtures" / "junit"
 _ORACLE_TEXT = "def test_widget():\n    from src import widget\n    assert widget.VALUE == 1\n"
 
 # Whole-file impl bodies each script carries — distinct so a restore assertion pins exact bytes.
-_V0 = "# widget v0\nVALUE = 0"
-_V1 = "# widget v1\nVALUE = 1"
-_V2 = "# widget v2\nVALUE = 2"
+_V0 = "# widget v0\nVALUE = 0\n"
+_V1 = "# widget v1\nVALUE = 1\n"
+_V2 = "# widget v2\nVALUE = 2\n"
 
 
 # --- Fixture / double builders ----------------------------------------------------
@@ -56,22 +56,31 @@ def _junit(name: str) -> str:
 
 
 def _sse_script(text: str) -> bytes:
-    """One OpenAI-style SSE stream whose single content delta is ``text`` (json.dumps escapes it).
-
-    Mirrors the wire shape captured in the sse fixtures (one ``data:`` frame, no usage trailer), so
-    the real client decodes it to exactly ``text`` — a transport carrier, not a hand-read protocol.
-    """
-    return sse_frame_json({"choices": [{"delta": {"content": text}}]})
+    """One OpenAI-style SSE stream whose single content delta is ``text``."""
+    return _sse_script_parts(text)
 
 
-def _edit_script(body: str) -> bytes:
-    """An SSE stream with one fenced whole-file block — extract_files routes it to permitted."""
-    return _sse_script(f"```\n{body}\n```")
+def _sse_script_parts(*parts: str) -> bytes:
+    """OpenAI-style SSE content deltas that the real decoder must concatenate in order."""
+    return b"".join(sse_frame_json({"choices": [{"delta": {"content": part}}]}) for part in parts)
+
+
+def _finished_sse_script(text: str, reason: str) -> bytes:
+    """An SSE content delta followed by the server's terminal ``finish_reason`` frame."""
+    return _sse_script(text) + sse_frame_json(
+        {"choices": [{"delta": {}, "finish_reason": reason}]}
+    )
+
+
+def _edit_script(body: str, target: str = "src/widget.py") -> bytes:
+    """An SSE stream carrying one canonical whole-file frame for ``target``."""
+    return _sse_script(build_whole_file_reply(target, body))
 
 
 def _forbidden_edit_script(target: str, body: str) -> bytes:
-    """An SSE stream whose block names ``target`` — apply_files must refuse a forbidden path."""
-    return _sse_script(f"FILE: {target}\n```\n{body}\n```")
+    """An independently framed reply whose target ``apply_file`` must refuse."""
+    forbidden_reply = f"FILE: {target}\nUTF8-BYTES: {len(body.encode('utf-8'))}\n\n{body}"
+    return _sse_script(forbidden_reply)
 
 
 def _error_script(message: str) -> bytes:
@@ -250,6 +259,131 @@ def test_classify_terminal_precedence(
 # --- Integration: each terminal path wired end-to-end through run() ----------------
 
 
+def test_sse_deltas_extract_and_write_byte_identical_payload(tmp_path: Path) -> None:
+    worktree = _setup_worktree(tmp_path)
+    payload = 'DOC = """\n```python\nFILE: inner.py\n```\n"""\nLABEL = "世界"\n\n'
+    frame = build_whole_file_reply("src/widget.py", payload)
+    script = _sse_script_parts(frame[:9], frame[9:41], frame[41:-2], frame[-2:])
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([script]),
+        ScriptedSpawn(_junit("all_pass.xml")),
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DONE
+    assert (worktree / "src" / "widget.py").read_bytes() == payload.encode("utf-8")
+
+
+def test_stop_finished_short_frame_reaches_blocked_without_write_or_score(tmp_path: Path) -> None:
+    worktree = _setup_worktree(tmp_path)
+    partial = "# widget v0\nVALUE ="
+    short_frame = f"FILE: src/widget.py\nUTF8-BYTES: {len(_V0.encode('utf-8'))}\n\n{partial}"
+    backend = ReplayBackend([_finished_sse_script(short_frame, "stop")])
+    loop, _ = _make_loop(worktree, backend, ScriptedSpawn())
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.BLOCKED
+    assert result.best_score is None
+    assert result.record.attempts == 1
+    assert not (worktree / "src" / "widget.py").exists()
+
+
+def test_other_finished_short_frame_reaches_blocked_without_write_or_score(
+    tmp_path: Path,
+) -> None:
+    worktree = _setup_worktree(tmp_path)
+    partial = "# widget v0\nVALUE ="
+    short_frame = f"FILE: src/widget.py\nUTF8-BYTES: {len(_V0.encode('utf-8'))}\n\n{partial}"
+    backend = ReplayBackend([_finished_sse_script(short_frame, "tool_calls")])
+    loop, _ = _make_loop(worktree, backend, ScriptedSpawn())
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.BLOCKED
+    assert result.best_score is None
+    assert result.record.attempts == 1
+    assert not (worktree / "src" / "widget.py").exists()
+
+
+def test_no_finish_short_frame_is_scored_then_repaired(tmp_path: Path) -> None:
+    worktree = _setup_worktree(tmp_path)
+    partial = "# widget v0\nVALUE ="
+    short_frame = f"FILE: src/widget.py\nUTF8-BYTES: {len(_V0.encode('utf-8'))}\n\n{partial}"
+    repaired_frame = build_whole_file_reply("src/widget.py", _V1)
+    backend = ReplayBackend(
+        [_sse_script(short_frame), _finished_sse_script(repaired_frame, "stop")]
+    )
+    spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("all_pass.xml"))
+    loop, client = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DONE
+    assert client.total_calls == 2
+    assert result.record.attempts == 2
+    assert _widget(worktree) == _V1
+
+
+def test_length_finished_short_frame_is_scored_then_repaired(tmp_path: Path) -> None:
+    worktree = _setup_worktree(tmp_path)
+    partial = "# widget v0\nVALUE ="
+    short_frame = f"FILE: src/widget.py\nUTF8-BYTES: {len(_V0.encode('utf-8'))}\n\n{partial}"
+    repaired_frame = build_whole_file_reply("src/widget.py", _V1)
+    backend = ReplayBackend(
+        [
+            _finished_sse_script(short_frame, "length"),
+            _finished_sse_script(repaired_frame, "stop"),
+        ]
+    )
+    spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("all_pass.xml"))
+    loop, client = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DONE
+    assert client.total_calls == 2
+    assert result.record.attempts == 2
+    assert _widget(worktree) == _V1
+
+
+def test_two_concatenated_frames_reach_blocked_without_writes(tmp_path: Path) -> None:
+    worktree = _setup_worktree(tmp_path)
+    reply = (
+        f"FILE: src/widget.py\nUTF8-BYTES: {len(_V1.encode('utf-8'))}\n\n{_V1}"
+        f"FILE: src/other.py\nUTF8-BYTES: {len(_V2.encode('utf-8'))}\n\n{_V2}"
+    )
+    backend = ReplayBackend([_sse_script(reply)])
+    loop, _ = _make_loop(worktree, backend, ScriptedSpawn())
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.BLOCKED
+    assert result.best_score is None
+    assert not (worktree / "src" / "widget.py").exists()
+    assert not (worktree / "src" / "other.py").exists()
+
+
 def test_red_then_green_reaches_done_in_two_attempts(tmp_path: Path) -> None:
     worktree = _setup_worktree(tmp_path)
     backend = ReplayBackend([_edit_script(_V0), _edit_script(_V1)])
@@ -314,9 +448,9 @@ def test_first_attempt_derail_reaches_derailed(tmp_path: Path) -> None:
     assert result.record.total_completion_tokens > 0
 
 
-def test_zero_block_output_reaches_blocked(tmp_path: Path) -> None:
+def test_reply_without_a_frame_reaches_blocked(tmp_path: Path) -> None:
     worktree = _setup_worktree(tmp_path)
-    backend = ReplayBackend([_sse_script("Here is my explanation, but no code fence at all.")])
+    backend = ReplayBackend([_sse_script("Here is an explanation, but no valid file frame.")])
     loop, client = _make_loop(worktree, backend, ScriptedSpawn())
     spec = build_task_spec(
         impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
@@ -324,7 +458,7 @@ def test_zero_block_output_reaches_blocked(tmp_path: Path) -> None:
 
     result = loop.run(spec, worktree)
 
-    # Prose with no fenced region yields zero blocks -> structural BLOCKED, nothing scored.
+    # Prose with no valid frame is structurally BLOCKED, with nothing written or scored.
     assert result.status is Status.BLOCKED
     assert result.best_score is None
     assert client.total_calls == 1
@@ -333,7 +467,7 @@ def test_zero_block_output_reaches_blocked(tmp_path: Path) -> None:
 
 def test_forbidden_target_reaches_blocked(tmp_path: Path) -> None:
     worktree = _setup_worktree(tmp_path)
-    # The model names a path other than the permitted impl -> apply_files refuses the edit.
+    # The model names a path other than the permitted impl -> apply_file refuses the edit.
     backend = ReplayBackend([_forbidden_edit_script("src/other.py", _V1)])
     loop, _ = _make_loop(worktree, backend, ScriptedSpawn())
     spec = build_task_spec(
@@ -345,6 +479,29 @@ def test_forbidden_target_reaches_blocked(tmp_path: Path) -> None:
     assert result.status is Status.BLOCKED
     assert result.best_score is None
     assert not (worktree / "src" / "other.py").exists()  # containment held — nothing written
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["invalid_finish_reason_array.bytes", "invalid_finish_reason_object.bytes"],
+)
+def test_invalid_finish_reason_faults_before_parsing_or_writing(
+    tmp_path: Path, fixture_name: str
+) -> None:
+    worktree = _setup_worktree(tmp_path)
+    invalid_stream = (Path(__file__).parent / "fixtures" / "sse" / fixture_name).read_bytes()
+    loop, client = _make_loop(worktree, ReplayBackend([invalid_stream]), ScriptedSpawn())
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.FAULTED
+    assert result.fault is not None and "finish_reason" in result.fault
+    assert result.best_score is None
+    assert client.total_calls == 1
+    assert not (worktree / "src" / "widget.py").exists()
 
 
 def test_server_fault_reaches_faulted(tmp_path: Path) -> None:

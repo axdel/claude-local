@@ -44,10 +44,6 @@ if TYPE_CHECKING:
 # filename characters to a single '-' so the record lands as one flat file, not a subtree.
 _UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
-# The OpenAI ``finish_reason`` a server emits when it stops at its OWN token cap. Counting these is
-# how the record distinguishes a server-side length cap from a clean stop or a client-side derail.
-_LENGTH_FINISH_REASON = "length"
-
 
 @dataclass(frozen=True, slots=True)
 class LocalEconomyRecord:
@@ -94,7 +90,7 @@ class LocalEconomyRecord:
             total_model_seconds=total_model_seconds,
             mean_tokens_per_second=mean,
             tokens_estimated=any(r.tokens_estimated for r in results),
-            length_capped=sum(r.finish_reason == _LENGTH_FINISH_REASON for r in results),
+            length_capped=sum(r.is_length_capped for r in results),
             status=status,
             attempts=attempts,
         )

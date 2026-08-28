@@ -1,8 +1,8 @@
 FILE: src/claude_local/first.py
-```python
+UTF8-BYTES: 10
+
 FIRST = 1
-```
 FILE: src/claude_local/second.py
-```python
+UTF8-BYTES: 11
+
 SECOND = 2
-```

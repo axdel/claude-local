@@ -1,31 +1,29 @@
-# `outputs/` — raw model-reply fixtures for `edits.extract_files`
+# `outputs/` — raw model-reply fixtures for `edits.extract_file`
 
-Each `.txt` is a whole raw model reply, fed verbatim to `extract_files`. They are the
-input-side oracle for the extractor: the expected `FileBlock` list in `test_edits.py` is
-hand-derived from the **loop's own whole-file reply-format contract**, not from running the
-parser.
+Each `.txt` is one whole raw model reply, read without normalization and passed directly to
+`extract_file`. Expected `WholeFileReply` values in `test_edits.py` are hand-derived from the
+canonical byte-counted frame declared by `src/claude_local/rules_card.md`.
 
 ## Provenance (Boundary Fixture Fidelity)
 
-These are **hand-authored from a published schema — our own** — not captured from a specific
-model run. The loop *defines* the reply format it instructs the model to emit (a `FILE:`
-marker at column 0, optional ```` ```python ```` fences), so a fixture written to that format
-is schema-validated, not authored-from-memory of an external protocol. No model was run to
-produce them (this branch builds against a stub; a real-model run is separately gated).
+These fixtures are hand-authored from this project's published wire schema, not copied from the
+extractor or recorded from its output. The schema is one frame beginning at byte zero with
+`FILE: <relative-path>`, `UTF8-BYTES: <ASCII decimal>`, one blank line, and the raw payload.
+The byte count covers only the payload. Exact length is required unless the caller has transport
+evidence that generation is incomplete. No Markdown or marker compatibility grammar exists.
 
-The variant set is the **enumerated weak-model degradation modes** the extractor must survive
-— the closed set, not a happy path:
+The set enumerates accepted payload properties and fail-closed degradation modes:
 
-| Fixture | Shape it pins |
+| Fixture | Property it pins |
 |-|-|
-| `fenced_with_marker.txt` | marker + fenced body; trailing prose after the fence is excluded |
-| `unfenced_with_marker.txt` | marker + bare (unfenced) body |
-| `marker_inside_fence.txt` | a `FILE:` line *inside* a fenced string is content, never a split |
-| `truncated_final_block.txt` | a fence cut off mid-stream (no closing ```` ``` ````) is tolerated |
-| `no_marker_single_fence.txt` | zero markers + exactly one fenced region -> the single permitted path |
-| `no_marker_multiple_fences.txt` | zero markers + two regions -> ambiguous -> no blocks |
-| `prose_no_blocks.txt` | pure prose, no markers, no fences -> no blocks -> BLOCKED |
+| `payload_with_header_looking_lines.txt` | valid payload preserves fence-looking and `FILE:` lines |
+| `no_terminal_newline.txt` | valid payload preserves the absence of a terminal newline |
+| `unicode_with_terminal_newline.txt` | valid Unicode payload preserves one terminal newline |
+| `truncated_payload.txt` | short payload blocks by default and survives only with explicit incomplete evidence |
+| `second_frame.txt` | a second framed record is trailing bytes, so the whole reply is blocked |
+| `no_marker_single_fence.txt` | legacy markerless Markdown fence is blocked |
+| `no_marker_multiple_fences.txt` | multiple legacy Markdown fences are blocked |
+| `prose_no_blocks.txt` | prose without a frame is blocked |
 
-When a real model server is available, capture genuine replies and add them here as
-higher-fidelity fixtures — provenance noted per file. Until then, the schema-derived set above
-is the enumerated contract.
+A future real-model capture may supplement this schema-derived corpus only when its provenance is
+recorded; it must not replace these closed-set contract cases.

@@ -124,16 +124,60 @@ def _events(payload: str) -> Iterator[SSEEvent]:
     if "error" in frame:
         yield Error(_error_message(frame["error"]))
         return
-    for choice in frame.get("choices", []):
-        content = (choice.get("delta") or {}).get("content")
-        if content:
-            yield Delta(content)
+    choice_events = _choice_events(frame.get("choices", []))
+    if isinstance(choice_events, Error):
+        yield choice_events
+        return
+    usage_event = _usage_event(frame.get("usage"))
+    if isinstance(usage_event, Error):
+        yield usage_event
+        return
+    yield from choice_events
+    if usage_event is not None:
+        yield usage_event
+
+
+def _choice_events(choices: object) -> list[SSEEvent] | Error:
+    """Validate and translate a frame's choices without emitting partial events."""
+    if not isinstance(choices, list):
+        return _unexpected_shape("choices", "array", choices)
+    events: list[SSEEvent] = []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            return _unexpected_shape("choice", "object", choice)
         reason = choice.get("finish_reason")
+        if reason is not None and not isinstance(reason, str):
+            return _unexpected_shape("finish_reason", "string or null", reason)
+        delta = choice.get("delta", {})
+        if not isinstance(delta, dict):
+            return _unexpected_shape("delta", "object", delta)
+        content = delta.get("content")
+        if content is not None and not isinstance(content, str):
+            return _unexpected_shape("content", "string or null", content)
+        if content:
+            events.append(Delta(content))
         if reason is not None:
-            yield Finish(reason)
-    usage = frame.get("usage")
-    if usage is not None and (completion := usage.get("completion_tokens")) is not None:
-        yield Usage(completion)
+            events.append(Finish(reason))
+    return events
+
+
+def _usage_event(usage: object) -> Usage | Error | None:
+    """Validate and translate optional usage accounting from one complete frame."""
+    if usage is None:
+        return None
+    if not isinstance(usage, dict):
+        return _unexpected_shape("usage", "object or null", usage)
+    completion = usage.get("completion_tokens")
+    if completion is None:
+        return None
+    if isinstance(completion, bool) or not isinstance(completion, int) or completion < 0:
+        return _unexpected_shape("completion_tokens", "non-negative integer", completion)
+    return Usage(completion)
+
+
+def _unexpected_shape(field: str, expected: str, value: object) -> Error:
+    """Describe one off-contract nested SSE field through the decoder's typed error channel."""
+    return Error(f"unexpected {field} shape: expected {expected}, got {type(value).__name__}")
 
 
 def _error_message(error: object) -> str:

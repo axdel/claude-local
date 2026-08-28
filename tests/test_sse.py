@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from sse_wire import sse_frame, sse_frame_json
@@ -123,6 +124,48 @@ def test_each_finish_reason_yields_exactly_one_finish() -> None:
         # Lifecycle invariant over the finish-reason enum: exactly one Finish, carrying
         # the reason verbatim — no reason is dropped, none is duplicated.
         assert events == [Finish(reason)], f"finish_reason={reason!r}"
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["invalid_finish_reason_array.bytes", "invalid_finish_reason_object.bytes"],
+)
+def test_non_string_finish_reason_becomes_error_without_finish(fixture_name: str) -> None:
+    events = feed(load_fixture(fixture_name), chunk_size=4096)
+
+    assert len(events) == 1
+    assert isinstance(events[0], Error)
+    assert "finish_reason" in events[0].message
+    assert not any(isinstance(event, Finish) for event in events)
+
+
+@pytest.mark.parametrize(
+    ("frame", "invalid_field"),
+    [
+        pytest.param({"choices": None}, "choices", id="null-choices"),
+        pytest.param({"choices": [7]}, "choice", id="scalar-choice"),
+        pytest.param({"choices": [{"delta": 7}]}, "delta", id="scalar-delta"),
+        pytest.param(
+            {"choices": [{"delta": {"content": 42}}]},
+            "content",
+            id="non-string-content",
+        ),
+        pytest.param({"choices": [], "usage": 7}, "usage", id="scalar-usage"),
+        pytest.param(
+            {"choices": [], "usage": {"completion_tokens": {}}},
+            "completion_tokens",
+            id="non-integer-completion-tokens",
+        ),
+    ],
+)
+def test_invalid_nested_frame_shape_becomes_error_without_partial_events(
+    frame: dict[str, object], invalid_field: str
+) -> None:
+    events = feed(sse_frame_json(frame), chunk_size=4096)
+
+    assert len(events) == 1
+    assert isinstance(events[0], Error)
+    assert invalid_field in events[0].message
 
 
 # --- The fidelity trap: usage frame carries EMPTY choices ------------------------

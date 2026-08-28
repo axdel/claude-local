@@ -17,7 +17,12 @@ import time
 
 import httpx
 import pytest
-from factories import build_budget, build_local_economy_record, build_task_spec
+from factories import (
+    build_budget,
+    build_local_economy_record,
+    build_task_spec,
+    build_whole_file_reply,
+)
 
 from claude_local.backend import BackendUnavailable
 from claude_local.entrypoint import Outcome, _writable_subtree, implement
@@ -66,14 +71,13 @@ def _sse(*frames: dict[str, object]) -> bytes:
     return ("".join(_data(frame) for frame in frames) + "data: [DONE]\n\n").encode()
 
 
-def _clean_impl_reply(code: str) -> bytes:
-    """A wire-faithful clean stream whose one content delta is a fenced whole-file block.
+def _clean_impl_reply(code: str, impl_path: str) -> bytes:
+    """A wire-faithful clean stream whose content delta is one byte-counted file frame.
 
-    Role chunk, one fenced-code delta, a stop finish, then a usage trailer of 40 completion
-    tokens — so the real decoder reports a server-counted (non-estimated) total, mirroring the
-    streaming contract's usage frame.
+    Role chunk, one frame delta, a stop finish, then a usage trailer of 40 completion tokens —
+    so the real decoder reports a server-counted total while preserving the source payload.
     """
-    content = f"```python\n{code}```"
+    content = build_whole_file_reply(impl_path, code)
     return _sse(
         {**_CHUNK, "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]},
         {**_CHUNK, "choices": [{"index": 0, "delta": {"content": content}}]},
@@ -313,7 +317,7 @@ def test_implement_e2e_reaches_done_through_the_real_sandbox() -> None:
         expected_tests=2,
         budget=build_budget(max_attempts=3, max_tokens=4096, timeout_s=120.0),
     )
-    client = _mock_client(_clean_impl_reply(_ADDER_IMPL))
+    client = _mock_client(_clean_impl_reply(_ADDER_IMPL, "src/adder.py"))
 
     outcome = implement(spec, base_url="http://local", model=_MODEL, http_client=client)
 
@@ -345,7 +349,7 @@ def test_implement_e2e_binds_budget_timeout_to_the_sandbox() -> None:
         expected_tests=2,
         budget=build_budget(max_attempts=1, max_tokens=4096, timeout_s=2.0),
     )
-    client = _mock_client(_clean_impl_reply(_HANGING_IMPL))
+    client = _mock_client(_clean_impl_reply(_HANGING_IMPL, "src/adder.py"))
 
     started = time.monotonic()
     outcome = implement(spec, base_url="http://local", model=_MODEL, http_client=client)

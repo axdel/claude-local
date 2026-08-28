@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from claude_local.edits import apply_files, extract_files
+from claude_local.edits import apply_file, extract_file
 from claude_local.paths import KeepOnlyViolation
 from claude_local.telemetry import LocalEconomyRecord
 from claude_local.types import Status
@@ -33,8 +33,8 @@ if TYPE_CHECKING:
     from claude_local.types import TaskSpec
 
 # The immutable oracle test is written to the worktree ROOT — outside the SnapshotStore's src
-# subtree (so restore_best never clobbers it) and distinct from any impl path (so apply_files
-# never overwrites it). A run-stable name, carrying no timestamp, keeps the worktree predictable.
+# subtree (so restore_best never clobbers it) and distinct from any impl path (so apply_file never
+# overwrites it). A run-stable name, carrying no timestamp, keeps the worktree predictable.
 _ORACLE_TEST_FILENAME = "test_loop_oracle.py"
 
 
@@ -104,9 +104,10 @@ class Loop:
 
         Builds the KV-cacheable prefix once and writes the immutable oracle test once, then loops
         under the budget: generate → apply the whole-file edit to the permitted path → score →
-        snapshot, threading each failure back as distilled feedback and stopping on green. A derail
-        or a non-usable edit (no block, or an edit for a forbidden path) stops the loop early. On
-        exit the best snapshot is restored and the terminal status classified by strict precedence.
+        snapshot, threading each failure back as distilled feedback and stopping on green. A
+        short frame is repairable only when no finish arrived or the server ended at its length
+        cap; every other terminal reason requires exact length. A derail or non-usable edit
+        stops the loop early. On exit the best snapshot is restored and status follows precedence.
 
         A transport failure (``BackendUnavailable`` from the client — an unreachable server) and a
         broken oracle (``OracleError`` from the runner) are never caught — they propagate, so a
@@ -141,12 +142,12 @@ class Loop:
             if gen.derail_reason is not None:
                 derailed = True
                 break
-            blocks = extract_files(gen.text)
-            if not blocks:  # prose with no usable whole-file block — structurally blocked
+            reply = extract_file(gen.text, incomplete=gen.is_incomplete)
+            if reply is None:  # prose with no usable whole-file reply — structurally blocked
                 blocked = True
                 break
             try:
-                apply_files(blocks, worktree, spec.impl_path)
+                apply_file(reply, worktree, spec.impl_path)
             except KeepOnlyViolation:  # an edit aimed outside the one permitted path
                 blocked = True
                 break

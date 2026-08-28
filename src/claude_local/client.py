@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING
 from claude_local.derail import CHARS_PER_TOKEN, DerailGuard
 from claude_local.sse import Delta, Error, Finish, Usage, decode_sse
 
+_LENGTH_FINISH_REASON = "length"
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -59,6 +61,16 @@ class GenerationResult:
     derail_reason: DerailReason | None
     fault: str | None = None
     finish_reason: str | None = None
+
+    @property
+    def is_incomplete(self) -> bool:
+        """Whether no terminal finish arrived or the server stopped at its length cap."""
+        return self.finish_reason is None or self.finish_reason == _LENGTH_FINISH_REASON
+
+    @property
+    def is_length_capped(self) -> bool:
+        """Whether the server stopped this generation at its own token limit."""
+        return self.finish_reason == _LENGTH_FINISH_REASON
 
 
 class ModelClient:

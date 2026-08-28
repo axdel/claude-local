@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from factories import build_budget
+from factories import build_budget, build_generation_result
 
 from claude_local.backend import ReplayBackend, ReplayExhausted
 from claude_local.client import GenerationResult, ModelClient
@@ -75,6 +75,27 @@ def test_clean_stream_reports_server_usage_and_full_text() -> None:
 
 
 # --- Finish frame: the server's own terminal reason -------------------------------
+
+
+@pytest.mark.parametrize(
+    ("finish_reason", "expected_incomplete", "expected_length_capped"),
+    [
+        pytest.param(None, True, False, id="no-finish"),
+        pytest.param("length", True, True, id="length-cap"),
+        pytest.param("stop", False, False, id="clean-stop"),
+        pytest.param("tool_calls", False, False, id="other-terminal-reason"),
+        pytest.param([], False, False, id="unhashable-defense-in-depth"),
+    ],
+)
+def test_generation_result_owns_completion_semantics_without_hashing(
+    finish_reason: object,
+    expected_incomplete: bool,
+    expected_length_capped: bool,
+) -> None:
+    generation = build_generation_result(finish_reason=finish_reason)
+
+    assert generation.is_incomplete is expected_incomplete
+    assert generation.is_length_capped is expected_length_capped
 
 
 def test_finish_reason_length_is_captured_from_the_terminal_event() -> None:

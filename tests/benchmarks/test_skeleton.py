@@ -116,7 +116,7 @@ def test_case_rejects_case_insensitive_golden_path_collisions() -> None:
 def test_replay_client_emits_schema_complete_streaming_chunks() -> None:
     """Replay frames match the published role, content, finish, usage, and terminator shapes."""
     with (
-        replay_http_client("VALUE = 1\n") as http_client,
+        replay_http_client('TEXT = "世界"\n', impl_path="app/main.py") as http_client,
         http_client.stream("POST", "http://benchmark.local/v1/chat/completions") as response,
     ):
         event_lines = [line for line in response.iter_lines() if line]
@@ -145,7 +145,7 @@ def test_replay_client_emits_schema_complete_streaming_chunks() -> None:
             "choices": [
                 {
                     "index": 0,
-                    "delta": {"content": "```python\nVALUE = 1\n```"},
+                    "delta": {"content": 'FILE: app/main.py\nUTF8-BYTES: 16\n\nTEXT = "世界"\n'},
                     "finish_reason": None,
                 }
             ],
@@ -186,7 +186,9 @@ def test_driver_runs_health_case_green_with_neighbor_in_real_request(tmp_path: P
         observed_assembled_files["main"] = _read(worktree / "app" / "main.py")
         observed_assembled_files["db"] = _read(worktree / "app" / "db.py")
 
-    with replay_http_client(golden_main, request_observer=observe_request) as http_client:
+    with replay_http_client(
+        golden_main, impl_path=case.task.impl_path, request_observer=observe_request
+    ) as http_client:
         outcome = driver.run_case(case, http_client=http_client)
 
     assert outcome.status is Status.DONE
@@ -235,11 +237,13 @@ def test_driver_preserves_a_reply_without_a_terminal_newline(tmp_path: Path) -> 
         model="replay/no-final-newline",
     )
 
-    with replay_http_client(reply_without_final_newline) as http_client:
+    with replay_http_client(
+        reply_without_final_newline, impl_path=case.task.impl_path
+    ) as http_client:
         outcome = driver.run_case(case, http_client=http_client)
 
     assert outcome.status is Status.DONE
-    assert outcome.code == golden_main
+    assert outcome.code == reply_without_final_newline
 
 
 def test_driver_rejects_behaviorally_wrong_health_reply_and_removes_worktree(
@@ -261,7 +265,7 @@ def test_driver_rejects_behaviorally_wrong_health_reply_and_removes_worktree(
         model="replay/wrong-health",
     )
 
-    with replay_http_client(wrong_main) as http_client:
+    with replay_http_client(wrong_main, impl_path=case.task.impl_path) as http_client:
         outcome = driver.run_case(case, http_client=http_client)
 
     assert outcome.status is Status.EXHAUSTED
@@ -306,7 +310,11 @@ def test_driver_removes_worktree_when_model_seam_raises(tmp_path: Path) -> None:
         raise RuntimeError("replay observer aborted")
 
     with (
-        replay_http_client(case.blank_stub, request_observer=abort_request) as http_client,
+        replay_http_client(
+            case.blank_stub,
+            impl_path=case.task.impl_path,
+            request_observer=abort_request,
+        ) as http_client,
         pytest.raises(RuntimeError, match="replay observer aborted"),
     ):
         driver.run_case(case, http_client=http_client)

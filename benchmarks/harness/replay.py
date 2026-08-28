@@ -24,20 +24,22 @@ _REPLAY_PROMPT_TOKENS = 0
 
 
 def replay_http_client(
-    whole_file_reply: str,
+    implementation_source: str,
     *,
+    impl_path: str,
     request_observer: Callable[[httpx.Request], None] | None = None,
 ) -> httpx.Client:
-    """Return a client that streams ``whole_file_reply`` as one complete Python file.
+    """Return a client that streams ``implementation_source`` as one complete Python file.
 
     Args:
-        whole_file_reply: Complete implementation-file text returned by the replayed model.
+        implementation_source: Complete implementation-file text returned by the replayed model.
+        impl_path: Relative implementation path declared by the reply frame.
         request_observer: Optional observer called with the real outgoing request before replay.
 
     Returns:
         An injected-lifecycle ``httpx.Client`` backed by a deterministic mock transport.
     """
-    completion = _completion_stream(whole_file_reply)
+    completion = _completion_stream(implementation_source, impl_path)
 
     def replay_completion(request: httpx.Request) -> httpx.Response:
         if request_observer is not None:
@@ -51,9 +53,13 @@ def replay_http_client(
     return httpx.Client(transport=httpx.MockTransport(replay_completion))
 
 
-def _completion_stream(whole_file_reply: str) -> bytes:
-    """Encode one clean streamed completion with role, content, finish, usage, and terminator."""
-    fenced_reply = f"```python\n{whole_file_reply.rstrip(chr(10))}\n```"
+def _completion_stream(implementation_source: str, impl_path: str) -> bytes:
+    """Encode one byte-counted completion with role, content, finish, usage, and terminator."""
+    file_reply = (
+        f"FILE: {impl_path}\n"
+        f"UTF8-BYTES: {len(implementation_source.encode('utf-8'))}\n\n"
+        f"{implementation_source}"
+    )
     frames = (
         {
             **_CHUNK_BASE,
@@ -67,7 +73,7 @@ def _completion_stream(whole_file_reply: str) -> bytes:
         },
         {
             **_CHUNK_BASE,
-            "choices": [{"index": 0, "delta": {"content": fenced_reply}, "finish_reason": None}],
+            "choices": [{"index": 0, "delta": {"content": file_reply}, "finish_reason": None}],
         },
         {
             **_CHUNK_BASE,
