@@ -2,7 +2,7 @@
 
 The loop writes this verbatim into the worktree root as the immutable oracle test; the model may
 never modify it. It adds the worktree's src/ (where the model writes calculator.py) to sys.path so
-the flat `uv run pytest` subprocess resolves the import from any cwd, then asserts add() against
+the `python -m pytest` subprocess resolves the import from any cwd, then asserts add() against
 three hand-derived sums — specification oracles, never read from any implementation.
 """
 

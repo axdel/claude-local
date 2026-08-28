@@ -96,10 +96,16 @@ def test_is_green_false_when_count_mismatched_though_every_run_test_passed() -> 
 # --- TestRunner.run: spawn -> report -> score ---------------------------------------
 
 
-def _writing_spawn(report_xml: str) -> Callable[[Sequence[str], Path, Path], None]:
-    """A fake pytest: write the given JUnit-XML to the --junit-xml=<path> the command requested."""
+def _writing_spawn(
+    report_xml: str,
+    *,
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+) -> Callable[[Sequence[str], Path, Path], tuple[bytes, bytes]]:
+    """A fake pytest: write the requested JUnit report and return its diagnostic streams."""
 
-    def spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> None:
+    def spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> tuple[bytes, bytes]:
+        del cwd
         for arg in cmd:
             if arg.startswith("--junit-xml="):
                 report = Path(arg.split("=", 1)[1])
@@ -107,30 +113,50 @@ def _writing_spawn(report_xml: str) -> Callable[[Sequence[str], Path, Path], Non
                 # invariant the real sandbox relies on (the child may write only there).
                 assert write_box in report.parents, "report path escapes the writable box"
                 report.write_text(report_xml, encoding="utf-8")
-                return
+                return stdout, stderr
         raise AssertionError("run() did not request a --junit-xml=<path>")
 
     return spawn
 
 
-def test_run_scores_the_report_its_spawn_produced(tmp_path: Path) -> None:
-    runner = TestRunner(spawn=_writing_spawn(load_junit("all_pass.xml")))
-    score = runner.run(tmp_path / "test_oracle.py", tmp_path, expected=3)
-    assert score == TestScore(3, 0, 0, 3, 0, 3)
-    assert score.is_green is True
+def test_run_returns_junit_score_and_captured_diagnostics(tmp_path: Path) -> None:
+    runner = TestRunner(
+        spawn=_writing_spawn(
+            load_junit("all_pass.xml"),
+            stdout=b"oracle-out\n",
+            stderr=b"oracle-err\n",
+        )
+    )
+
+    oracle_run = runner.run(tmp_path / "test_oracle.py", tmp_path, expected=3)
+
+    assert oracle_run.score == TestScore(3, 0, 0, 3, 0, 3)
+    assert oracle_run.score.is_green is True
+    assert oracle_run.output == "oracle-out\noracle-err\n"
+
+
+def test_run_replaces_invalid_utf8_in_captured_diagnostics(tmp_path: Path) -> None:
+    runner = TestRunner(
+        spawn=_writing_spawn(load_junit("one_failure.xml"), stdout=b"failure:\xff\n")
+    )
+
+    oracle_run = runner.run(tmp_path / "test_oracle.py", tmp_path, expected=3)
+
+    assert oracle_run.output == "failure:�\n"
 
 
 def test_run_reports_a_collection_error_as_invalid(tmp_path: Path) -> None:
     runner = TestRunner(spawn=_writing_spawn(load_junit("import_error.xml")))
-    score = runner.run(tmp_path / "test_oracle.py", tmp_path, expected=3)
-    assert score == TestScore(0, 0, 1, 1, 0, 3)
-    assert score.is_valid is False
-    assert score.is_green is False
+    oracle_run = runner.run(tmp_path / "test_oracle.py", tmp_path, expected=3)
+    assert oracle_run.score == TestScore(0, 0, 1, 1, 0, 3)
+    assert oracle_run.score.is_valid is False
+    assert oracle_run.score.is_green is False
 
 
 def test_run_raises_oracle_error_when_no_report_is_written(tmp_path: Path) -> None:
-    def silent_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> None:
-        return  # pytest crashed before writing the report — a broken oracle, not a failing impl
+    def silent_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> tuple[bytes, bytes]:
+        del cmd, cwd, write_box
+        return b"", b""  # pytest crashed before writing a report — a broken oracle
 
     runner = TestRunner(spawn=silent_spawn)
     with pytest.raises(OracleError):
@@ -146,14 +172,22 @@ def test_run_wraps_a_malformed_report_in_oracle_error(tmp_path: Path) -> None:
         runner.run(tmp_path / "test_oracle.py", tmp_path, expected=1)
 
 
-def test_run_maps_a_sandbox_timeout_to_a_zero_verdict_score(tmp_path: Path) -> None:
+def test_run_maps_a_sandbox_timeout_to_a_zero_verdict_with_feedback(tmp_path: Path) -> None:
     # A non-terminating impl: the spawn kills it and raises SandboxTimeout. run() maps that to a
     # non-green, invalid score (zero verdicts reached) so the loop retries a hang, never crashes.
-    def hanging_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> None:
-        raise SandboxTimeout("oracle exceeded its wall-clock budget")
+    def hanging_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> tuple[bytes, bytes]:
+        del cmd, cwd, write_box
+        raise SandboxTimeout(
+            "oracle exceeded its wall-clock budget",
+            stdout=b"setup reached\n",
+            stderr=b"waiting forever\n",
+        )
 
     runner = TestRunner(spawn=hanging_spawn)
-    score = runner.run(tmp_path / "test_oracle.py", tmp_path, expected=3)
-    assert score == TestScore(0, 0, 0, 0, 0, 3)
-    assert score.is_valid is False
-    assert score.is_green is False
+    oracle_run = runner.run(tmp_path / "test_oracle.py", tmp_path, expected=3)
+    assert oracle_run.score == TestScore(0, 0, 0, 0, 0, 3)
+    assert oracle_run.score.is_valid is False
+    assert oracle_run.score.is_green is False
+    assert oracle_run.output == (
+        "setup reached\nwaiting forever\noracle exceeded its wall-clock budget"
+    )

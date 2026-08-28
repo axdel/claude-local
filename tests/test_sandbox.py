@@ -1,13 +1,13 @@
 """Confinement property tests for the oracle sandbox.
 
 The sandbox is the kernel boundary that executes untrusted model code (the impl file,
-imported by ``uv run pytest``). These tests drive ``sandboxed_spawn`` with real
-subprocesses on the live kernel and assert its security properties hold — a write
-*outside* the writable box is denied, network egress is denied, and the child's HOME is
-the disposable box (never the developer's real home) — plus the one capability it must
-preserve (a write *inside* the box) and the two teardown backstops: a wall-clock timeout
-that kills a runaway process group, and an unconditional group kill so a non-timeout
-interruption never orphans the confined process tree.
+imported by ``python -m pytest``). These tests drive ``sandboxed_spawn`` with real
+subprocesses on the live kernel and assert its security properties hold — ambient host
+reads, out-of-box writes, and network egress are denied; HOME is the disposable box —
+plus the capabilities it must preserve (runtime/worktree reads, in-box writes, and bounded
+diagnostics) and the two teardown backstops: a wall-clock timeout that kills a runaway
+process group, and an unconditional group kill so a non-timeout interruption never
+orphans the confined process tree.
 
 Skipped where ``sandbox-exec`` is unavailable (non-macOS CI): the property under test is
 a macOS-kernel fact, so there is nothing meaningful to assert without the kernel.
@@ -57,6 +57,30 @@ def test_write_outside_the_box_is_denied(tmp_path: Path) -> None:
     assert not escape.exists()
 
 
+def test_read_outside_the_worktree_and_box_is_denied(tmp_path: Path) -> None:
+    """Captured diagnostics cannot relay arbitrary host-file contents to the model request."""
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    box = tmp_path / "box"
+    box.mkdir()
+    secret = tmp_path / "operator-secret.txt"
+    secret.write_text("credential-sentinel", encoding="utf-8")
+    payload = (
+        "import pathlib\n"
+        "try:\n"
+        f"    print(pathlib.Path({str(secret)!r}).read_text())\n"
+        "except OSError as exc:\n"
+        "    print('blocked:' + type(exc).__name__)\n"
+    )
+
+    stdout, _ = sandboxed_spawn(
+        [sys.executable, "-c", payload], cwd=worktree, write_box=box, timeout_s=30.0
+    )
+
+    assert stdout.startswith(b"blocked:")
+    assert b"credential-sentinel" not in stdout
+
+
 def test_network_egress_is_denied(tmp_path: Path) -> None:
     box = tmp_path / "box"
     box.mkdir()
@@ -92,14 +116,60 @@ def test_write_inside_the_box_is_allowed(tmp_path: Path) -> None:
     assert report.read_text() == "<ok/>"
 
 
-def test_a_hanging_command_is_killed_at_the_timeout(tmp_path: Path) -> None:
+def test_spawn_returns_captured_stdout_and_stderr(tmp_path: Path) -> None:
+    """The parent receives both diagnostic streams from the confined process."""
     box = tmp_path / "box"
     box.mkdir()
+    payload = "import sys; print('oracle-out'); print('oracle-err', file=sys.stderr)"
+
+    stdout, stderr = sandboxed_spawn(
+        [sys.executable, "-c", payload], cwd=box, write_box=box, timeout_s=30.0
+    )
+
+    assert stdout == b"oracle-out\n"
+    assert stderr == b"oracle-err\n"
+
+
+def test_spawn_bounds_each_captured_stream_to_its_diagnostic_tail(tmp_path: Path) -> None:
+    """Untrusted process output cannot make the parent's captured value grow without bound."""
+    box = tmp_path / "box"
+    box.mkdir()
+    stream_bytes = 70_000
+    payload = (
+        "import sys; "
+        f"sys.stdout.write('o' * {stream_bytes} + 'stdout-tail'); "
+        f"sys.stderr.write('e' * {stream_bytes} + 'stderr-tail')"
+    )
+
+    stdout, stderr = sandboxed_spawn(
+        [sys.executable, "-c", payload], cwd=box, write_box=box, timeout_s=30.0
+    )
+
+    assert len(stdout) == 65_536
+    assert len(stderr) == 65_536
+    assert stdout.endswith(b"stdout-tail")
+    assert stderr.endswith(b"stderr-tail")
+
+
+def test_a_hanging_command_is_killed_at_the_timeout_with_bounded_diagnostics(
+    tmp_path: Path,
+) -> None:
+    box = tmp_path / "box"
+    box.mkdir()
+    payload = (
+        "import sys, time; "
+        "print('started', flush=True); "
+        "print('still-running', file=sys.stderr, flush=True); "
+        "time.sleep(30)"
+    )
     started = time.monotonic()
-    with pytest.raises(SandboxTimeout):
-        _run("import time; time.sleep(30)", box, timeout_s=2.0)
-    # Oracle: the 2s wall-clock cap fires long before the 30s sleep would return.
+
+    with pytest.raises(SandboxTimeout) as excinfo:
+        sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box, timeout_s=2.0)
+
     assert time.monotonic() - started < 15.0
+    assert excinfo.value.stdout == b"started\n"
+    assert excinfo.value.stderr == b"still-running\n"
 
 
 def test_home_points_into_the_box_not_the_developer_home(tmp_path: Path) -> None:

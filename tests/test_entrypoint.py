@@ -7,7 +7,7 @@ only what claude-local produces and burns. These tests drive the REAL HTTP decod
 ``httpx.MockTransport`` — the model's response is the one true-external seam, everything else runs
 live. Validation, the derail path, and client lifecycle are cross-platform (a derail trips during
 decode, before any oracle runs); the DONE happy path and the timeout binding are gated on the macOS
-sandbox that runs the real ``uv run pytest`` oracle.
+sandbox that runs the real ``python -m pytest`` oracle.
 """
 
 from __future__ import annotations
@@ -96,6 +96,7 @@ def _mock_client(reply: bytes) -> httpx.Client:
     """
 
     def _handler(request: httpx.Request) -> httpx.Response:
+        del request
         return httpx.Response(200, content=reply)
 
     return httpx.Client(transport=httpx.MockTransport(_handler))
@@ -109,6 +110,7 @@ def _unreachable_client() -> httpx.Client:
     """
 
     def _handler(request: httpx.Request) -> httpx.Response:
+        del request
         raise httpx.ConnectError("connection refused")
 
     return httpx.Client(transport=httpx.MockTransport(_handler))
@@ -145,6 +147,7 @@ def test_implement_rejects_a_flat_impl_path_before_any_http_call() -> None:
     spec = build_task_spec(impl_path="flat.py")
 
     def _boom(request: httpx.Request) -> httpx.Response:
+        del request
         raise AssertionError("no HTTP call may happen when the impl_path is invalid")
 
     client = httpx.Client(transport=httpx.MockTransport(_boom))
@@ -296,9 +299,9 @@ def test_implement_propagates_backend_unavailable_when_the_server_is_unreachable
 @pytest.mark.skipif(
     not sandbox_available(), reason="the oracle runs under the macOS kernel sandbox"
 )
-def test_implement_e2e_reaches_done_through_the_real_sandbox(_project_env: None) -> None:
+def test_implement_e2e_reaches_done_through_the_real_sandbox() -> None:
     """Cold-start front door: default scratch worktree + bundled rules card + real httpx decode +
-    a REAL sandboxed ``uv run pytest`` on a real oracle → DONE, with the produced code returned.
+    a REAL sandboxed ``python -m pytest`` oracle → DONE, with the produced code returned.
 
     Only the model's HTTP response is doubled; the worktree, rules card, sandbox, and oracle
     are all the production defaults — the highest-fidelity exercise of the entry point.
@@ -329,7 +332,7 @@ def test_implement_e2e_reaches_done_through_the_real_sandbox(_project_env: None)
 @pytest.mark.skipif(
     not sandbox_available(), reason="the oracle runs under the macOS kernel sandbox"
 )
-def test_implement_e2e_binds_budget_timeout_to_the_sandbox(_project_env: None) -> None:
+def test_implement_e2e_binds_budget_timeout_to_the_sandbox() -> None:
     """A hanging impl with a 2s budget is killed at ~2s, not the sandbox's 120s default.
 
     Proves ``spec.budget.timeout_s`` is bound into the oracle sandbox (the composition-root timeout

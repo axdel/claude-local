@@ -3,8 +3,9 @@
 This is the top of the engine: it owns the control flow the README calls the loop. Given a task
 spec and a worktree, it builds the KV-cacheable prefix ONCE, then loops under the budget —
 generate, apply the whole-file reply to the one permitted impl path, score the immutable oracle
-test, snapshot the attempt — feeding each failure back as distilled feedback until the oracle is
-green or the budget is spent. On exit it restores the best-scoring snapshot and classifies a
+test, snapshot the attempt — feeding the runner-owned pytest diagnostics (never prior model
+source) back as distilled feedback until the oracle is green or the budget is spent. On exit it
+restores the best-scoring snapshot and classifies a
 terminal ``Status`` by strict precedence, then aggregates the local economy record for the run.
 
 The spine composes the single-responsibility modules beneath it (client, prompt, edits, runner,
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 
     from claude_local.client import GenerationResult, ModelClient
     from claude_local.prompt import PromptBuilder
-    from claude_local.runner import TestRunner, TestScore
+    from claude_local.runner import OracleRun, TestRunner, TestScore
     from claude_local.snapshot import SnapshotStore
     from claude_local.types import TaskSpec
 
@@ -116,8 +117,7 @@ class Loop:
         oracle_path.write_text(spec.test_text, encoding="utf-8")
 
         results: list[GenerationResult] = []
-        last_score: TestScore | None = None
-        last_raw = ""
+        last_run: OracleRun | None = None
         derailed = False
         blocked = False
         faulted = False
@@ -127,11 +127,12 @@ class Loop:
         for index in range(spec.budget.max_attempts):
             attempts += 1
             tail = (
-                "" if last_score is None else self._prompt.distill_feedback(last_score, last_raw)
+                ""
+                if last_run is None
+                else self._prompt.distill_feedback(last_run.score, last_run.output)
             )
             gen = self._client.generate(stable, tail, spec.budget)
             results.append(gen)
-            last_raw = gen.text
             # an upstream server fault (an SSE error frame) — the host failed, not the model
             if gen.fault is not None:
                 faulted = True
@@ -149,10 +150,9 @@ class Loop:
             except KeepOnlyViolation:  # an edit aimed outside the one permitted path
                 blocked = True
                 break
-            score = self._runner.run(oracle_path, worktree, spec.expected_tests)
-            last_score = score
-            self._snapshots.record(index, score)
-            if score.is_green:
+            last_run = self._runner.run(oracle_path, worktree, spec.expected_tests)
+            self._snapshots.record(index, last_run.score)
+            if last_run.score.is_green:
                 break
 
         self._snapshots.restore_best()

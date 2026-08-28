@@ -94,20 +94,28 @@ class ScriptedSpawn:
     of attempts surfaces loudly rather than silently repeating a verdict.
     """
 
-    def __init__(self, *reports: str) -> None:
+    def __init__(
+        self,
+        *reports: str,
+        outputs: Sequence[tuple[bytes, bytes]] = (),
+    ) -> None:
         self._reports = list(reports)
+        self._outputs = list(outputs)
         self._i = 0
 
-    def __call__(self, cmd: Sequence[str], cwd: Path, write_box: Path) -> None:
+    def __call__(self, cmd: Sequence[str], cwd: Path, write_box: Path) -> tuple[bytes, bytes]:
         del cwd, write_box  # the fake ignores the worktree/box; it writes only where argv points
         body = self._reports[self._i]
+        output = self._outputs[self._i] if self._i < len(self._outputs) else (b"", b"")
         self._i += 1
         _report_path(cmd).write_text(body, encoding="utf-8")
+        return output
 
 
-def _silent_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> None:
+def _silent_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> tuple[bytes, bytes]:
     """A spawn that produces NO report — TestRunner.run must raise OracleError (broken oracle)."""
     del cmd, cwd, write_box  # intentionally produce no JUnit report, to exercise broken-oracle
+    return b"", b""
 
 
 class RecordingBackend:
@@ -397,10 +405,19 @@ def test_writes_the_frozen_oracle_test_before_running(tmp_path: Path) -> None:
     assert not oracle.is_relative_to(worktree / "src")  # never inside the snapshot subtree
 
 
-def test_prefix_is_byte_identical_across_attempts_and_feedback_threads(tmp_path: Path) -> None:
+def test_prefix_is_stable_and_retry_tail_uses_oracle_output_not_prior_source(
+    tmp_path: Path,
+) -> None:
     worktree = _setup_worktree(tmp_path)
     recording = RecordingBackend([_edit_script(_V0), _edit_script(_V1)])
-    spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("all_pass.xml"))
+    assertion_failure = (
+        b"FAILED test_loop_oracle.py::test_widget - AssertionError: assert 0 == 1\n"
+    )
+    spawn = ScriptedSpawn(
+        _junit("one_failure.xml"),
+        _junit("all_pass.xml"),
+        outputs=((assertion_failure, b""), (b"3 passed\n", b"")),
+    )
     loop, _ = _make_loop(worktree, recording, spawn)
     spec = build_task_spec(
         impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
@@ -413,7 +430,8 @@ def test_prefix_is_byte_identical_across_attempts_and_feedback_threads(tmp_path:
     assert len(recording.calls) == 2
     assert prefixes[0] == prefixes[1]  # the KV-cacheable prefix never mutates between attempts
     assert tails[0] == ""  # attempt 0 has no feedback to distil
-    assert "2/3 passed" in tails[1]  # attempt 1 receives the distilled failure of attempt 0
+    assert "AssertionError: assert 0 == 1" in tails[1]
+    assert _V0 not in tails[1]
 
 
 def test_prefix_is_built_once_per_task(tmp_path: Path) -> None:
