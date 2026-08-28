@@ -25,10 +25,10 @@ class — whether offloading to a free local model saved net frontier tokens.
 
 ## Commands
 
-- Test: `uv run pytest`
+- Test: `uv run --group bench pytest`
 - Lint / format: `uv run ruff check` · `uv run ruff format`
 - Types: `uv run basedpyright`
-- Commit gate (pre-commit): `lefthook run pre-commit` — ruff check + format --check + basedpyright + pytest
+- Commit gate (pre-commit): `lefthook run pre-commit` — ruff check + format --check + basedpyright + bench-aware pytest
 
 ## Architecture overview
 
@@ -106,9 +106,9 @@ See [`RESOURCE_OWNERSHIP.md`](RESOURCE_OWNERSHIP.md) for the single-writer regis
 
 A reusable instrument for judging how any new or candidate local model performs as an
 implementer under the claude-local loop: a deliberately half-finished project shipped with a
-detailed plan and a hidden correctness oracle. Drop a candidate model in, drive it through the
-plan's tasks, and score its output against the oracle — the same instrument across every model,
-so results are directly comparable.
+detailed plan and an orchestrator-owned immutable correctness oracle. Drop a candidate model in,
+drive it through the plan's tasks, and score its output against the oracle — the same instrument
+across every model, so results are directly comparable.
 
 An earlier internal study — a real parser feature with a hidden multi-case oracle, run through a
 deterministic driver across several local models — seeded this idea and confirmed the loop works.

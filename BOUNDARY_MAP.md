@@ -8,6 +8,8 @@
 | __init__ | types | may-import | Public front door re-exports task value objects. | active |  |
 | backend | httpx | may-import | Only external transport dependency. | active |  |
 | backend | types | may-import | Transport consumes Budget. | active |  |
+| benchmarks | claude_local | may-import | Downstream benchmark consumes only the top-level public package API. | active |  |
+| claude_local | benchmarks | must-not-import | Reusable loop never depends on benchmark subjects or harness code. | active |  |
 | client | backend | may-import | Streams raw SSE bytes from the transport. | active |  |
 | client | derail | may-import | Watches decode for repetition/cap/timeout. | active |  |
 | client | sse | may-import | Decodes raw bytes via the shared decoder. | active |  |
@@ -49,3 +51,4 @@
 
 | Layer | Owns | Must NOT Contain | Status | Superseded By |
 |-|-|-|-|-|
+| benchmark-harness | case loading, scratch-worktree assembly, implement invocation, result aggregation | golden app business logic or claude_local internals | active |  |
