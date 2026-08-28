@@ -193,6 +193,7 @@ def test_driver_runs_health_case_green_with_neighbor_in_real_request(tmp_path: P
 
     assert outcome.status is Status.DONE
     assert outcome.code == golden_main
+    assert outcome.files_changed == (case.task.impl_path,)
     assert outcome.record.model == "replay/golden"
     assert observed_assembled_files == {
         "main": case.blank_stub,
@@ -221,6 +222,34 @@ def test_driver_runs_health_case_green_with_neighbor_in_real_request(tmp_path: P
     assert next(file.content for file in case.task.context_files) in system_message["content"]
     assert len(observed_worktrees) == 1
     assert not observed_worktrees[0].exists()
+    assert list(scratch_root.iterdir()) == []
+
+
+def test_driver_seeded_stub_without_a_scored_edit_reports_no_code_and_cleans_up(
+    tmp_path: Path,
+) -> None:
+    """A pre-seeded blank target is not model output when generation derails before an edit."""
+    case = _build_health_case()
+    derailed_case = replace(
+        case,
+        task=replace(case.task, budget=replace(case.task.budget, max_tokens=2)),
+    )
+    scratch_root = tmp_path / "driver-worktrees"
+    driver = BenchmarkDriver(
+        scratch_root=scratch_root,
+        base_url="http://benchmark.local",
+        model="replay/derailed",
+    )
+
+    with replay_http_client(
+        "z" * 256,
+        impl_path=derailed_case.task.impl_path,
+    ) as http_client:
+        outcome = driver.run_case(derailed_case, http_client=http_client)
+
+    assert outcome.status is Status.DERAILED
+    assert outcome.code is None
+    assert outcome.files_changed == ()
     assert list(scratch_root.iterdir()) == []
 
 
@@ -270,6 +299,7 @@ def test_driver_rejects_behaviorally_wrong_health_reply_and_removes_worktree(
 
     assert outcome.status is Status.EXHAUSTED
     assert outcome.code == wrong_main
+    assert outcome.files_changed == (case.task.impl_path,)
     assert outcome.record.attempts == 1
     assert list(scratch_root.iterdir()) == []
 

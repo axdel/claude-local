@@ -19,12 +19,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from factories import build_budget, build_task_spec, build_test_score, build_whole_file_reply
+from factories import (
+    build_budget,
+    build_local_economy_record,
+    build_task_spec,
+    build_test_score,
+    build_whole_file_reply,
+)
 from sse_wire import sse_frame_json
 
 from claude_local.backend import BackendUnavailable, ReplayBackend
 from claude_local.client import ModelClient
-from claude_local.loop import _ORACLE_TEST_FILENAME, Loop, _classify_terminal
+from claude_local.loop import _ORACLE_TEST_FILENAME, Loop, LoopResult, _classify_terminal
 from claude_local.prompt import PromptBuilder
 from claude_local.runner import OracleError, TestRunner
 from claude_local.snapshot import SnapshotStore
@@ -33,6 +39,7 @@ from claude_local.types import Status
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
+    from claude_local.runner import TestScore
     from claude_local.types import Budget
 
 RULES_CARD = Path(__file__).parent.parent / "src" / "claude_local" / "rules_card.md"
@@ -188,6 +195,29 @@ def _make_loop(
 def _widget(worktree: Path) -> str:
     """The current on-disk impl file text — what the loop left after restore_best."""
     return (worktree / "src" / "widget.py").read_text(encoding="utf-8")
+
+
+# --- LoopResult contract: production derives from a scored snapshot ----------------------
+
+
+@pytest.mark.parametrize(
+    ("best_score", "expected"),
+    [
+        (None, False),
+        (build_test_score(passed=2, failed=1, collected=3, expected=3), True),
+        (build_test_score(passed=3, collected=3, expected=3), True),
+    ],
+)
+def test_loop_result_has_scored_edit_derives_from_best_score(
+    best_score: TestScore | None, expected: bool
+) -> None:
+    result = LoopResult(
+        status=Status.DONE if expected else Status.BLOCKED,
+        best_score=best_score,
+        record=build_local_economy_record(),
+    )
+
+    assert result.has_scored_edit is expected
 
 
 # --- Terminal precedence: the pure classifier, pinned exhaustively (the spine's core) ----

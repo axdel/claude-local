@@ -11,4 +11,5 @@
 | keep_only | editing | paths.resolve_within | edits (apply), snapshot (restore) | single containment rule; rejects absolutes, resolves realpath, refuses symlinks, requires worktree containment | active |  |
 | model-reply-extraction | editing | edits.extract_file | loop (supplies GenerationResult.is_incomplete, then applies) | one WholeFileReply with validated UTF-8 bytes; exact after terminal stop; partial only for incomplete generation; keep_only validates target | active |  |
 | oracle-sandbox | oracle | sandbox.sandboxed_spawn | runner (default spawn) | deny-default SBPL; task/runtime reads only; write-box-only writes; no network; secret-free env; file-backed diagnostic tails; CPU/FSIZE and process-group timeout caps; fail-closed without sandbox-exec | active |  |
+| produced-edit-state | loop | LoopResult.has_scored_edit | entrypoint (maps Outcome code and files_changed) | derived from the scored best snapshot; seeded disk presence never counts | active |  |
 | stable-prefix | prompt | PromptBuilder | loop (builds once), client (sends) | PromptBuilder is the single writer; feedback remains isolated to the tail. | active |  |

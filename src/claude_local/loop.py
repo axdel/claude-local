@@ -42,8 +42,9 @@ _ORACLE_TEST_FILENAME = "test_loop_oracle.py"
 class LoopResult:
     """One task's loop outcome: the terminal status, the best score seen, and the economy record.
 
-    Frozen — a run reports its result once. ``best_score`` is ``None`` when no attempt was ever
-    scored (the run derailed or was structurally blocked before any test ran). ``fault`` carries
+    Frozen — a run reports its result once. ``best_score`` is ``None`` when no model edit crossed
+    oracle scoring, and ``has_scored_edit`` derives model production from that snapshot-owned
+    fact. ``fault`` carries
     the upstream error message when the run terminated ``FAULTED`` (a server-side SSE error frame),
     else ``None``.
     """
@@ -52,6 +53,11 @@ class LoopResult:
     best_score: TestScore | None
     record: LocalEconomyRecord
     fault: str | None = None
+
+    @property
+    def has_scored_edit(self) -> bool:
+        """Whether an applied model edit produced the restored scored snapshot."""
+        return self.best_score is not None
 
 
 def _classify_terminal(

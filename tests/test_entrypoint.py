@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -27,7 +28,7 @@ from factories import (
 from claude_local.backend import BackendUnavailable
 from claude_local.entrypoint import Outcome, _writable_subtree, implement
 from claude_local.sandbox import sandbox_available
-from claude_local.types import Status
+from claude_local.types import Budget, Status
 
 _MODEL = "test/model"
 
@@ -51,6 +52,8 @@ _ADDER_ORACLE = (
     "    assert add(-4, -6) == -10\n"
 )
 _ADDER_IMPL = "def add(a, b):\n    return a + b\n"
+_PARTIAL_ADDER_IMPL = "def add(a, b):\n    return 5\n"
+_BROKEN_ADDER_IMPL = "def add(:\n"
 _HANGING_IMPL = (
     "while True:\n    pass\n"  # hangs at import — the oracle blocks until the sandbox kills it
 )
@@ -93,15 +96,30 @@ def _runaway_reply(size: int = 256) -> bytes:
     return (_data(role) + _data(delta)).encode()
 
 
-def _mock_client(reply: bytes) -> httpx.Client:
-    """An httpx client whose transport returns ``reply`` for the streamed POST.
+def _unusable_reply() -> bytes:
+    """A complete prose-only reply with no whole-file frame — structurally blocked."""
+    return _sse(
+        {**_CHUNK, "choices": [{"index": 0, "delta": {"content": "No file edit."}}]},
+        {**_CHUNK, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+    )
 
-    The mock transport is the doubled model — the one true-external seam.
+
+def _fault_reply(message: str) -> bytes:
+    """A reachable model server's terminal upstream error frame."""
+    return _sse({"error": {"message": message}})
+
+
+def _mock_client(*replies: bytes) -> httpx.Client:
+    """An httpx client whose transport returns each scripted reply for successive POSTs.
+
+    The mock transport is the doubled model — the one true-external seam. Exhausting the script
+    raises rather than silently replaying a response, so generation counts remain observable.
     """
+    reply_script = iter(replies)
 
     def _handler(request: httpx.Request) -> httpx.Response:
         del request
-        return httpx.Response(200, content=reply)
+        return httpx.Response(200, content=next(reply_script))
 
     return httpx.Client(transport=httpx.MockTransport(_handler))
 
@@ -211,6 +229,45 @@ def test_faulted_summary_surfaces_the_upstream_error_message() -> None:
     assert outcome.fault == "context length exceeded"
     assert "context length exceeded" in outcome.summary
     assert "src/thing.py" in outcome.summary
+
+
+# --- Unit: no-edit exits ignore a caller-seeded implementation target ---------------
+
+
+@pytest.mark.parametrize(
+    ("reply", "budget", "expected_status"),
+    [
+        (_runaway_reply(size=256), build_budget(max_attempts=1, max_tokens=2), Status.DERAILED),
+        (_unusable_reply(), build_budget(max_attempts=1), Status.BLOCKED),
+        (_fault_reply("model overloaded"), build_budget(max_attempts=1), Status.FAULTED),
+    ],
+)
+def test_implement_seeded_target_without_a_scored_edit_reports_no_code(
+    tmp_path: Path, reply: bytes, budget: Budget, expected_status: Status
+) -> None:
+    seeded_target = tmp_path / "src" / "adder.py"
+    seeded_target.parent.mkdir(parents=True)
+    seeded_target.write_text("# caller-provided seed\n", encoding="utf-8")
+    spec = build_task_spec(
+        impl_path="src/adder.py",
+        test_text=_ADDER_ORACLE,
+        expected_tests=2,
+        budget=budget,
+    )
+    client = _mock_client(reply)
+
+    outcome = implement(
+        spec,
+        base_url="http://local",
+        model=_MODEL,
+        worktree=tmp_path,
+        http_client=client,
+    )
+
+    assert outcome.status is expected_status
+    assert outcome.code is None
+    assert outcome.files_changed == ()
+    assert seeded_target.read_text(encoding="utf-8") == "# caller-provided seed\n"
 
 
 # --- Unit: the DERAILED path (cross-platform — derail precedes any oracle run) ------
@@ -331,6 +388,39 @@ def test_implement_e2e_reaches_done_through_the_real_sandbox() -> None:
     assert outcome.record.total_calls == 1
     assert outcome.record.tokens_estimated is False
     assert outcome.record.total_completion_tokens == 40
+
+
+@pytest.mark.skipif(
+    not sandbox_available(), reason="the oracle runs under the macOS kernel sandbox"
+)
+def test_implement_exhausted_returns_the_restored_best_model_edit(tmp_path: Path) -> None:
+    """Return the best scored model edit despite a seed and later regression."""
+    seeded_target = tmp_path / "src" / "adder.py"
+    seeded_target.parent.mkdir(parents=True)
+    seeded_target.write_text("# caller-provided seed\n", encoding="utf-8")
+    spec = build_task_spec(
+        impl_path="src/adder.py",
+        test_text=_ADDER_ORACLE,
+        expected_tests=2,
+        budget=build_budget(max_attempts=2, max_tokens=4096, timeout_s=120.0),
+    )
+    client = _mock_client(
+        _clean_impl_reply(_PARTIAL_ADDER_IMPL, "src/adder.py"),
+        _clean_impl_reply(_BROKEN_ADDER_IMPL, "src/adder.py"),
+    )
+
+    outcome = implement(
+        spec,
+        base_url="http://local",
+        model=_MODEL,
+        worktree=tmp_path,
+        http_client=client,
+    )
+
+    assert outcome.status is Status.EXHAUSTED
+    assert outcome.code == _PARTIAL_ADDER_IMPL
+    assert outcome.files_changed == ("src/adder.py",)
+    assert seeded_target.read_text(encoding="utf-8") == _PARTIAL_ADDER_IMPL
 
 
 @pytest.mark.skipif(
