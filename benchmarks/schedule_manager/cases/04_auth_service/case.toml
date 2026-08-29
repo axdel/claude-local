@@ -1,0 +1,12 @@
+# Rung 4 — auth service: deterministic password + signed-identity authentication.
+impl_path = "app/services/auth_service.py"
+context_paths = [
+    "app/schemas.py",
+    "app/repositories/user_repository.py",
+    "app/routers/auth.py",
+]
+
+[budget]
+max_attempts = 4
+max_tokens = 10240
+timeout_s = 180.0
