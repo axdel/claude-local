@@ -22,6 +22,7 @@ from benchmarks.schedule_manager.golden.app.repositories.schedule_repository imp
     ScheduleRepository,
 )
 from benchmarks.schedule_manager.golden.app.repositories.user_repository import (
+    DuplicateUsernameError,
     UserRecord,
     UserRepository,
 )
@@ -31,6 +32,7 @@ from benchmarks.schedule_manager.golden.app.schemas import (
     ScheduleRead,
     ScheduleUpdate,
     UserCreate,
+    UserCredentials,
     UserRead,
 )
 
@@ -47,6 +49,7 @@ def _managed_database(database_path: DatabasePath) -> closing[sqlite3.Connection
     "invalid_fields",
     [
         {"username": b"ada", "password": "correct horse"},
+        {"username": "ada", "password": "correct\N{NULL}horse"},
         {"username": "ada", "password": "correct horse", "is_admin": True},
     ],
 )
@@ -58,17 +61,28 @@ def test_user_create_rejects_coercion_and_unknown_fields(
         UserCreate.model_validate(invalid_fields)
 
 
-def test_user_create_requires_non_empty_credentials() -> None:
-    """Registration credentials reject empty strings without inventing a password policy."""
+def test_user_credentials_are_one_strict_registration_and_login_contract() -> None:
+    """Registration and login share bounded, UTF-8-encodable credential fields."""
+    assert UserCredentials(username="ada", password=_CREDENTIAL_TEXT).model_dump() == {
+        "username": "ada",
+        "password": _CREDENTIAL_TEXT,
+    }
     assert UserCreate(username="ada", password=_CREDENTIAL_TEXT).model_dump() == {
         "username": "ada",
         "password": _CREDENTIAL_TEXT,
     }
 
-    with pytest.raises(ValidationError):
-        UserCreate(username="", password=_CREDENTIAL_TEXT)
-    with pytest.raises(ValidationError):
-        UserCreate(username="ada", password="")
+    for invalid_credentials in (
+        {"username": "", "password": _CREDENTIAL_TEXT},
+        {"username": "ada", "password": ""},
+        {"username": "a" * 65, "password": _CREDENTIAL_TEXT},
+        {"username": "ada", "password": "p" * 129},
+        {"username": "\ud800", "password": _CREDENTIAL_TEXT},
+        {"username": "ada", "password": "\ud800"},
+        {"username": "ada", "password": "password\N{NULL}"},
+    ):
+        with pytest.raises(ValidationError):
+            UserCredentials.model_validate(invalid_credentials)
 
 
 def test_user_read_is_strict_and_excludes_password_material() -> None:
@@ -309,7 +323,7 @@ def test_user_repository_duplicate_username_preserves_original_row(tmp_path: Pat
         users = UserRepository(connection)
         original_user = users.create("ada", "original", Role.USER)
 
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(DuplicateUsernameError, match="ada"):
             users.create("ada", "replacement", Role.ADMIN)
 
         assert users.get_by_username("ada") == original_user

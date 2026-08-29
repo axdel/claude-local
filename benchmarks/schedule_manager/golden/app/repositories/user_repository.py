@@ -13,6 +13,10 @@ _SELECT_USER_BY_ID = "SELECT * FROM users WHERE id = ?"
 _SELECT_USER_BY_USERNAME = "SELECT * FROM users WHERE username = ?"
 
 
+class DuplicateUsernameError(ValueError):
+    """Raised when user creation conflicts with an existing username."""
+
+
 @dataclass(frozen=True, slots=True)
 class UserRecord:
     """One persisted user, including authentication-only password material."""
@@ -37,11 +41,16 @@ class UserRepository:
     ) -> UserRecord:
         """Persist and return a user; reject duplicate usernames or invalid roles atomically."""
         validated_role = Role(role)
-        with self._connection:
-            row = self._connection.execute(
-                _INSERT_USER,
-                (username, password_hash, validated_role),
-            ).fetchone()
+        try:
+            with self._connection:
+                row = self._connection.execute(
+                    _INSERT_USER,
+                    (username, password_hash, validated_role),
+                ).fetchone()
+        except sqlite3.IntegrityError as error:
+            if error.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_UNIQUE:
+                raise DuplicateUsernameError(f"username already exists: {username}") from error
+            raise
         if row is None:
             raise RuntimeError("user insert returned no row")
         return _user_from_row(row)
