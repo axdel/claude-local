@@ -17,7 +17,8 @@ from ..schemas import Role, UserCreate, UserCredentials
 _PBKDF2_SCHEME = "pbkdf2_sha256"
 _PASSWORD_ITERATIONS = 10_000
 _PASSWORD_DIGEST_BYTES = 32
-_SIGNING_KEY_BYTES = 32
+SIGNING_KEY_BYTES = 32
+"""Exact byte length every ``AuthService`` signing key must contain."""
 _INVALID_CREDENTIALS_MESSAGE = "invalid username or password"
 
 
@@ -83,7 +84,7 @@ class AuthService:
     signing_key: bytes
 
     def __post_init__(self) -> None:
-        if len(self.signing_key) != _SIGNING_KEY_BYTES:
+        if len(self.signing_key) != SIGNING_KEY_BYTES:
             raise ValueError("signing key must contain exactly 32 bytes")
 
     def register(self, user: UserCreate) -> UserRecord:

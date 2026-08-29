@@ -26,27 +26,55 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _golden_tree() -> tuple[ContextFile, ...]:
+    """Snapshot every golden app module as the complete tree a case assembles.
+
+    A case blanks one file and shows only a neighbor subset to the model, but the whole
+    app must be present in the worktree for the composed FastAPI app to import and boot.
+    """
+    golden_root = _GOLDEN_APP.parent
+    return tuple(
+        ContextFile(path=path.relative_to(golden_root).as_posix(), content=_read(path))
+        for path in sorted(_GOLDEN_APP.rglob("*.py"))
+    )
+
+
 def _build_health_case() -> BenchmarkCase:
     """Build the canonical tracer case from its committed golden and oracle fixtures."""
-    golden_main = ContextFile(path="app/main.py", content=_read(_GOLDEN_APP / "main.py"))
-    golden_db = ContextFile(path="app/db.py", content=_read(_GOLDEN_APP / "db.py"))
     return BenchmarkCase.from_fixtures(
         impl_path="app/main.py",
         spec_text=_read(_HEALTH_CASE / "spec.md"),
         oracle_text=_read(_HEALTH_CASE / "oracle.py"),
-        golden_tree=(golden_main, golden_db),
+        golden_tree=_golden_tree(),
         blank_stub=_read(_HEALTH_CASE / "blank" / "app" / "main.py"),
-        context_paths=(golden_db.path,),
+        context_paths=("app/db.py",),
         budget=Budget(max_attempts=1, max_tokens=2048, timeout_s=30.0),
     )
 
 
 def test_health_case_contract_carries_golden_tree_stub_and_neighbor() -> None:
-    """The tracer case contains one implementation hole and its selected golden neighbor."""
+    """The tracer assembles the whole golden app with one blanked hole and its neighbor."""
     case = _build_health_case()
+    golden_paths = frozenset(file.path for file in case.golden_tree)
 
     assert case.task.impl_path == "app/main.py"
-    assert tuple(file.path for file in case.golden_tree) == ("app/main.py", "app/db.py")
+    # The complete app is assembled so the composed FastAPI app boots — not the two files
+    # the tracer originally snapshotted before the app grew its service and router layers.
+    assert {
+        "app/main.py",
+        "app/db.py",
+        "app/schemas.py",
+        "app/security.py",
+        "app/cron.py",
+        "app/dependencies.py",
+        "app/routers/auth.py",
+        "app/routers/schedules.py",
+        "app/routers/users.py",
+        "app/services/auth_service.py",
+        "app/services/schedule_service.py",
+        "app/repositories/user_repository.py",
+        "app/repositories/schedule_repository.py",
+    } <= golden_paths
     assert tuple(file.path for file in case.task.context_files) == ("app/db.py",)
     assert "FastAPI" in case.task.spec_text
     assert "create_app" not in case.blank_stub
