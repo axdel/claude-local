@@ -1,0 +1,12 @@
+# Rung 2 — schemas: the strict request/response contracts every layer shares.
+impl_path = "app/schemas.py"
+context_paths = [
+    "app/repositories/schedule_repository.py",
+    "app/repositories/user_repository.py",
+    "app/routers/schedules.py",
+]
+
+[budget]
+max_attempts = 4
+max_tokens = 8192
+timeout_s = 150.0

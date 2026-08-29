@@ -1,0 +1,12 @@
+# Rung 3 — repositories: the typed SQLite persistence boundary for schedules.
+impl_path = "app/repositories/schedule_repository.py"
+context_paths = [
+    "app/schemas.py",
+    "app/db.py",
+    "app/services/schedule_service.py",
+]
+
+[budget]
+max_attempts = 4
+max_tokens = 8192
+timeout_s = 150.0

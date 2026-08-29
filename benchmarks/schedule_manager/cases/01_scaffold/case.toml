@@ -1,0 +1,8 @@
+# Rung 1 — scaffold: the application factory, lifespan, and health endpoint.
+impl_path = "app/main.py"
+context_paths = ["app/db.py"]
+
+[budget]
+max_attempts = 4
+max_tokens = 6144
+timeout_s = 120.0

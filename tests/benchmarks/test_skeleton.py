@@ -1,4 +1,4 @@
-"""Walking-skeleton tests for the benchmark harness and minimal health case.
+"""Walking-skeleton tests for the benchmark harness and the rung-1 scaffold case.
 
 These tests drive benchmark data through the public ``claude_local`` entry point, with only the
 external model transport replayed. They prove the real sandboxed oracle, stable-prefix context,
@@ -12,13 +12,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from benchmarks.harness import BenchmarkCase, BenchmarkDriver, replay_http_client
-from claude_local import Budget, ContextFile, Status
+from benchmarks.harness import BenchmarkCase, BenchmarkDriver, load_case, replay_http_client
+from claude_local import ContextFile, Status
 
 _ROOT = Path(__file__).parents[2]
 _BENCHMARK = _ROOT / "benchmarks" / "schedule_manager"
 _GOLDEN_APP = _BENCHMARK / "golden" / "app"
-_HEALTH_CASE = _BENCHMARK / "cases" / "01_health"
+_SCAFFOLD_CASE = _BENCHMARK / "cases" / "01_scaffold"
 
 
 def _read(path: Path) -> str:
@@ -26,35 +26,14 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _golden_tree() -> tuple[ContextFile, ...]:
-    """Snapshot every golden app module as the complete tree a case assembles.
-
-    A case blanks one file and shows only a neighbor subset to the model, but the whole
-    app must be present in the worktree for the composed FastAPI app to import and boot.
-    """
-    golden_root = _GOLDEN_APP.parent
-    return tuple(
-        ContextFile(path=path.relative_to(golden_root).as_posix(), content=_read(path))
-        for path in sorted(_GOLDEN_APP.rglob("*.py"))
-    )
+def _build_scaffold_case() -> BenchmarkCase:
+    """Load the rung-1 scaffold case from its committed manifest and fixtures."""
+    return load_case(_SCAFFOLD_CASE, golden_app_root=_GOLDEN_APP)
 
 
-def _build_health_case() -> BenchmarkCase:
-    """Build the canonical tracer case from its committed golden and oracle fixtures."""
-    return BenchmarkCase.from_fixtures(
-        impl_path="app/main.py",
-        spec_text=_read(_HEALTH_CASE / "spec.md"),
-        oracle_text=_read(_HEALTH_CASE / "oracle.py"),
-        golden_tree=_golden_tree(),
-        blank_stub=_read(_HEALTH_CASE / "blank" / "app" / "main.py"),
-        context_paths=("app/db.py",),
-        budget=Budget(max_attempts=1, max_tokens=2048, timeout_s=30.0),
-    )
-
-
-def test_health_case_contract_carries_golden_tree_stub_and_neighbor() -> None:
+def test_scaffold_case_contract_carries_golden_tree_stub_and_neighbor() -> None:
     """The tracer assembles the whole golden app with one blanked hole and its neighbor."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
     golden_paths = frozenset(file.path for file in case.golden_tree)
 
     assert case.task.impl_path == "app/main.py"
@@ -83,7 +62,7 @@ def test_health_case_contract_carries_golden_tree_stub_and_neighbor() -> None:
 
 def test_case_counts_only_module_level_oracle_tests() -> None:
     """Nested helper functions named test_* do not inflate pytest's collection pin."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
     oracle_text = """\
 def test_collected_behavior() -> None:
     def test_nested_helper() -> None:
@@ -105,7 +84,7 @@ def test_collected_behavior() -> None:
 
 def test_case_rejects_the_target_file_as_model_context() -> None:
     """The implementation answer cannot also appear among its read-only neighbors."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
     target = next(file for file in case.golden_tree if file.path == case.task.impl_path)
 
     with pytest.raises(ValueError, match="implementation target"):
@@ -114,7 +93,7 @@ def test_case_rejects_the_target_file_as_model_context() -> None:
 
 def test_case_rejects_context_that_does_not_match_the_golden_tree() -> None:
     """Model-visible neighbors must be byte-identical to their assembled golden files."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
     drifted_context = ContextFile(path="app/db.py", content="DEFAULT_DATABASE_PATH = 'wrong'\n")
 
     with pytest.raises(ValueError, match="must match its golden file"):
@@ -123,7 +102,7 @@ def test_case_rejects_context_that_does_not_match_the_golden_tree() -> None:
 
 def test_case_rejects_duplicate_or_missing_golden_target() -> None:
     """Exactly one golden file must own the implementation path replaced by the blank stub."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
     golden_db = next(file for file in case.golden_tree if file.path == "app/db.py")
 
     with pytest.raises(ValueError, match="exactly once"):
@@ -134,7 +113,7 @@ def test_case_rejects_duplicate_or_missing_golden_target() -> None:
 
 def test_case_rejects_case_insensitive_golden_path_collisions() -> None:
     """Fixture identity cannot depend on the host filesystem's case-sensitivity."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
     colliding_db = ContextFile(path="APP/DB.PY", content="DATABASE_PATH = 'collision'\n")
 
     with pytest.raises(ValueError, match="case-insensitive golden-tree path"):
@@ -190,9 +169,9 @@ def test_replay_client_emits_schema_complete_streaming_chunks() -> None:
     ]
 
 
-def test_driver_runs_health_case_green_with_neighbor_in_real_request(tmp_path: Path) -> None:
+def test_driver_runs_scaffold_case_green_with_neighbor_in_real_request(tmp_path: Path) -> None:
     """A golden reply passes the real sandbox and carries its selected neighbor on the wire."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
     observed_requests: list[httpx.Request] = []
     observed_worktrees: list[Path] = []
     observed_assembled_files: dict[str, str] = {}
@@ -257,7 +236,7 @@ def test_driver_seeded_stub_without_a_scored_edit_reports_no_code_and_cleans_up(
     tmp_path: Path,
 ) -> None:
     """A pre-seeded blank target is not model output when generation derails before an edit."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
     derailed_case = replace(
         case,
         task=replace(case.task, budget=replace(case.task.budget, max_tokens=2)),
@@ -283,7 +262,7 @@ def test_driver_seeded_stub_without_a_scored_edit_reports_no_code_and_cleans_up(
 
 def test_driver_preserves_a_reply_without_a_terminal_newline(tmp_path: Path) -> None:
     """Replay framing keeps complete source bytes when the model omits the final newline."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
     golden_main = next(
         file.content for file in case.golden_tree if file.path == case.task.impl_path
     )
@@ -303,11 +282,14 @@ def test_driver_preserves_a_reply_without_a_terminal_newline(tmp_path: Path) -> 
     assert outcome.code == reply_without_final_newline
 
 
-def test_driver_rejects_behaviorally_wrong_health_reply_and_removes_worktree(
+def test_driver_rejects_behaviorally_wrong_scaffold_reply_and_removes_worktree(
     tmp_path: Path,
 ) -> None:
-    """An importable wrong implementation stays red, and cleanup still completes."""
-    case = _build_health_case()
+    """A wrong-but-importable reply is retried to the attempt budget, then exhausted.
+
+    Cleanup still removes the worktree on the exhausted path.
+    """
+    case = _build_scaffold_case()
     golden_main = next(
         file.content for file in case.golden_tree if file.path == case.task.impl_path
     )
@@ -319,7 +301,7 @@ def test_driver_rejects_behaviorally_wrong_health_reply_and_removes_worktree(
     driver = BenchmarkDriver(
         scratch_root=scratch_root,
         base_url="http://benchmark.local",
-        model="replay/wrong-health",
+        model="replay/wrong-scaffold",
     )
 
     with replay_http_client(wrong_main, impl_path=case.task.impl_path) as http_client:
@@ -328,7 +310,7 @@ def test_driver_rejects_behaviorally_wrong_health_reply_and_removes_worktree(
     assert outcome.status is Status.EXHAUSTED
     assert outcome.code == wrong_main
     assert outcome.files_changed == (case.task.impl_path,)
-    assert outcome.record.attempts == 1
+    assert outcome.record.attempts == case.task.budget.max_attempts
     assert list(scratch_root.iterdir()) == []
 
 
@@ -340,7 +322,7 @@ def test_case_rejects_fixture_paths_outside_regular_files(
     invalid_path: str, path_source: str
 ) -> None:
     """Case construction refuses paths that could escape or replace a directory."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
 
     with pytest.raises(ValueError, match="regular relative file"):
         if path_source == "implementation":
@@ -352,7 +334,7 @@ def test_case_rejects_fixture_paths_outside_regular_files(
 
 def test_driver_removes_worktree_when_model_seam_raises(tmp_path: Path) -> None:
     """An escaping model-seam error still removes the exact child worktree it observed."""
-    case = _build_health_case()
+    case = _build_scaffold_case()
     scratch_root = tmp_path / "driver-worktrees"
     observed_worktrees: list[Path] = []
     driver = BenchmarkDriver(
