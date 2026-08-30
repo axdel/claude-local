@@ -32,7 +32,7 @@ pythonpath = [".", "src", "tests"]
 addopts = ["--gremlin-no-coverage-filter"]
 
 [dependency-groups]
-# Provision the reference app once, outside the sandbox: `uv sync --group bench`.
+# Provision the golden app once, outside the sandbox: `uv sync --group bench`.
 bench = [
     "fastapi>=0.141.1",
     "pydantic>=2.13.4",

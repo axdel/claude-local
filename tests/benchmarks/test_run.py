@@ -35,7 +35,7 @@ def test_main_runs_the_full_benchmark_green_and_writes_the_scorecard(
 ) -> None:
     """Fed every hole's golden file, the script drives all cases to DONE, exits 0, writes a card.
 
-    Golden replies reproduce the complete reference app, so every immutable oracle passes — the
+    Golden replies reproduce the complete golden app, so every immutable oracle passes — the
     end-to-end proof that ``main`` loads the real cases, runs it, scores it, writes the JSON, and
     prints the human-readable verdict to stderr.
     """

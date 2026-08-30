@@ -46,7 +46,7 @@ def _system_message(target_impl_path: str) -> dict[str, object]:
 def test_run_cases_runs_every_case_green_with_golden_replies(tmp_path: Path) -> None:
     """Fed each hole's golden file, every case reaches DONE in ladder order and cleans up.
 
-    A golden reply reproduces the complete reference app, so its immutable oracle must pass — the
+    A golden reply reproduces the complete golden app, so its immutable oracle must pass — the
     strongest end-to-end proof the benchmark assembles, runs, and isolates each case correctly.
     """
     cases = _load_all_cases()
