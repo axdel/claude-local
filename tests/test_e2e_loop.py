@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from backend_doubles import RecordingReplayBackend
 from factories import build_budget, build_task_spec, build_whole_file_reply
 from sse_wire import sse_frame_json
 
@@ -37,11 +38,9 @@ from claude_local.snapshot import SnapshotStore
 from claude_local.types import Status
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from claude_local.backend import Backend
     from claude_local.telemetry import LocalEconomyRecord
-    from claude_local.types import Budget, TaskSpec
+    from claude_local.types import TaskSpec
 
 _ROOT = Path(__file__).parent.parent
 _RULES_CARD = _ROOT / "src" / "claude_local" / "rules_card.md"
@@ -102,19 +101,6 @@ def _runaway_reply(size: int = 256) -> bytes:
     return sse_frame_json(
         {**_CHUNK, "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]}
     ) + sse_frame_json({**_CHUNK, "choices": [{"index": 0, "delta": {"content": "z" * size}}]})
-
-
-class RecordingReplayBackend:
-    """Replay model responses while retaining the exact prefix and tail for each request."""
-
-    def __init__(self, scripts: list[bytes]) -> None:
-        self._replay = ReplayBackend(scripts)
-        self.calls: list[tuple[str, str]] = []
-
-    def generate(self, prefix: str, tail: str, budget: Budget) -> Iterator[bytes]:
-        """Record one request and return its next replayed response stream."""
-        self.calls.append((prefix, tail))
-        return self._replay.generate(prefix, tail, budget)
 
 
 # --- worktree, loop, and record helpers --------------------------------------------

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from backend_doubles import RecordingReplayBackend
 from factories import (
     build_budget,
     build_local_economy_record,
@@ -132,18 +133,6 @@ def _silent_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> tuple[bytes
     """A spawn that produces NO report — TestRunner.run must raise OracleError (broken oracle)."""
     del cmd, cwd, write_box  # intentionally produce no JUnit report, to exercise broken-oracle
     return b"", b""
-
-
-class RecordingBackend:
-    """Wraps a ReplayBackend, capturing each ``(prefix, tail)`` for a prefix-stability assert."""
-
-    def __init__(self, scripts: Sequence[bytes]) -> None:
-        self._inner = ReplayBackend(scripts)
-        self.calls: list[tuple[str, str]] = []
-
-    def generate(self, prefix: str, tail: str, budget: Budget) -> Iterator[bytes]:
-        self.calls.append((prefix, tail))
-        return self._inner.generate(prefix, tail, budget)
 
 
 class UnavailableBackend:
@@ -596,7 +585,7 @@ def test_prefix_is_stable_and_retry_tail_uses_oracle_output_not_prior_source(
     tmp_path: Path,
 ) -> None:
     worktree = _setup_worktree(tmp_path)
-    recording = RecordingBackend([_edit_script(_V0), _edit_script(_V1)])
+    recording = RecordingReplayBackend([_edit_script(_V0), _edit_script(_V1)])
     assertion_failure = (
         b"FAILED test_loop_oracle.py::test_widget - AssertionError: assert 0 == 1\n"
     )
