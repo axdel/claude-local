@@ -62,7 +62,7 @@ _PROFILE_TEMPLATE = """\
 (allow file-write* (subpath "{box}"))
 (allow file-write* (literal "/dev/null"))
 (allow file-write* (literal "/dev/dtracehelper"))
-(allow file-write* (literal "/dev/tty"))
+; /dev/tty is withheld by design (a terminal egress channel); see D-SANDBOX-005
 (deny network*)
 """
 
