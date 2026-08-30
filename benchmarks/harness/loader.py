@@ -1,10 +1,11 @@
-"""Load one benchmark case from its on-disk fixtures and ``case.toml`` manifest.
+"""Load benchmark cases from their on-disk fixtures and ``case.toml`` manifests.
 
 A case directory is data, not code: ``case.toml`` names the implementation hole
 (``impl_path``), its model-visible neighbors (``context_paths``), and the loop bounds
 (``[budget]``); ``spec.md``, ``oracle.py``, and ``blank/<impl_path>`` sit beside it.
 ``load_case`` reads those, snapshots the whole golden app tree so the assembled worktree
-imports and boots, and returns a validated :class:`BenchmarkCase`.
+imports and boots, and returns a validated :class:`BenchmarkCase`. ``load_suite`` loads every
+rung directory under a cases root into a name-keyed suite in ladder order.
 """
 
 from __future__ import annotations
@@ -39,6 +40,20 @@ def load_case(case_dir: Path, *, golden_app_root: Path) -> BenchmarkCase:
             timeout_s=budget["timeout_s"],
         ),
     )
+
+
+def load_suite(cases_dir: Path, *, golden_app_root: Path) -> dict[str, BenchmarkCase]:
+    """Load every rung under ``cases_dir`` into a suite keyed by directory name, in ladder order.
+
+    Each immediate subdirectory of ``cases_dir`` is one rung; ``sorted`` on the directory names
+    gives the ladder order (``01_scaffold`` before ``02_schemas``). Non-directory entries are
+    skipped, so a stray file beside the rungs never becomes a case.
+    """
+    return {
+        case_dir.name: load_case(case_dir, golden_app_root=golden_app_root)
+        for case_dir in sorted(cases_dir.iterdir())
+        if case_dir.is_dir()
+    }
 
 
 def _golden_tree(golden_app_root: Path) -> tuple[ContextFile, ...]:

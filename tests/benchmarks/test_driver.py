@@ -17,7 +17,7 @@ import pytest
 from benchmarks.harness import (
     BenchmarkCase,
     CaseResult,
-    load_case,
+    load_suite,
     replay_suite_http_client,
     run_suite,
 )
@@ -31,12 +31,8 @@ _COMPLETIONS = "http://benchmark.local/v1/chat/completions"
 
 
 def _load_all_cases() -> dict[str, BenchmarkCase]:
-    """Load every committed case, keyed by its rung-directory name in ladder order."""
-    return {
-        case_dir.name: load_case(case_dir, golden_app_root=_GOLDEN_APP)
-        for case_dir in sorted(_CASES.iterdir())
-        if case_dir.is_dir()
-    }
+    """Every committed case, keyed by rung-directory name in ladder order."""
+    return load_suite(_CASES, golden_app_root=_GOLDEN_APP)
 
 
 def _golden_source(case: BenchmarkCase) -> str:
