@@ -24,7 +24,7 @@ from claude_local import Budget, Status, TaskSpec, implement
 _HERE = Path(__file__).parent
 _IMPL_PATH = "src/quicksort.py"
 _EXPECTED_TESTS = 7
-_DEFAULT_BASE_URL = "http://localhost:8080/v1"
+_DEFAULT_BASE_URL = "http://localhost:8080"
 _BUDGET = Budget(max_attempts=5, max_tokens=4096, timeout_s=120.0)
 
 

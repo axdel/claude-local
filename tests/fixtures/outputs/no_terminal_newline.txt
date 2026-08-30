@@ -1,0 +1,4 @@
+FILE: src/claude_local/basic.py
+UTF8-BYTES: 9
+
+VALUE = 1

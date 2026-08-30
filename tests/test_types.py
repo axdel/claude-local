@@ -1,9 +1,8 @@
-"""Oracle tests for the shared value objects (Status, Budget, TaskSpec).
+"""Oracle tests for the shared Status, Budget, ContextFile, and TaskSpec values.
 
-These pin the leaf vocabulary of the loop: the terminal Status set, and the
-frozen, self-validating Budget and TaskSpec. Every expected value derives from
-the spec (the four terminal states; the positive-bounds and non-empty-path
-invariants) — never from running the implementation under test.
+These pin the loop's five terminal states and its frozen, self-validating value
+objects. Every expected value derives from the spec (the terminal set, positive
+bounds, and non-empty-path invariants), never from the implementation under test.
 """
 
 from __future__ import annotations
@@ -11,8 +10,10 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
-from factories import build_budget, build_task_spec
+from factories import build_budget, build_context_file, build_task_spec
 
+import claude_local
+import claude_local.types as shared_types
 from claude_local.types import Status
 
 # --- Status ---------------------------------------------------------------
@@ -67,6 +68,34 @@ def test_budget_accepts_minimal_positive_bounds() -> None:
     assert budget.max_attempts == 1
 
 
+# --- ContextFile ----------------------------------------------------------
+
+
+def test_context_file_exposes_path_and_content() -> None:
+    context_file = build_context_file(path="src/pkg/neighbor.py", content="VALUE = 1\n")
+    assert (context_file.path, context_file.content) == ("src/pkg/neighbor.py", "VALUE = 1\n")
+
+
+@pytest.mark.parametrize("bad", ["", "   "])
+def test_context_file_rejects_empty_path(bad: str) -> None:
+    with pytest.raises(ValueError):
+        build_context_file(path=bad)
+
+
+def test_context_file_is_frozen() -> None:
+    context_file = build_context_file()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        context_file.path = "src/pkg/other.py"  # type: ignore[misc]
+
+
+def test_context_file_uses_slots() -> None:
+    assert not hasattr(build_context_file(), "__dict__")
+
+
+def test_context_file_is_available_from_the_public_package() -> None:
+    assert getattr(claude_local, "ContextFile", None) is shared_types.ContextFile
+
+
 # --- TaskSpec -------------------------------------------------------------
 
 
@@ -76,6 +105,15 @@ def test_task_spec_exposes_its_fields() -> None:
     assert spec.impl_path == "a/b.py"
     assert spec.expected_tests == 4
     assert spec.budget is budget
+
+
+def test_task_spec_defaults_to_no_context_files() -> None:
+    assert build_task_spec().context_files == ()
+
+
+def test_task_spec_exposes_supplied_context_files() -> None:
+    context_files = (build_context_file(),)
+    assert build_task_spec(context_files=context_files).context_files == context_files
 
 
 def test_task_spec_is_frozen() -> None:

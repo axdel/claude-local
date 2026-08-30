@@ -1,10 +1,9 @@
 """Tests for whole-file extraction + containment writes (``claude_local.edits``).
 
-``extract_files`` is a pure text->structure function, so every expected ``FileBlock`` is
-hand-derived from the loop's reply-format contract (the ``outputs/`` fixtures), never from
-running the parser. ``apply_files`` is the only writer: its tests assert the persisted file
-content on success and — on every refusal — that no unintended file was written, exercising the
-real ``paths.resolve_within`` containment boundary against a real temp filesystem (no mocks).
+``extract_file`` is a pure text-to-value function, so every expected ``WholeFileReply`` is
+hand-derived from the loop's reply-format contract, never from running the parser. ``apply_file``
+is the only writer: its tests assert persisted bytes on success and, on every refusal, that no
+unintended file was written through the real ``paths.resolve_within`` containment boundary.
 """
 
 from __future__ import annotations
@@ -12,90 +11,183 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from factories import build_whole_file_reply
 
-from claude_local.edits import FileBlock, apply_files, extract_files
+from claude_local.edits import WholeFileReply, apply_file, extract_file
 from claude_local.paths import KeepOnlyViolation
 
 FIXTURES = Path(__file__).parent / "fixtures" / "outputs"
 
 
 def load_output(name: str) -> str:
-    return (FIXTURES / name).read_text(encoding="utf-8")
+    """Decode one raw reply fixture without text-I/O newline translation."""
+    return (FIXTURES / name).read_bytes().decode("utf-8")
 
 
-# --- extract_files: FILE:-marker blocks -------------------------------------------
+# --- extract_file: byte-counted single-file frame ---------------------------------
 
 
-def test_fenced_marker_block_extracts_only_the_fenced_body() -> None:
-    # Oracle: the FILE: marker names the path; the fenced ```python body is the content;
-    # the "That's the whole file." prose AFTER the closing fence is excluded (fence-preferred
-    # body). Derived from the reply-format contract, not from running the parser.
-    assert extract_files(load_output("fenced_with_marker.txt")) == [
-        FileBlock(path="src/claude_local/foo.py", content="def foo() -> int:\n    return 42\n")
-    ]
+def test_complete_frame_preserves_payload_without_terminal_newline() -> None:
+    assert extract_file(load_output("no_terminal_newline.txt")) == WholeFileReply(
+        path="src/claude_local/basic.py", payload=b"VALUE = 1"
+    )
 
 
-def test_unfenced_marker_block_takes_all_lines_as_body() -> None:
-    # Oracle: with no fence, the body is every line after the marker to EOF.
-    assert extract_files(load_output("unfenced_with_marker.txt")) == [
-        FileBlock(path="src/claude_local/bar.py", content="BAR = 7\n")
-    ]
+def test_fixture_payload_preserves_fence_and_header_looking_lines() -> None:
+    implementation_source = 'DOC = """\n```python\nFILE: inner/marker.py\n```\n"""\nVALUE = 42'
+
+    assert extract_file(load_output("payload_with_header_looking_lines.txt")) == WholeFileReply(
+        path="src/claude_local/fenced.py", payload=implementation_source.encode("utf-8")
+    )
 
 
-def test_a_file_marker_inside_a_fence_is_content_not_a_split() -> None:
-    # Oracle: the inner `FILE: inner/marker.py` sits inside a fenced string, so it is code, not
-    # a delimiter. Exactly ONE block results, and the inner line survives verbatim in the body.
-    assert extract_files(load_output("marker_inside_fence.txt")) == [
-        FileBlock(
-            path="src/claude_local/baz.py",
-            content='DOC = """\nFILE: inner/marker.py\n"""\ndef baz() -> str:\n    return DOC\n',
-        )
-    ]
+def test_fixture_payload_preserves_unicode_and_terminal_newline() -> None:
+    implementation_source = 'TEXT = "世界"\n```\nFILE: inner/marker.py\n```\n'
+
+    assert extract_file(load_output("unicode_with_terminal_newline.txt")) == WholeFileReply(
+        path="src/claude_local/unicode.py", payload=implementation_source.encode("utf-8")
+    )
 
 
-def test_truncated_final_fence_is_tolerated() -> None:
-    # Oracle: the stream was cut before the closing ```; the partial fenced body is still
-    # recovered as one block (a truncated final block is tolerated, never discarded).
-    assert extract_files(load_output("truncated_final_block.txt")) == [
-        FileBlock(
-            path="src/claude_local/trunc.py", content="def trunc() -> int:\n    return 1 +\n"
-        )
-    ]
+def test_short_frame_is_blocked_by_default() -> None:
+    assert extract_file(load_output("truncated_payload.txt")) is None
 
 
-def test_two_markers_yield_two_blocks_in_order() -> None:
-    # Oracle: two FILE: markers -> two blocks in reply order. Exercises the close-previous-block
-    # path a single-marker reply never reaches, and the multi-file shape apply_files must refuse.
-    assert extract_files(load_output("two_markers.txt")) == [
-        FileBlock(path="src/claude_local/first.py", content="FIRST = 1\n"),
-        FileBlock(path="src/claude_local/second.py", content="SECOND = 2\n"),
-    ]
+def test_explicit_incomplete_mode_retains_the_exact_available_payload() -> None:
+    available_source = "def trunc() -> int:\n    return 1 +"
+
+    assert extract_file(load_output("truncated_payload.txt"), incomplete=True) == WholeFileReply(
+        path="src/claude_local/trunc.py", payload=available_source.encode("utf-8")
+    )
 
 
-# --- extract_files: no-marker fallback --------------------------------------------
+def test_explicit_incomplete_mode_still_blocks_overlong_payload() -> None:
+    reply = "FILE: src/claude_local/foo.py\nUTF8-BYTES: 0\n\nX"
+
+    assert extract_file(reply, incomplete=True) is None
 
 
-def test_no_marker_single_fenced_region_targets_the_permitted_path() -> None:
-    # Oracle: no FILE: marker but exactly one fenced region -> one block whose path is None,
-    # the signal that apply_files must route it to the single permitted impl path. Surrounding
-    # prose (both sides of the fence) is dropped.
-    assert extract_files(load_output("no_marker_single_fence.txt")) == [
-        FileBlock(path=None, content="ANSWER = 42\n")
-    ]
+def test_utf8_byte_count_preserves_unicode_payload() -> None:
+    implementation_source = 'GREETING = "héllø 世界"'
+
+    assert extract_file(
+        build_whole_file_reply("src/claude_local/foo.py", implementation_source)
+    ) == WholeFileReply(
+        path="src/claude_local/foo.py", payload=implementation_source.encode("utf-8")
+    )
 
 
-def test_no_marker_multiple_fenced_regions_is_ambiguous() -> None:
-    # Oracle: two fenced regions and no marker -> the extractor cannot know which is the impl,
-    # so it yields nothing (feeds BLOCKED) rather than guessing. Pins "exactly one".
-    assert extract_files(load_output("no_marker_multiple_fences.txt")) == []
+def test_extracted_reply_owns_validated_utf8_payload_bytes() -> None:
+    implementation_source = 'GREETING = "héllø 世界"'
+
+    reply = extract_file(build_whole_file_reply("src/claude_local/foo.py", implementation_source))
+
+    assert reply is not None
+    assert reply.payload == implementation_source.encode("utf-8")
 
 
-def test_prose_without_markers_or_fences_yields_no_blocks() -> None:
-    # Oracle: a refusal/clarification reply has no code at all -> [] -> the loop reports BLOCKED.
-    assert extract_files(load_output("prose_no_blocks.txt")) == []
+def test_code_point_count_is_rejected_when_utf8_payload_is_overlong() -> None:
+    implementation_source = 'GREETING = "héllø 世界"'
+    reply = (
+        f"FILE: src/claude_local/foo.py\n"
+        f"UTF8-BYTES: {len(implementation_source)}\n\n"
+        f"{implementation_source}"
+    )
+
+    assert extract_file(reply) is None
 
 
-# --- apply_files: containment + persisted state -----------------------------------
+def test_non_ascii_decimal_count_is_rejected() -> None:
+    reply = "FILE: src/claude_local/foo.py\nUTF8-BYTES: \N{ARABIC-INDIC DIGIT ONE}\n\nX"
+
+    assert extract_file(reply) is None
+
+
+@pytest.mark.parametrize(
+    "implementation_source",
+    [
+        pytest.param("", id="empty-source"),
+        pytest.param("```python\nVALUE = 1\n```", id="fence-looking-lines"),
+        pytest.param("FILE: inner.py\nUTF8-BYTES: 0\n\n", id="header-looking-lines"),
+        pytest.param("VALUE = 1\n", id="one-terminal-newline"),
+        pytest.param("VALUE = 1\n\n\n", id="many-terminal-newlines"),
+    ],
+)
+def test_complete_frame_preserves_arbitrary_payload_text(implementation_source: str) -> None:
+    assert extract_file(
+        build_whole_file_reply("src/claude_local/foo.py", implementation_source)
+    ) == WholeFileReply(
+        path="src/claude_local/foo.py", payload=implementation_source.encode("utf-8")
+    )
+
+
+def test_leading_zero_count_is_valid_decimal() -> None:
+    assert extract_file("FILE: src/claude_local/foo.py\nUTF8-BYTES: 0001\n\nX") == WholeFileReply(
+        path="src/claude_local/foo.py", payload=b"X"
+    )
+
+
+def test_enormous_declared_count_retains_incomplete_payload_without_integer_conversion() -> None:
+    reply = f"FILE: src/claude_local/foo.py\nUTF8-BYTES: {'9' * 5_000}\n\nX"
+
+    assert extract_file(reply, incomplete=True) == WholeFileReply(
+        path="src/claude_local/foo.py", payload=b"X"
+    )
+
+
+def test_enormous_declared_count_is_rejected_by_default_without_integer_conversion() -> None:
+    # The reject branch (short payload, no incomplete evidence) must also avoid int() — a
+    # 5000-digit count would raise ValueError past CPython's conversion limit (D-EDITS-001).
+    reply = f"FILE: src/claude_local/foo.py\nUTF8-BYTES: {'9' * 5_000}\n\nX"
+
+    assert extract_file(reply) is None
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param("XFILE: src/claude_local/foo.py\nUTF8-BYTES: 0\n\n", id="leading-prose"),
+        pytest.param(load_output("second_frame.txt"), id="second-frame-fixture"),
+        pytest.param(load_output("no_marker_single_fence.txt"), id="legacy-single-fence"),
+        pytest.param(load_output("no_marker_multiple_fences.txt"), id="legacy-multiple-fences"),
+        pytest.param(load_output("prose_no_blocks.txt"), id="prose-fixture"),
+        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: 0\n\nX", id="overlong"),
+        pytest.param(
+            "FILE: src/claude_local/foo.py\nUTF8-BYTES: 1\n\nXtrailing prose",
+            id="trailing-prose",
+        ),
+        pytest.param(
+            "FILE: src/claude_local/foo.py\nUTF8-BYTES: 1\n\nX"
+            "FILE: src/claude_local/second.py\nUTF8-BYTES: 1\n\nY",
+            id="second-frame",
+        ),
+        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: 0", id="missing-separator"),
+        pytest.param("UTF8-BYTES: 0\n\n", id="missing-file-header"),
+        pytest.param("FILE: \nUTF8-BYTES: 0\n\n", id="empty-path"),
+        pytest.param("FILE:    \nUTF8-BYTES: 0\n\n", id="whitespace-path"),
+        pytest.param("FILE: src/\ud800.py\nUTF8-BYTES: 0\n\n", id="unencodable-path"),
+        pytest.param("FILE: src/claude_local/foo.py\n\n", id="missing-count-header"),
+        pytest.param("FILE:src/claude_local/foo.py\nUTF8-BYTES: 0\n\n", id="file-space"),
+        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: \n\n", id="empty-count"),
+        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: -1\n\n", id="negative-count"),
+        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: +1\n\nX", id="signed-count"),
+        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: 1.0\n\nX", id="float-count"),
+        pytest.param(
+            "FILE: src/claude_local/foo.py\nOTHER: x\nUTF8-BYTES: 0\n\n",
+            id="extra-header",
+        ),
+        pytest.param("FILE: src/claude_local/foo.py\r\nUTF8-BYTES: 0\r\n\r\n", id="crlf"),
+    ],
+)
+def test_invalid_or_ambiguous_reply_is_blocked(reply: str) -> None:
+    assert extract_file(reply) is None
+
+
+def test_unencodable_payload_is_blocked() -> None:
+    assert extract_file("FILE: src/foo.py\nUTF8-BYTES: 3\n\n\ud800") is None
+
+
+# --- apply_file: containment + persisted state ------------------------------------
 
 
 def _permitted_root(tmp_path: Path) -> tuple[Path, str]:
@@ -104,57 +196,56 @@ def _permitted_root(tmp_path: Path) -> tuple[Path, str]:
     return tmp_path, "src/claude_local/foo.py"
 
 
-def test_apply_writes_the_marker_path_and_persists_content(tmp_path: Path) -> None:
+def test_apply_writes_the_declared_path_and_persists_bytes(tmp_path: Path) -> None:
     root, permitted = _permitted_root(tmp_path)
-    written = apply_files([FileBlock(permitted, "VALUE = 1\n")], root, permitted)
-    # Response: the resolved target is returned. Persisted state: the file holds exactly the body.
-    assert written == [root / "src" / "claude_local" / "foo.py"]
-    assert (root / "src" / "claude_local" / "foo.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    target = root / "src" / "claude_local" / "foo.py"
 
+    written = apply_file(WholeFileReply(permitted, b"VALUE = 1\n"), root, permitted)
 
-def test_apply_routes_a_none_path_to_the_permitted_impl_path(tmp_path: Path) -> None:
-    root, permitted = _permitted_root(tmp_path)
-    written = apply_files([FileBlock(None, "VALUE = 2\n")], root, permitted)
-    assert written == [root / "src" / "claude_local" / "foo.py"]
-    assert (root / "src" / "claude_local" / "foo.py").read_text(encoding="utf-8") == "VALUE = 2\n"
+    assert written == target
+    assert target.read_bytes() == b"VALUE = 1\n"
 
 
 def test_apply_refuses_a_nonpermitted_path_and_writes_nothing(tmp_path: Path) -> None:
     root, permitted = _permitted_root(tmp_path)
-    # A block naming a real, contained, but NOT-permitted file must be refused (single-file mode).
+
     with pytest.raises(KeepOnlyViolation):
-        apply_files([FileBlock("src/claude_local/other.py", "X = 1\n")], root, permitted)
-    # The denied write left no artifact behind — a refused mutation must not persist.
+        apply_file(WholeFileReply("src/claude_local/other.py", b"X = 1\n"), root, permitted)
+
     assert not (root / "src" / "claude_local" / "other.py").exists()
+    assert not (root / "src" / "claude_local" / "foo.py").exists()
 
 
 def test_apply_refuses_a_path_escaping_the_root_and_writes_nothing(tmp_path: Path) -> None:
     root, permitted = _permitted_root(tmp_path)
+
     with pytest.raises(KeepOnlyViolation):
-        apply_files([FileBlock("../escape.py", "X = 1\n")], root, permitted)
+        apply_file(WholeFileReply("../escape.py", b"X = 1\n"), root, permitted)
+
     assert not (tmp_path / "escape.py").exists()
-
-
-def test_apply_is_atomic_a_forbidden_block_prevents_all_writes(tmp_path: Path) -> None:
-    root, permitted = _permitted_root(tmp_path)
-    # The first block is permitted, the second escapes the root. Two-phase validation must refuse
-    # the whole reply BEFORE any write — so even the permitted file must not exist afterward.
-    with pytest.raises(KeepOnlyViolation):
-        apply_files(
-            [FileBlock(permitted, "A = 1\n"), FileBlock("../escape.py", "B = 2\n")],
-            root,
-            permitted,
-        )
     assert not (root / "src" / "claude_local" / "foo.py").exists()
-    assert not (tmp_path / "escape.py").exists()
 
 
-def test_extract_then_apply_round_trips_the_permitted_file(tmp_path: Path) -> None:
-    # The two functions compose: a real reply extracts to one block, which applies to the file.
+def test_extract_then_apply_round_trips_exact_utf8_bytes(tmp_path: Path) -> None:
     root, permitted = _permitted_root(tmp_path)
-    blocks = extract_files(load_output("fenced_with_marker.txt"))
-    written = apply_files(blocks, root, permitted)
-    assert written == [root / "src" / "claude_local" / "foo.py"]
-    assert (root / "src" / "claude_local" / "foo.py").read_text(
-        encoding="utf-8"
-    ) == "def foo() -> int:\n    return 42\n"
+    implementation_source = 'DOC = """\n```python\nFILE: inner.py\n```\n"""\nLABEL = "世界"'
+    reply = extract_file(build_whole_file_reply(permitted, implementation_source))
+    assert reply is not None
+
+    written = apply_file(reply, root, permitted)
+
+    target = root / "src" / "claude_local" / "foo.py"
+    assert written == target
+    assert target.read_bytes() == implementation_source.encode("utf-8")
+
+
+def test_extract_then_apply_rejects_a_wrong_framed_path_without_write(tmp_path: Path) -> None:
+    root, permitted = _permitted_root(tmp_path)
+    reply = extract_file("FILE: src/claude_local/other.py\nUTF8-BYTES: 9\n\nVALUE = 2")
+    assert reply is not None
+
+    with pytest.raises(KeepOnlyViolation):
+        apply_file(reply, root, permitted)
+
+    assert not (root / "src" / "claude_local" / "foo.py").exists()
+    assert not (root / "src" / "claude_local" / "other.py").exists()

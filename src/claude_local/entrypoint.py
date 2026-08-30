@@ -1,8 +1,9 @@
 """The public entry point — claude-local's owned composition root.
 
 ``implement()`` is the one front door an orchestrator drives: hand it a ``TaskSpec`` (impl path,
-spec text, an immutable oracle test the model may never write, and a budget) plus a base URL and
-model name, and it wires the whole loop — ``HttpxBackend`` → ``ModelClient`` → ``PromptBuilder`` →
+spec text, optional ordered read-only context files, an immutable oracle test the model may never
+write, and a budget) plus a base URL and model name, and it wires the whole loop —
+``HttpxBackend`` → ``ModelClient`` → ``PromptBuilder`` →
 ``TestRunner`` (under the kernel sandbox) → ``SnapshotStore`` → ``Loop`` — runs one bounded
 red→green attempt cycle in a scratch worktree, reads the best implementation back off disk, and
 returns an ``Outcome``.
@@ -62,10 +63,10 @@ class Outcome:
     """The result of one ``implement()`` task — only what claude-local produced and burned.
 
     ``code`` is the best implementation the loop reached, read off disk after the loop restored
-    its best snapshot; it is ``None`` when no usable file was ever written (a derail before any
-    edit, or a blocked extraction). ``files_changed`` is ``(impl_path,)`` exactly when ``code`` is
-    present. ``record`` is the local half of the economy story; the orchestrator owns the
-    net-savings verdict, never this object. ``fault`` carries the upstream error message when the
+    its best scored snapshot; it is ``None`` when the loop scored no model edit, regardless of any
+    caller-seeded target already on disk. ``files_changed`` is ``(impl_path,)`` exactly when
+    ``code`` is present. ``record`` is the local half of the economy story; the orchestrator owns
+    the net-savings verdict, never this object. ``fault`` carries the upstream error message when
     status is ``FAULTED`` (a server-side SSE error frame stopped the run), else ``None``.
     """
 
@@ -128,8 +129,9 @@ def implement(
     default backstop.
 
     Args:
-        spec: The task — impl path (must be nested under a directory), spec text, the immutable
-            oracle test, expected test count, and the budget.
+        spec: The task — impl path (must be nested under a directory), spec text, optional
+            ordered read-only context files, the immutable oracle test, expected test count,
+            and the budget.
         base_url: The OpenAI-compatible server to infer against. claude-local does not serve.
         model: The model name to request from that server.
         generation_params: Optional extra generation parameters forwarded to the backend.
@@ -170,8 +172,11 @@ def implement(
                 model=model,
             )
             result = loop.run(spec, wt)
-            impl_file = wt / spec.impl_path
-            code = impl_file.read_text(encoding="utf-8") if impl_file.is_file() else None
+            code = (
+                (wt / spec.impl_path).read_text(encoding="utf-8")
+                if result.has_scored_edit
+                else None
+            )
         files_changed = (spec.impl_path,) if code is not None else ()
         return Outcome(
             status=result.status,

@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-08-30
+
+### feat: add the local-model evaluation benchmark — golden app, case ladder, harness, and CLI ([PR #2](https://github.com/axdel/claude-local/pull/2))
+A reusable instrument that scores free local models as test-first implementers: a seven-case ladder blanks one file at a time of a half-finished FastAPI+SQLite golden app, and a candidate model driven through an OpenAI-compatible server is graded against orchestrator-owned immutable oracles into one comparable per-model scorecard.
+
+- [`0c4053b`](https://github.com/axdel/claude-local/commit/0c4053b) Use the canonical "golden app" name in the last three prose sites
+- [`4c5c19b`](https://github.com/axdel/claude-local/commit/4c5c19b) Conform benchmark names and durable records to the shipped code
+- [`c2a2f1b`](https://github.com/axdel/claude-local/commit/c2a2f1b) Reconcile durable artifacts with the shipped standing benchmark
+- [`2c349b8`](https://github.com/axdel/claude-local/commit/2c349b8) Withhold the /dev/tty write grant from the oracle sandbox
+- [`9cbe5dd`](https://github.com/axdel/claude-local/commit/9cbe5dd) Share the recording replay backend across loop tests
+- [`3c7fe3a`](https://github.com/axdel/claude-local/commit/3c7fe3a) Extract shared golden_impl helper for benchmark case tests
+- [`34b120f`](https://github.com/axdel/claude-local/commit/34b120f) Index the schedules owner_id foreign key in the golden app
+- [`614514f`](https://github.com/axdel/claude-local/commit/614514f) Tidy two idioms in the golden reference app
+- [`1664db2`](https://github.com/axdel/claude-local/commit/1664db2) Document the scorecard's length_capped and fault rung fields
+- [`0096266`](https://github.com/axdel/claude-local/commit/0096266) Give the RBAC benchmark case its two missing import neighbors
+- [`6a8a59d`](https://github.com/axdel/claude-local/commit/6a8a59d) Surface harness faults and length-cap counts in the benchmark CLI
+- [`12fbf56`](https://github.com/axdel/claude-local/commit/12fbf56) Name the byte-count comparison and record why it avoids int()
+- [`d6f53e5`](https://github.com/axdel/claude-local/commit/d6f53e5) Expose slug_model_id and TARGET_FILE_LABEL on the public API
+- [`a9d80d3`](https://github.com/axdel/claude-local/commit/a9d80d3) Bound SSE decoder memory on the data-block axis and scan bytes once
+- [`8ab622b`](https://github.com/axdel/claude-local/commit/8ab622b) Benchmark and example default base URL must be the bare server root
+- [`eae6f10`](https://github.com/axdel/claude-local/commit/eae6f10) Add benchmark run script and README for the model-eval suite
+- [`db97258`](https://github.com/axdel/claude-local/commit/db97258) Add benchmark suite scorer with a comparable per-model scorecard
+- [`f93e484`](https://github.com/axdel/claude-local/commit/f93e484) Add full benchmark suite runner over the whole case ladder
+- [`35ce301`](https://github.com/axdel/claude-local/commit/35ce301) Add benchmark case ladder rungs 6-7 (schedule service, routers)
+- [`92c2a92`](https://github.com/axdel/claude-local/commit/92c2a92) Add benchmark case ladder rungs 4-5 (auth service, RBAC)
+- [`5088b98`](https://github.com/axdel/claude-local/commit/5088b98) Add benchmark case ladder rungs 1-3 with data-driven case loader
+- [`af47bfb`](https://github.com/axdel/claude-local/commit/af47bfb) Wire golden-app HTTP routers and add the composed-app oracle
+- [`c0faea0`](https://github.com/axdel/claude-local/commit/c0faea0) Add golden app services and security layer
+- [`6ea9ea7`](https://github.com/axdel/claude-local/commit/6ea9ea7) Add golden schedule data layer
+- [`fabbbb1`](https://github.com/axdel/claude-local/commit/fabbbb1) Report only scored model edits
+- [`cc41f38`](https://github.com/axdel/claude-local/commit/cc41f38) Frame whole-file replies by UTF-8 byte length
+- [`e514a6e`](https://github.com/axdel/claude-local/commit/e514a6e) Feed bounded oracle diagnostics into repairs
+- [`6778638`](https://github.com/axdel/claude-local/commit/6778638) Add benchmark walking skeleton
+- [`907d43c`](https://github.com/axdel/claude-local/commit/907d43c) Document read-only task context files
+- [`9cf1747`](https://github.com/axdel/claude-local/commit/9cf1747) Add read-only context files to task prompts
+
 ## 2026-08-27
 
 ### feat: loop engine — deterministic red→green driver for local-model implementers ([PR #1](https://github.com/axdel/claude-local/pull/1))

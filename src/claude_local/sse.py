@@ -71,11 +71,14 @@ def decode_sse(chunks: Iterable[bytes]) -> Iterator[SSEEvent]:
     whose JSON will not parse is folded into an ``Error`` event rather than raised —
     the decoder must never crash the loop it feeds.
 
-    Buffered bytes drain in linear time: a scan offset advances through completed
-    lines and the buffer is compacted once per chunk, never per line. The retained
-    tail is a single incomplete frame; if it grows past ``_MAX_FRAME_BYTES`` with no
-    delimiter, the decoder yields an ``Error`` and stops — an untrusted stream that
-    never terminates a frame cannot exhaust memory.
+    Buffered bytes drain in linear time: the newline search resumes past the
+    already-scanned tail, so bytes are scanned once across chunks (never re-scanned
+    from the start of every chunk), and the buffer is compacted once per chunk, never
+    per line. Memory is bounded on both axes an untrusted stream can grow: if the
+    retained incomplete frame plus the pending ``data:`` block (a run of ``data:``
+    lines never closed by a blank line) together exceed ``_MAX_FRAME_BYTES``, the
+    decoder yields an ``Error`` and stops — a stream that never terminates a frame
+    cannot exhaust memory.
 
     Args:
         chunks: The raw response body, delivered in arbitrary byte slices.
@@ -85,15 +88,20 @@ def decode_sse(chunks: Iterable[bytes]) -> Iterator[SSEEvent]:
     """
     buffer = bytearray()
     data_lines: list[str] = []
+    data_bytes = 0  # size of the pending data block; bounded together with the buffer
+    search_from = 0  # newline search resumes here — the retained tail is already scanned
     for chunk in chunks:
         buffer += chunk
-        start = 0  # scan offset; drained lines are compacted once per chunk, not per line
-        while (newline := buffer.find(b"\n", start)) >= 0:
+        start = 0  # line-start / compaction offset, reset per chunk; drained in one shift
+        while (newline := buffer.find(b"\n", search_from)) >= 0:
             line = bytes(buffer[start:newline]).rstrip(b"\r").decode("utf-8", "replace")
             start = newline + 1
+            search_from = newline + 1
             if line:
                 if line.startswith("data:"):
-                    data_lines.append(line[len("data:") :].removeprefix(" "))
+                    payload_line = line[len("data:") :].removeprefix(" ")
+                    data_lines.append(payload_line)
+                    data_bytes += len(payload_line)
                 # Comment (":"), "event:", "id:" and other fields carry no payload here.
                 continue
             # Blank line: dispatch the accumulated block, if any.
@@ -101,11 +109,13 @@ def decode_sse(chunks: Iterable[bytes]) -> Iterator[SSEEvent]:
                 continue
             payload = "\n".join(data_lines)
             data_lines.clear()
+            data_bytes = 0
             if payload == _DONE:
                 return
             yield from _events(payload)
         del buffer[:start]  # compact drained lines in one shift, not one per line (avoids O(n^2))
-        if len(buffer) > _MAX_FRAME_BYTES:
+        search_from = len(buffer)  # the retained tail has no newline; only new bytes need scanning
+        if len(buffer) + data_bytes > _MAX_FRAME_BYTES:
             yield Error(f"SSE frame exceeded {_MAX_FRAME_BYTES} bytes with no delimiter")
             return
     # End of stream: an unterminated trailing frame is intentionally NOT flushed.
@@ -124,16 +134,60 @@ def _events(payload: str) -> Iterator[SSEEvent]:
     if "error" in frame:
         yield Error(_error_message(frame["error"]))
         return
-    for choice in frame.get("choices", []):
-        content = (choice.get("delta") or {}).get("content")
-        if content:
-            yield Delta(content)
+    choice_events = _choice_events(frame.get("choices", []))
+    if isinstance(choice_events, Error):
+        yield choice_events
+        return
+    usage_event = _usage_event(frame.get("usage"))
+    if isinstance(usage_event, Error):
+        yield usage_event
+        return
+    yield from choice_events
+    if usage_event is not None:
+        yield usage_event
+
+
+def _choice_events(choices: object) -> list[SSEEvent] | Error:
+    """Validate and translate a frame's choices without emitting partial events."""
+    if not isinstance(choices, list):
+        return _unexpected_shape("choices", "array", choices)
+    events: list[SSEEvent] = []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            return _unexpected_shape("choice", "object", choice)
         reason = choice.get("finish_reason")
+        if reason is not None and not isinstance(reason, str):
+            return _unexpected_shape("finish_reason", "string or null", reason)
+        delta = choice.get("delta", {})
+        if not isinstance(delta, dict):
+            return _unexpected_shape("delta", "object", delta)
+        content = delta.get("content")
+        if content is not None and not isinstance(content, str):
+            return _unexpected_shape("content", "string or null", content)
+        if content:
+            events.append(Delta(content))
         if reason is not None:
-            yield Finish(reason)
-    usage = frame.get("usage")
-    if usage is not None and (completion := usage.get("completion_tokens")) is not None:
-        yield Usage(completion)
+            events.append(Finish(reason))
+    return events
+
+
+def _usage_event(usage: object) -> Usage | Error | None:
+    """Validate and translate optional usage accounting from one complete frame."""
+    if usage is None:
+        return None
+    if not isinstance(usage, dict):
+        return _unexpected_shape("usage", "object or null", usage)
+    completion = usage.get("completion_tokens")
+    if completion is None:
+        return None
+    if isinstance(completion, bool) or not isinstance(completion, int) or completion < 0:
+        return _unexpected_shape("completion_tokens", "non-negative integer", completion)
+    return Usage(completion)
+
+
+def _unexpected_shape(field: str, expected: str, value: object) -> Error:
+    """Describe one off-contract nested SSE field through the decoder's typed error channel."""
+    return Error(f"unexpected {field} shape: expected {expected}, got {type(value).__name__}")
 
 
 def _error_message(error: object) -> str:

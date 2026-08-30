@@ -5,17 +5,21 @@ file. Your only job: write the complete implementation file so that every test p
 
 ## Output format — follow exactly
 
-Return the ENTIRE implementation file as a single fenced code block:
+Return the ENTIRE implementation file as exactly one byte-counted frame:
 
-```python
-# the complete file content goes here, from the first line to the last
-```
+FILE: <the relative implementation path named in the task>
+UTF8-BYTES: <the exact number of UTF-8 bytes in the complete file>
 
-Rules for the block:
-- Exactly ONE fenced block. Put the whole file inside it, top to bottom.
-- No prose, explanation, or commentary outside the block. Text outside is discarded.
-- No partial files, no diffs, no "unchanged" placeholders, no ellipses (`...`). Emit every line.
-- Do not wrap the block in extra quotes or nesting.
+<the complete raw file content begins here>
+
+Rules for the frame:
+- Begin the reply with `FILE: ` at byte zero; use the task's exact relative implementation path.
+- On line two, write `UTF8-BYTES: ` followed by ASCII decimal digits for the payload byte count.
+- After line two, write exactly one blank line, then the raw complete file from first byte to last.
+- Count only the raw file payload after the blank line, including every terminal `\n` byte.
+- Add no Markdown transport fence, prose, explanation, commentary, quotes, or trailing bytes.
+- Preserve fence-looking or `FILE:` lines when they are part of the implementation source.
+- Emit exactly one frame: no second file, diff, "unchanged" placeholder, or ellipsis (`...`).
 
 ## The test is immutable
 

@@ -1,4 +1,5 @@
 FILE: src/claude_local/trunc.py
-```python
+UTF8-BYTES: 40
+
 def trunc() -> int:
     return 1 +

@@ -11,4 +11,4 @@ pre-commit:
     types:
       run: uv run basedpyright
     tests:
-      run: uv run pytest -q
+      run: uv run --group bench pytest -q

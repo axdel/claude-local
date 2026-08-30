@@ -29,7 +29,7 @@ orchestrator's job, not claude-local's. Before running the example:
 
 1. Put a model's weights under `models/` (downloads are explicit and user-initiated).
 2. Start an OpenAI-compatible server for it — for MLX weights, for example, `mlx_lm.server`;
-   any OpenAI-compatible server works. Note its base URL (e.g. `http://localhost:8080/v1`) and
+   any OpenAI-compatible server works. Note its base URL (e.g. `http://localhost:8080`) and
    the model name it serves.
 
 ## Recipe — the quicksort example
@@ -39,7 +39,7 @@ orchestrator's job, not claude-local's. Before running the example:
    may never edit).
 2. **Run the loop:**
    ```bash
-   uv run python examples/quicksort/run.py --base-url http://localhost:8080/v1 --model <model-name>
+   uv run python examples/quicksort/run.py --base-url http://localhost:8080 --model <model-name>
    ```
    Or set `CLAUDE_LOCAL_BASE_URL` / `CLAUDE_LOCAL_MODEL` and drop the flags.
 3. **Surface the result.** The produced implementation prints to stdout; the outcome and the

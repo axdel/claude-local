@@ -44,9 +44,17 @@ if TYPE_CHECKING:
 # filename characters to a single '-' so the record lands as one flat file, not a subtree.
 _UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
-# The OpenAI ``finish_reason`` a server emits when it stops at its OWN token cap. Counting these is
-# how the record distinguishes a server-side length cap from a clean stop or a client-side derail.
-_LENGTH_FINISH_REASON = "length"
+
+def slug_model_id(model: str) -> str:
+    """Reduce a model id to a flat, filesystem-safe filename stem.
+
+    Every run of characters outside ``[A-Za-z0-9._-]`` collapses to a single ``-``, and leading and
+    trailing ``-`` strip away, so ``mlx-community/Qwen2.5-Coder:7B`` becomes one flat filename
+    segment rather than a nested subtree. This is the single owner of model-id slugging: both the
+    economy record and the benchmark scorecard derive their filenames from it, so the two never
+    slug one model id two different ways (Deduplication Discipline — one owner per shared literal).
+    """
+    return _UNSAFE_FILENAME_CHARS.sub("-", model).strip("-")
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +102,7 @@ class LocalEconomyRecord:
             total_model_seconds=total_model_seconds,
             mean_tokens_per_second=mean,
             tokens_estimated=any(r.tokens_estimated for r in results),
-            length_capped=sum(r.finish_reason == _LENGTH_FINISH_REASON for r in results),
+            length_capped=sum(r.is_length_capped for r in results),
             status=status,
             attempts=attempts,
         )
@@ -106,13 +114,9 @@ class LocalEconomyRecord:
         clobber one another. Returns where it wrote — the caller need not predict the name.
         """
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{self._slug()}-{int(time.time() * 1000)}.json"
+        path = directory / f"{slug_model_id(self.model)}-{int(time.time() * 1000)}.json"
         path.write_text(json.dumps(self._as_dict(), indent=2), encoding="utf-8")
         return path
-
-    def _slug(self) -> str:
-        """The model id reduced to a flat, filesystem-safe filename stem."""
-        return _UNSAFE_FILENAME_CHARS.sub("-", self.model).strip("-")
 
     def _as_dict(self) -> dict[str, object]:
         """JSON-ready mapping of the record; ``status`` becomes its lowercase value."""

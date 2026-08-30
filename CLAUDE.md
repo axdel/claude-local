@@ -7,10 +7,11 @@ orchestrator-owned immutable oracle test, the derail guard, and the measurement/
 ## What this is
 
 A deterministic loop — not an agent — hands a local model a distilled rules card, a tight
-spec, and a frontier-authored **failing test the model may never write**. The model returns a
-complete implementation file as raw text; the loop applies it to the one permitted impl path,
-runs the test, and feeds the failure back under a hard token budget and a derail guard. The
-test is the oracle: green means done. Every task is metered, so the system can tell — per task
+spec, any optional ordered, read-only neighbor files, and a frontier-authored **failing test the
+model may never write**. The model returns a complete implementation file as raw text; the loop
+applies it to the one permitted impl path — never a context file — runs the test, and feeds the
+failure back under a hard token budget and a derail guard. The test is the oracle: green means
+done. Every task is metered, so the system can tell — per task
 class — whether offloading to a free local model saved net frontier tokens.
 
 ## Stack
@@ -24,10 +25,10 @@ class — whether offloading to a free local model saved net frontier tokens.
 
 ## Commands
 
-- Test: `uv run pytest`
+- Test: `uv run --group bench pytest`
 - Lint / format: `uv run ruff check` · `uv run ruff format`
 - Types: `uv run basedpyright`
-- Commit gate (pre-commit): `lefthook run pre-commit` — ruff check + format --check + basedpyright + pytest
+- Commit gate (pre-commit): `lefthook run pre-commit` — ruff check + format --check + basedpyright + bench-aware pytest
 
 ## Architecture overview
 
@@ -61,9 +62,10 @@ telemetry (measure, never guess; cold paths like init and record-writing stay si
 
 Standing hot-path principles:
 
-- **KV-cache prefix reuse.** The system prefix (rules card + spec) is byte-identical across a
-  task's iterations — only the test/feedback tail changes. Stability is a hard invariant: any
-  per-call mutation silently discards the server's prefill cache.
+- **KV-cache prefix reuse.** The system prefix (rules card + spec + optional ordered context
+  files + immutable test) is byte-identical across a task's iterations — only the feedback tail
+  changes. Stability is a hard invariant: any per-call mutation silently discards the server's
+  prefill cache.
 - **One warm client, one resident model.** Reuse a single keep-alive httpx client; never
   reconnect per iteration. Local inference is memory-bandwidth-bound — keep one model resident.
 - **Stream and abort early.** Consume tokens as they decode, so the derail guard kills a
@@ -97,20 +99,3 @@ See [`TECH_DEBT.md`](TECH_DEBT.md) for the tech-debt ledger.
 ## Resource Ownership
 
 See [`RESOURCE_OWNERSHIP.md`](RESOURCE_OWNERSHIP.md) for the single-writer registry.
-
-## Roadmap — to spike later
-
-### Standing model-evaluation benchmark
-
-A reusable instrument for judging how any new or candidate local model performs as an
-implementer under the claude-local loop: a deliberately half-finished project shipped with a
-detailed plan and a hidden correctness oracle. Drop a candidate model in, drive it through the
-plan's tasks, and score its output against the oracle — the same instrument across every model,
-so results are directly comparable.
-
-An earlier internal study — a real parser feature with a hidden multi-case oracle, run through a
-deterministic driver across several local models — seeded this idea and confirmed the loop works.
-The work is to generalize it from a one-off study into a standing, repeatable benchmark that
-ships with claude-local.
-
-Status: deferred — the current focus is robust code around the loop engine itself. **To spike.**

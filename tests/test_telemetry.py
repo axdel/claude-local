@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from factories import build_generation_result
 
-from claude_local.telemetry import LocalEconomyRecord
+from claude_local.telemetry import LocalEconomyRecord, slug_model_id
 from claude_local.types import Status
 
 if TYPE_CHECKING:
@@ -188,3 +188,14 @@ def test_write_creates_the_economy_directory_when_absent(tmp_path: Path) -> None
     path = _record().write(target)
     assert target.is_dir()
     assert path.parent == target
+
+
+# --- slug_model_id: the shared model-id -> filename-safe stem ----------------------
+
+
+def test_slug_model_id_reduces_a_model_id_to_a_filesystem_safe_stem() -> None:
+    # Oracle derived from the definition (collapse every run of chars outside [A-Za-z0-9._-] to a
+    # single '-', then strip leading/trailing '-'), never from running the code: leading '/' and
+    # trailing '/' strip away, the '//' and ':' runs each collapse to one '-', and '.'/'-'/digits/
+    # mixed case survive. This is the single owner of the slug both the record and scorecard write.
+    assert slug_model_id("/mlx-community//Qwen2.5-Coder:7B/") == "mlx-community-Qwen2.5-Coder-7B"

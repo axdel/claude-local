@@ -7,22 +7,28 @@ only what claude-local produces and burns. These tests drive the REAL HTTP decod
 ``httpx.MockTransport`` — the model's response is the one true-external seam, everything else runs
 live. Validation, the derail path, and client lifecycle are cross-platform (a derail trips during
 decode, before any oracle runs); the DONE happy path and the timeout binding are gated on the macOS
-sandbox that runs the real ``uv run pytest`` oracle.
+sandbox that runs the real ``python -m pytest`` oracle.
 """
 
 from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import httpx
 import pytest
-from factories import build_budget, build_local_economy_record, build_task_spec
+from factories import (
+    build_budget,
+    build_local_economy_record,
+    build_task_spec,
+    build_whole_file_reply,
+)
 
 from claude_local.backend import BackendUnavailable
 from claude_local.entrypoint import Outcome, _writable_subtree, implement
 from claude_local.sandbox import sandbox_available
-from claude_local.types import Status
+from claude_local.types import Budget, Status
 
 _MODEL = "test/model"
 
@@ -46,6 +52,8 @@ _ADDER_ORACLE = (
     "    assert add(-4, -6) == -10\n"
 )
 _ADDER_IMPL = "def add(a, b):\n    return a + b\n"
+_PARTIAL_ADDER_IMPL = "def add(a, b):\n    return 5\n"
+_BROKEN_ADDER_IMPL = "def add(:\n"
 _HANGING_IMPL = (
     "while True:\n    pass\n"  # hangs at import — the oracle blocks until the sandbox kills it
 )
@@ -66,14 +74,13 @@ def _sse(*frames: dict[str, object]) -> bytes:
     return ("".join(_data(frame) for frame in frames) + "data: [DONE]\n\n").encode()
 
 
-def _clean_impl_reply(code: str) -> bytes:
-    """A wire-faithful clean stream whose one content delta is a fenced whole-file block.
+def _clean_impl_reply(code: str, impl_path: str) -> bytes:
+    """A wire-faithful clean stream whose content delta is one byte-counted file frame.
 
-    Role chunk, one fenced-code delta, a stop finish, then a usage trailer of 40 completion
-    tokens — so the real decoder reports a server-counted (non-estimated) total, mirroring the
-    streaming contract's usage frame.
+    Role chunk, one frame delta, a stop finish, then a usage trailer of 40 completion tokens —
+    so the real decoder reports a server-counted total while preserving the source payload.
     """
-    content = f"```python\n{code}```"
+    content = build_whole_file_reply(impl_path, code)
     return _sse(
         {**_CHUNK, "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]},
         {**_CHUNK, "choices": [{"index": 0, "delta": {"content": content}}]},
@@ -89,14 +96,30 @@ def _runaway_reply(size: int = 256) -> bytes:
     return (_data(role) + _data(delta)).encode()
 
 
-def _mock_client(reply: bytes) -> httpx.Client:
-    """An httpx client whose transport returns ``reply`` for the streamed POST.
+def _unusable_reply() -> bytes:
+    """A complete prose-only reply with no whole-file frame — structurally blocked."""
+    return _sse(
+        {**_CHUNK, "choices": [{"index": 0, "delta": {"content": "No file edit."}}]},
+        {**_CHUNK, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+    )
 
-    The mock transport is the doubled model — the one true-external seam.
+
+def _fault_reply(message: str) -> bytes:
+    """A reachable model server's terminal upstream error frame."""
+    return _sse({"error": {"message": message}})
+
+
+def _mock_client(*replies: bytes) -> httpx.Client:
+    """An httpx client whose transport returns each scripted reply for successive POSTs.
+
+    The mock transport is the doubled model — the one true-external seam. Exhausting the script
+    raises rather than silently replaying a response, so generation counts remain observable.
     """
+    reply_script = iter(replies)
 
     def _handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=reply)
+        del request
+        return httpx.Response(200, content=next(reply_script))
 
     return httpx.Client(transport=httpx.MockTransport(_handler))
 
@@ -109,6 +132,7 @@ def _unreachable_client() -> httpx.Client:
     """
 
     def _handler(request: httpx.Request) -> httpx.Response:
+        del request
         raise httpx.ConnectError("connection refused")
 
     return httpx.Client(transport=httpx.MockTransport(_handler))
@@ -145,6 +169,7 @@ def test_implement_rejects_a_flat_impl_path_before_any_http_call() -> None:
     spec = build_task_spec(impl_path="flat.py")
 
     def _boom(request: httpx.Request) -> httpx.Response:
+        del request
         raise AssertionError("no HTTP call may happen when the impl_path is invalid")
 
     client = httpx.Client(transport=httpx.MockTransport(_boom))
@@ -204,6 +229,45 @@ def test_faulted_summary_surfaces_the_upstream_error_message() -> None:
     assert outcome.fault == "context length exceeded"
     assert "context length exceeded" in outcome.summary
     assert "src/thing.py" in outcome.summary
+
+
+# --- Unit: no-edit exits ignore a caller-seeded implementation target ---------------
+
+
+@pytest.mark.parametrize(
+    ("reply", "budget", "expected_status"),
+    [
+        (_runaway_reply(size=256), build_budget(max_attempts=1, max_tokens=2), Status.DERAILED),
+        (_unusable_reply(), build_budget(max_attempts=1), Status.BLOCKED),
+        (_fault_reply("model overloaded"), build_budget(max_attempts=1), Status.FAULTED),
+    ],
+)
+def test_implement_seeded_target_without_a_scored_edit_reports_no_code(
+    tmp_path: Path, reply: bytes, budget: Budget, expected_status: Status
+) -> None:
+    seeded_target = tmp_path / "src" / "adder.py"
+    seeded_target.parent.mkdir(parents=True)
+    seeded_target.write_text("# caller-provided seed\n", encoding="utf-8")
+    spec = build_task_spec(
+        impl_path="src/adder.py",
+        test_text=_ADDER_ORACLE,
+        expected_tests=2,
+        budget=budget,
+    )
+    client = _mock_client(reply)
+
+    outcome = implement(
+        spec,
+        base_url="http://local",
+        model=_MODEL,
+        worktree=tmp_path,
+        http_client=client,
+    )
+
+    assert outcome.status is expected_status
+    assert outcome.code is None
+    assert outcome.files_changed == ()
+    assert seeded_target.read_text(encoding="utf-8") == "# caller-provided seed\n"
 
 
 # --- Unit: the DERAILED path (cross-platform — derail precedes any oracle run) ------
@@ -296,9 +360,9 @@ def test_implement_propagates_backend_unavailable_when_the_server_is_unreachable
 @pytest.mark.skipif(
     not sandbox_available(), reason="the oracle runs under the macOS kernel sandbox"
 )
-def test_implement_e2e_reaches_done_through_the_real_sandbox(_project_env: None) -> None:
+def test_implement_e2e_reaches_done_through_the_real_sandbox() -> None:
     """Cold-start front door: default scratch worktree + bundled rules card + real httpx decode +
-    a REAL sandboxed ``uv run pytest`` on a real oracle → DONE, with the produced code returned.
+    a REAL sandboxed ``python -m pytest`` oracle → DONE, with the produced code returned.
 
     Only the model's HTTP response is doubled; the worktree, rules card, sandbox, and oracle
     are all the production defaults — the highest-fidelity exercise of the entry point.
@@ -310,7 +374,7 @@ def test_implement_e2e_reaches_done_through_the_real_sandbox(_project_env: None)
         expected_tests=2,
         budget=build_budget(max_attempts=3, max_tokens=4096, timeout_s=120.0),
     )
-    client = _mock_client(_clean_impl_reply(_ADDER_IMPL))
+    client = _mock_client(_clean_impl_reply(_ADDER_IMPL, "src/adder.py"))
 
     outcome = implement(spec, base_url="http://local", model=_MODEL, http_client=client)
 
@@ -329,7 +393,40 @@ def test_implement_e2e_reaches_done_through_the_real_sandbox(_project_env: None)
 @pytest.mark.skipif(
     not sandbox_available(), reason="the oracle runs under the macOS kernel sandbox"
 )
-def test_implement_e2e_binds_budget_timeout_to_the_sandbox(_project_env: None) -> None:
+def test_implement_exhausted_returns_the_restored_best_model_edit(tmp_path: Path) -> None:
+    """Return the best scored model edit despite a seed and later regression."""
+    seeded_target = tmp_path / "src" / "adder.py"
+    seeded_target.parent.mkdir(parents=True)
+    seeded_target.write_text("# caller-provided seed\n", encoding="utf-8")
+    spec = build_task_spec(
+        impl_path="src/adder.py",
+        test_text=_ADDER_ORACLE,
+        expected_tests=2,
+        budget=build_budget(max_attempts=2, max_tokens=4096, timeout_s=120.0),
+    )
+    client = _mock_client(
+        _clean_impl_reply(_PARTIAL_ADDER_IMPL, "src/adder.py"),
+        _clean_impl_reply(_BROKEN_ADDER_IMPL, "src/adder.py"),
+    )
+
+    outcome = implement(
+        spec,
+        base_url="http://local",
+        model=_MODEL,
+        worktree=tmp_path,
+        http_client=client,
+    )
+
+    assert outcome.status is Status.EXHAUSTED
+    assert outcome.code == _PARTIAL_ADDER_IMPL
+    assert outcome.files_changed == ("src/adder.py",)
+    assert seeded_target.read_text(encoding="utf-8") == _PARTIAL_ADDER_IMPL
+
+
+@pytest.mark.skipif(
+    not sandbox_available(), reason="the oracle runs under the macOS kernel sandbox"
+)
+def test_implement_e2e_binds_budget_timeout_to_the_sandbox() -> None:
     """A hanging impl with a 2s budget is killed at ~2s, not the sandbox's 120s default.
 
     Proves ``spec.budget.timeout_s`` is bound into the oracle sandbox (the composition-root timeout
@@ -342,7 +439,7 @@ def test_implement_e2e_binds_budget_timeout_to_the_sandbox(_project_env: None) -
         expected_tests=2,
         budget=build_budget(max_attempts=1, max_tokens=4096, timeout_s=2.0),
     )
-    client = _mock_client(_clean_impl_reply(_HANGING_IMPL))
+    client = _mock_client(_clean_impl_reply(_HANGING_IMPL, "src/adder.py"))
 
     started = time.monotonic()
     outcome = implement(spec, base_url="http://local", model=_MODEL, http_client=client)

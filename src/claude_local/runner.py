@@ -2,20 +2,23 @@
 
 The loop's DONE signal must be trustworthy: a weak model must not "win" by importing away or
 skipping tests. ``score_junit`` parses a pytest JUnit-XML report into a ``TestScore`` of five
-counts (summed across ``<testsuite>`` elements), and ``TestRunner.run`` produces that report by
-running the frozen oracle test under ``uv``. The verdict is pinned against an expected count
-(D-ORACLE-001): a score is *valid* only when exactly that many tests ran to a pass/fail/error
+counts (summed across ``<testsuite>`` elements), while ``TestRunner.run`` returns that score
+beside bounded pytest diagnostics in an immutable ``OracleRun``. The verdict is pinned against
+an expected count (D-ORACLE-001): a score is *valid* only when exactly that many tests ran to a
+pass/fail/error
 verdict, and *green* only when all of them passed. ``collected`` counts verdicts —
 ``tests - skipped`` — so a skipped or imported-away test drops it below the pin and reads as
 invalid, never green.
 
 Because that pytest run *imports and executes the untrusted impl*, it runs under kernel
-confinement (``sandbox``): the subprocess may write only the disposable report dir and reach no
-network, and a non-terminating impl is killed at a wall-clock budget rather than hanging the loop.
+confinement (``sandbox``): the subprocess may read only task/runtime roots, write only the
+disposable report dir, and reach no network; a non-terminating impl is killed at a wall-clock
+budget rather than hanging the loop.
 """
 
 from __future__ import annotations
 
+import sys
 import tempfile
 import xml.etree.ElementTree as ET  # nosec B405 (D-ORACLE-002)
 from dataclasses import dataclass
@@ -67,6 +70,14 @@ class TestScore:
         return self.is_valid and self.failed == 0 and self.errors == 0
 
 
+@dataclass(frozen=True, slots=True)
+class OracleRun:
+    """One oracle attempt's JUnit verdict and captured pytest diagnostics."""
+
+    score: TestScore
+    output: str
+
+
 def score_junit(xml_text: str, expected: int) -> TestScore:
     """Parse a pytest JUnit-XML report into a ``TestScore``, summed across testsuites.
 
@@ -97,28 +108,31 @@ def score_junit(xml_text: str, expected: int) -> TestScore:
 
 
 class TestRunner:
-    """Runs the frozen oracle test under ``uv`` and scores its JUnit-XML report.
+    """Runs the frozen oracle under the active interpreter and scores its JUnit report.
 
     The ``spawn`` seam is the pytest-subprocess boundary (a true-external tool): the default runs
     the process under kernel confinement (``sandbox.sandboxed_spawn`` — writable only within the
     disposable report dir, no network, no inherited secrets), and tests inject a fake that writes a
-    captured report to the requested path. A spawn signals a non-terminating impl by raising
-    ``SandboxTimeout``, which ``run`` maps to a zero-verdict score.
+    captured report to the requested path and returns diagnostic byte streams. A spawn signals a
+    non-terminating impl by raising ``SandboxTimeout``, which ``run`` maps to a zero-verdict run
+    carrying bounded pre-timeout diagnostics and the timeout fact as repair feedback. JUnit remains
+    the sole verdict source.
     """
 
     __test__ = False
 
     def __init__(
-        self, spawn: Callable[[Sequence[str], Path, Path], None] = sandboxed_spawn
+        self,
+        spawn: Callable[[Sequence[str], Path, Path], tuple[bytes, bytes]] = sandboxed_spawn,
     ) -> None:
         self._spawn = spawn
 
-    def run(self, test_path: Path, worktree: Path, expected: int) -> TestScore:
-        """Run ``test_path`` under ``uv`` in ``worktree`` and score it against ``expected``.
+    def run(self, test_path: Path, worktree: Path, expected: int) -> OracleRun:
+        """Run ``test_path`` and return its JUnit verdict with captured diagnostics.
 
         The command runs under kernel confinement; a non-terminating impl raises ``SandboxTimeout``
-        from the spawn, which maps to a zero-verdict (non-green, invalid) score — the loop treats a
-        hang as a failed attempt and retries, never a harness fault.
+        with bounded stream tails, which map to a zero-verdict (non-green, invalid) run — the loop
+        treats a hang as a repairable failed attempt, never a harness fault.
 
         Raises:
             OracleError: the run produced no JUnit report, or an unparseable one — a broken
@@ -127,8 +141,8 @@ class TestRunner:
         with tempfile.TemporaryDirectory() as tmp:
             report = Path(tmp) / "oracle.xml"
             cmd = [
-                "uv",
-                "run",
+                sys.executable,
+                "-m",
                 "pytest",
                 str(test_path),
                 f"--junit-xml={report}",
@@ -138,14 +152,30 @@ class TestRunner:
                 "no:cacheprovider",
             ]
             try:
-                self._spawn(cmd, worktree, Path(tmp))
-            except SandboxTimeout:
-                return TestScore(
-                    passed=0, failed=0, errors=0, collected=0, skipped=0, expected=expected
+                stdout, stderr = self._spawn(cmd, worktree, Path(tmp))
+            except SandboxTimeout as exc:
+                diagnostics = _decode_output(exc.stdout, exc.stderr)
+                separator = "\n" if diagnostics and not diagnostics.endswith("\n") else ""
+                return OracleRun(
+                    score=TestScore(
+                        passed=0,
+                        failed=0,
+                        errors=0,
+                        collected=0,
+                        skipped=0,
+                        expected=expected,
+                    ),
+                    output=f"{diagnostics}{separator}{exc}",
                 )
             if not report.is_file():
                 raise OracleError(f"pytest produced no JUnit report at {report}")
             try:
-                return score_junit(report.read_text(encoding="utf-8"), expected)
+                score = score_junit(report.read_text(encoding="utf-8"), expected)
             except ET.ParseError as exc:
                 raise OracleError(f"pytest wrote a malformed JUnit report at {report}") from exc
+            return OracleRun(score=score, output=_decode_output(stdout, stderr))
+
+
+def _decode_output(stdout: bytes, stderr: bytes) -> str:
+    """Decode captured pytest streams without losing diagnostics on invalid UTF-8."""
+    return stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")

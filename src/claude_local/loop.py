@@ -3,8 +3,9 @@
 This is the top of the engine: it owns the control flow the README calls the loop. Given a task
 spec and a worktree, it builds the KV-cacheable prefix ONCE, then loops under the budget —
 generate, apply the whole-file reply to the one permitted impl path, score the immutable oracle
-test, snapshot the attempt — feeding each failure back as distilled feedback until the oracle is
-green or the budget is spent. On exit it restores the best-scoring snapshot and classifies a
+test, snapshot the attempt — feeding the runner-owned pytest diagnostics (never prior model
+source) back as distilled feedback until the oracle is green or the budget is spent. On exit it
+restores the best-scoring snapshot and classifies a
 terminal ``Status`` by strict precedence, then aggregates the local economy record for the run.
 
 The spine composes the single-responsibility modules beneath it (client, prompt, edits, runner,
@@ -17,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from claude_local.edits import apply_files, extract_files
+from claude_local.edits import apply_file, extract_file
 from claude_local.paths import KeepOnlyViolation
 from claude_local.telemetry import LocalEconomyRecord
 from claude_local.types import Status
@@ -27,13 +28,13 @@ if TYPE_CHECKING:
 
     from claude_local.client import GenerationResult, ModelClient
     from claude_local.prompt import PromptBuilder
-    from claude_local.runner import TestRunner, TestScore
+    from claude_local.runner import OracleRun, TestRunner, TestScore
     from claude_local.snapshot import SnapshotStore
     from claude_local.types import TaskSpec
 
 # The immutable oracle test is written to the worktree ROOT — outside the SnapshotStore's src
-# subtree (so restore_best never clobbers it) and distinct from any impl path (so apply_files
-# never overwrites it). A run-stable name, carrying no timestamp, keeps the worktree predictable.
+# subtree (so restore_best never clobbers it) and distinct from any impl path (so apply_file never
+# overwrites it). A run-stable name, carrying no timestamp, keeps the worktree predictable.
 _ORACLE_TEST_FILENAME = "test_loop_oracle.py"
 
 
@@ -41,8 +42,9 @@ _ORACLE_TEST_FILENAME = "test_loop_oracle.py"
 class LoopResult:
     """One task's loop outcome: the terminal status, the best score seen, and the economy record.
 
-    Frozen — a run reports its result once. ``best_score`` is ``None`` when no attempt was ever
-    scored (the run derailed or was structurally blocked before any test ran). ``fault`` carries
+    Frozen — a run reports its result once. ``best_score`` is ``None`` when no model edit crossed
+    oracle scoring, and ``has_scored_edit`` derives model production from that snapshot-owned
+    fact. ``fault`` carries
     the upstream error message when the run terminated ``FAULTED`` (a server-side SSE error frame),
     else ``None``.
     """
@@ -51,6 +53,11 @@ class LoopResult:
     best_score: TestScore | None
     record: LocalEconomyRecord
     fault: str | None = None
+
+    @property
+    def has_scored_edit(self) -> bool:
+        """Whether an applied model edit produced the restored scored snapshot."""
+        return self.best_score is not None
 
 
 def _classify_terminal(
@@ -103,9 +110,10 @@ class Loop:
 
         Builds the KV-cacheable prefix once and writes the immutable oracle test once, then loops
         under the budget: generate → apply the whole-file edit to the permitted path → score →
-        snapshot, threading each failure back as distilled feedback and stopping on green. A derail
-        or a non-usable edit (no block, or an edit for a forbidden path) stops the loop early. On
-        exit the best snapshot is restored and the terminal status classified by strict precedence.
+        snapshot, threading each failure back as distilled feedback and stopping on green. A
+        short frame is repairable only when no finish arrived or the server ended at its length
+        cap; every other terminal reason requires exact length. A derail or non-usable edit
+        stops the loop early. On exit the best snapshot is restored and status follows precedence.
 
         A transport failure (``BackendUnavailable`` from the client — an unreachable server) and a
         broken oracle (``OracleError`` from the runner) are never caught — they propagate, so a
@@ -116,8 +124,7 @@ class Loop:
         oracle_path.write_text(spec.test_text, encoding="utf-8")
 
         results: list[GenerationResult] = []
-        last_score: TestScore | None = None
-        last_raw = ""
+        last_run: OracleRun | None = None
         derailed = False
         blocked = False
         faulted = False
@@ -127,11 +134,12 @@ class Loop:
         for index in range(spec.budget.max_attempts):
             attempts += 1
             tail = (
-                "" if last_score is None else self._prompt.distill_feedback(last_score, last_raw)
+                ""
+                if last_run is None
+                else self._prompt.distill_feedback(last_run.score, last_run.output)
             )
             gen = self._client.generate(stable, tail, spec.budget)
             results.append(gen)
-            last_raw = gen.text
             # an upstream server fault (an SSE error frame) — the host failed, not the model
             if gen.fault is not None:
                 faulted = True
@@ -140,19 +148,18 @@ class Loop:
             if gen.derail_reason is not None:
                 derailed = True
                 break
-            blocks = extract_files(gen.text)
-            if not blocks:  # prose with no usable whole-file block — structurally blocked
+            reply = extract_file(gen.text, incomplete=gen.is_incomplete)
+            if reply is None:  # prose with no usable whole-file reply — structurally blocked
                 blocked = True
                 break
             try:
-                apply_files(blocks, worktree, spec.impl_path)
+                apply_file(reply, worktree, spec.impl_path)
             except KeepOnlyViolation:  # an edit aimed outside the one permitted path
                 blocked = True
                 break
-            score = self._runner.run(oracle_path, worktree, spec.expected_tests)
-            last_score = score
-            self._snapshots.record(index, score)
-            if score.is_green:
+            last_run = self._runner.run(oracle_path, worktree, spec.expected_tests)
+            self._snapshots.record(index, last_run.score)
+            if last_run.score.is_green:
                 break
 
         self._snapshots.restore_best()

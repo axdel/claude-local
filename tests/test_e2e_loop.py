@@ -2,7 +2,7 @@
 
 This is the branch's FULL-tier live-test for a library surface (a pytest/REPL driver). It exercises
 the real chain end to end: schema-derived SSE bytes -> the real ModelClient decode -> real
-whole-file extraction -> a REAL immutable oracle test run by a REAL `uv run pytest` subprocess in a
+whole-file extraction -> a REAL immutable oracle run by a REAL `python -m pytest` subprocess in a
 temp worktree -> real best-snapshot restore -> real telemetry aggregation and JSON write. The ONLY
 seam doubled is the model: ReplayBackend replays pre-built streams, so no model is downloaded (the
 branch's standing No-Go) yet the full path is proven — the loop's "prove it offline" design.
@@ -14,10 +14,8 @@ before any test runs. Each also asserts the completion ledger (scripts served ==
 the immutable oracle's bytes are untouched by the run, and that the economy record aggregates
 consistently and round-trips to JSON on disk.
 
-Env note: the inner `uv run pytest` resolves its interpreter from VIRTUAL_ENV — the runner passes
-no env=, so the subprocess inherits this process's environment. The `_project_env` fixture pins
-VIRTUAL_ENV to sys.prefix (the active venv) so the inner run resolves pytest from the external
-tmp_path worktree regardless of how this suite was launched.
+The inner `python -m pytest` uses the active interpreter explicitly, so every scenario exercises
+the production child environment from an external `tmp_path` worktree without ambient-env setup.
 """
 
 from __future__ import annotations
@@ -27,7 +25,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from factories import build_budget, build_task_spec
+from backend_doubles import RecordingReplayBackend
+from factories import build_budget, build_task_spec, build_whole_file_reply
 from sse_wire import sse_frame_json
 
 from claude_local.backend import ReplayBackend
@@ -92,8 +91,9 @@ def _clean_reply(content: str) -> bytes:
 
 
 def _impl_reply(fixture_name: str) -> bytes:
-    """A clean reply whose one delta is a fenced whole-file block — the returned impl file."""
-    return _clean_reply(f"```python\n{_read_fixture(fixture_name)}```")
+    """A clean reply whose one delta is the canonical byte-counted implementation frame."""
+    payload = _read_fixture(fixture_name)
+    return _clean_reply(build_whole_file_reply(_IMPL_PATH, payload))
 
 
 def _runaway_reply(size: int = 256) -> bytes:
@@ -107,7 +107,7 @@ def _runaway_reply(size: int = 256) -> bytes:
 
 
 def _make_worktree(tmp_path: Path) -> Path:
-    """A temp worktree with the permitted src/ subtree that apply_files and SnapshotStore need."""
+    """A temp worktree with the permitted src/ subtree that apply_file and SnapshotStore need."""
     (tmp_path / "src").mkdir()
     return tmp_path
 
@@ -118,7 +118,7 @@ def _build_loop(worktree: Path, backend: Backend) -> tuple[Loop, ModelClient]:
     loop = Loop(
         client=client,
         prompt_builder=PromptBuilder(_RULES_CARD),
-        runner=TestRunner(),  # DEFAULT spawn — a real `uv run pytest` subprocess
+        runner=TestRunner(),  # DEFAULT spawn — a real `python -m pytest` subprocess
         snapshots=SnapshotStore(worktree, "src"),
         model=_MODEL,
     )
@@ -176,11 +176,33 @@ def _assert_record_written(record: LocalEconomyRecord, directory: Path, *, statu
 # --- Scenario A: partial -> worse partial -> green reaches DONE ---------------------
 
 
-def test_e2e_partial_then_green_reaches_done(tmp_path: Path, _project_env: None) -> None:
+def test_e2e_retry_carries_pytest_failure_not_prior_implementation(tmp_path: Path) -> None:
+    """Attempt two receives real sandboxed pytest diagnostics and never echoes model source."""
+    worktree = _make_worktree(tmp_path)
+    oracle = _read_fixture("oracle_test.txt")
+    prior_implementation = _read_fixture("impl_abs.txt").strip()
+    backend = RecordingReplayBackend(
+        [_impl_reply("impl_abs.txt"), _impl_reply("impl_correct.txt")]
+    )
+    loop, _ = _build_loop(worktree, backend)
+
+    result = loop.run(_spec(oracle, max_attempts=2), worktree)
+
+    assert result.status is Status.DONE
+    assert len(backend.calls) == 2
+    first_prefix, first_tail = backend.calls[0]
+    second_prefix, second_tail = backend.calls[1]
+    assert first_prefix == second_prefix
+    assert first_tail == ""
+    assert "assert 10 == -10" in second_tail
+    assert prior_implementation not in second_tail
+
+
+def test_e2e_partial_then_green_reaches_done(tmp_path: Path) -> None:
     """A partial, a worse partial, then a correct reply: reaches DONE on the green attempt.
 
     The whole chain runs for real — decoded SSE, whole-file extraction, a real oracle run by a real
-    `uv run pytest` in a temp worktree, real snapshot restore — with only the model replayed.
+    `python -m pytest` in a temp worktree, real snapshot restore — with only the model replayed.
     """
     worktree = _make_worktree(tmp_path)
     oracle = _read_fixture("oracle_test.txt")
@@ -218,9 +240,7 @@ def test_e2e_partial_then_green_reaches_done(tmp_path: Path, _project_env: None)
 # --- Scenario B: three partials exhaust the budget; least-bad restored --------------
 
 
-def test_e2e_all_partial_exhausts_and_restores_least_bad(
-    tmp_path: Path, _project_env: None
-) -> None:
+def test_e2e_all_partial_exhausts_and_restores_least_bad(tmp_path: Path) -> None:
     """Three partial replies to a three-attempt budget: EXHAUSTED, with the least-bad partial kept.
 
     Proves the best-passing snapshot survives a later regression end to end: the 2/3 attempt lands
@@ -258,7 +278,7 @@ def test_e2e_all_partial_exhausts_and_restores_least_bad(
 # --- Scenario C: a runaway generation derails before any test runs ------------------
 
 
-def test_e2e_runaway_generation_derails(tmp_path: Path, _project_env: None) -> None:
+def test_e2e_runaway_generation_derails(tmp_path: Path) -> None:
     """An oversized first reply trips the derail guard: DERAILED, no attempt scored, no write.
 
     The derail cuts decode before the usage trailer, so the aborted call's tokens are ESTIMATED
@@ -303,9 +323,7 @@ _PROBE_ORACLE = (
 )
 
 
-def test_runner_rescores_fresh_source_after_same_size_rewrite(
-    tmp_path: Path, _project_env: None
-) -> None:
+def test_runner_rescores_fresh_source_after_same_size_rewrite(tmp_path: Path) -> None:
     """The runner scores the CURRENT source after a same-size rewrite — never a stale .pyc.
 
     Regression for the stale-bytecode hazard the loop's REPAIR cycle triggers: CPython validates
@@ -319,14 +337,14 @@ def test_runner_rescores_fresh_source_after_same_size_rewrite(
     oracle = worktree / "test_probe_oracle.py"
     oracle.write_text(_PROBE_ORACLE, encoding="utf-8")
     probe = worktree / "src" / "probe.py"
-    runner = TestRunner()  # DEFAULT spawn — the real `uv run pytest` subprocess
+    runner = TestRunner()  # DEFAULT spawn — the real `python -m pytest` subprocess
 
     probe.write_text(
         "VALUE = 1\n", encoding="utf-8"
     )  # first attempt: oracle wants 2, so not green
     first = runner.run(oracle, worktree, expected=1)
-    assert not first.is_green
+    assert not first.score.is_green
 
     probe.write_text("VALUE = 2\n", encoding="utf-8")  # same byte length; the correcting attempt
     second = runner.run(oracle, worktree, expected=1)
-    assert second.is_green  # must compile the NEW source, not reuse the first attempt's bytecode
+    assert second.score.is_green  # must compile the NEW source, not reuse stale bytecode

@@ -30,6 +30,8 @@ available it should replace these, verbatim.
 | Role chunk (first) | `delta:{"role":"assistant","content":""}`, `finish_reason:null` | (none — empty content) |
 | Content delta | `delta:{"content":"..."}`, `finish_reason:null` | `Delta(text)` |
 | Finish | `delta:{}`, `finish_reason:"stop"\|"length"\|"tool_calls"` | `Finish(reason)` |
+| Invalid finish | non-null array/object `finish_reason` | `Error(message)` and no `Finish` |
+| Invalid nested shape | non-array `choices`, non-object choice/delta/usage, non-string content, invalid token count | one `Error(message)`, no partial events |
 | Usage (`include_usage`) | `choices:[]` (empty), `usage:{completion_tokens,...}` | `Usage(completion_tokens)` |
 | Mid-stream error | `{"error":{"message","type","code"}}` | `Error(message)` |
 | Sentinel | `data: [DONE]` (not JSON) | stops the stream |
@@ -47,6 +49,9 @@ available it should replace these, verbatim.
 - `aborted_midstream.bytes` — role, two complete deltas, then a final frame **cut off
   mid-JSON** with no terminating blank line — the network-truncation case. The decoder
   must yield the two deltas and NO phantom terminator.
+- `invalid_finish_reason_array.bytes` / `invalid_finish_reason_object.bytes` — schema-invalid
+  non-null, non-string finish reasons paired with valid-looking implementation content and a
+  later valid choice. The decoder must emit `Error` and stop the frame before any `Finish`.
 
 CRLF line endings and arbitrary byte-boundary splits are exercised by transforming
 `complete_stream.bytes` in the tests (both are spec-faithful transforms), not by

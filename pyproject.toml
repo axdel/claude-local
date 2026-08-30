@@ -22,9 +22,9 @@ packages = ["src/claude_local"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# "src" for the package under test; "tests" so shared helpers (factories.py) import
-# as top-level modules regardless of pytest's import mode.
-pythonpath = ["src", "tests"]
+# The repository root owns the benchmark package; src exposes the runtime package and tests
+# exposes shared test helpers. Keep that ownership order explicit for pytest import resolution.
+pythonpath = [".", "src", "tests"]
 # pytest-gremlins' coverage-guided test selection under-counts kills when per-test
 # coverage attribution is coarse (it judges each mutant with too few tests, reporting
 # false survivors the full suite demonstrably kills). Run the full suite per mutant for
@@ -32,6 +32,11 @@ pythonpath = ["src", "tests"]
 addopts = ["--gremlin-no-coverage-filter"]
 
 [dependency-groups]
+# Provision the golden app once, outside the sandbox: `uv sync --group bench`.
+bench = [
+    "fastapi>=0.141.1",
+    "pydantic>=2.13.4",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.9",
@@ -64,18 +69,19 @@ select = ["E", "F", "W", "I", "S", "UP", "B", "C4", "SIM", "RUF"]
 # exists only inside the loop's worktree, so a `test_` name would make the repo's own pytest
 # (and the quality runner) try to collect it and fail on the missing import.
 "examples/**/*_oracle.py" = ["S101", "E402"]
+# Benchmark oracles are immutable pytest inputs executed only inside assembled worktrees. Some
+# deliberately mutate a golden neighbor before importing the implementation to prove derivation.
+"benchmarks/**/oracle.py" = ["S101", "E402"]
 
 [tool.basedpyright]
 pythonVersion = "3.12"
 pythonPlatform = "All"
 typeCheckingMode = "standard"
-# "src" for the package, "tests" so shared test helpers (factories.py) resolve —
-# mirrors the pytest pythonpath so the type checker and the runner agree.
-extraPaths = ["src", "tests"]
-# Example oracle files (`*_oracle.py`) import the implementation the loop generates into a temp
-# worktree, so their import target never exists in-repo and cannot be resolved statically.
-# Overriding `exclude` replaces pyright's defaults, so the three defaults are restated alongside
-# the glob.
+# "src" for the package, "tests" for shared helpers, and the golden parent so benchmark oracles
+# type-check their assembled `app` contract against its authoritative source tree.
+extraPaths = [".", "src", "tests", "benchmarks/schedule_manager/golden"]
+# Example oracles import generated implementations with no in-repo counterpart. Benchmark oracles
+# instead resolve against the golden app above and remain fully type-checked.
 exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/**/*_oracle.py"]
 
 [tool.deptry]
@@ -83,6 +89,11 @@ exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/**/*_oracle.p
 # so every intra-package `from claude_local...` import reads as a transitive-dependency error
 # (DEP003). Naming the package fixes it — the runtime surface is genuinely httpx-only.
 known_first_party = ["claude_local"]
+# Benchmark source consumes the opt-in group as regular dependencies without moving them into the
+# wheel's runtime dependencies. Immutable oracles are test inputs importing an assembled `app`, so
+# exclude them just as deptry's defaults exclude tests/.
+non_dev_dependency_groups = ["bench"]
+extend_exclude = ["benchmarks/.*/oracle\\.py"]
 
 [tool.deptry.per_rule_ignores]
 # The example oracle imports the loop-generated implementation module (`quicksort`), which by

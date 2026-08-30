@@ -1,0 +1,13 @@
+# Case 5 — RBAC: identity resolution and administrator authorization.
+impl_path = "app/security.py"
+context_paths = [
+    "app/schemas.py",
+    "app/repositories/user_repository.py",
+    "app/services/auth_service.py",
+    "app/dependencies.py",
+]
+
+[budget]
+max_attempts = 4
+max_tokens = 6144
+timeout_s = 120.0

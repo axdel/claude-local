@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from sse_wire import sse_frame, sse_frame_json
@@ -125,6 +126,48 @@ def test_each_finish_reason_yields_exactly_one_finish() -> None:
         assert events == [Finish(reason)], f"finish_reason={reason!r}"
 
 
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["invalid_finish_reason_array.bytes", "invalid_finish_reason_object.bytes"],
+)
+def test_non_string_finish_reason_becomes_error_without_finish(fixture_name: str) -> None:
+    events = feed(load_fixture(fixture_name), chunk_size=4096)
+
+    assert len(events) == 1
+    assert isinstance(events[0], Error)
+    assert "finish_reason" in events[0].message
+    assert not any(isinstance(event, Finish) for event in events)
+
+
+@pytest.mark.parametrize(
+    ("frame", "invalid_field"),
+    [
+        pytest.param({"choices": None}, "choices", id="null-choices"),
+        pytest.param({"choices": [7]}, "choice", id="scalar-choice"),
+        pytest.param({"choices": [{"delta": 7}]}, "delta", id="scalar-delta"),
+        pytest.param(
+            {"choices": [{"delta": {"content": 42}}]},
+            "content",
+            id="non-string-content",
+        ),
+        pytest.param({"choices": [], "usage": 7}, "usage", id="scalar-usage"),
+        pytest.param(
+            {"choices": [], "usage": {"completion_tokens": {}}},
+            "completion_tokens",
+            id="non-integer-completion-tokens",
+        ),
+    ],
+)
+def test_invalid_nested_frame_shape_becomes_error_without_partial_events(
+    frame: dict[str, object], invalid_field: str
+) -> None:
+    events = feed(sse_frame_json(frame), chunk_size=4096)
+
+    assert len(events) == 1
+    assert isinstance(events[0], Error)
+    assert invalid_field in events[0].message
+
+
 # --- The fidelity trap: usage frame carries EMPTY choices ------------------------
 
 
@@ -221,6 +264,20 @@ def test_bytes_up_to_the_cap_without_a_delimiter_do_not_error() -> None:
     # invariant), and the limit itself is derived from the constant.
     at_cap = b"x" * _MAX_FRAME_BYTES
     assert list(decode_sse([at_cap])) == []
+
+
+def test_unterminated_data_block_beyond_the_cap_yields_error_and_stops() -> None:
+    # The other flood shape: a run of ``data:`` lines never closed by a blank line. Each line
+    # drains from the buffer into the pending data block, so a cap watching only the buffer would
+    # let the block grow without bound (OOM) while the buffer stayed tiny. Oracle: the pending
+    # data block counts against _MAX_FRAME_BYTES too, so once it passes the cap the decoder yields
+    # one Error and stops. Falsifying difference: a buffer-only bound yields [] (the data: lines
+    # never dispatch and the stream just ends), a correct bound yields [Error].
+    line = b"data: " + b"x" * 1024 + b"\n"  # ~1 KiB of payload per line; the buffer drains it
+    stream = line * ((_MAX_FRAME_BYTES // 1024) + 8)  # accumulated block passes the cap
+    events = feed(stream, chunk_size=4096)
+    assert len(events) == 1
+    assert isinstance(events[0], Error)
 
 
 def test_many_frames_in_one_chunk_decode_in_order_and_match_one_byte_chunking() -> None:
