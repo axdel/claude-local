@@ -85,7 +85,7 @@ class AuthService:
 
     def __post_init__(self) -> None:
         if len(self.signing_key) != SIGNING_KEY_BYTES:
-            raise ValueError("signing key must contain exactly 32 bytes")
+            raise ValueError(f"signing key must contain exactly {SIGNING_KEY_BYTES} bytes")
 
     def register(self, user: UserCreate) -> UserRecord:
         """Register a normal user with deterministic benchmark password material."""

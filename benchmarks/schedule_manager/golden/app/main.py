@@ -71,7 +71,7 @@ def create_app(database_path: DatabasePath = DEFAULT_DATABASE_PATH) -> FastAPI:
             initialize_database(connection)
             yield
         finally:
-            app.state.__delattr__("database_connection")
+            delattr(app.state, "database_connection")
             connection.close()
 
     app = FastAPI(title="Schedule Manager", lifespan=lifespan)
