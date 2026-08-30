@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS schedules (
     cron_expression TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))
 );
+
+CREATE INDEX IF NOT EXISTS idx_schedules_owner_id ON schedules (owner_id);
 """
 
 
