@@ -95,8 +95,9 @@ One scorecard describes one model's run over the whole ladder. `--out` writes it
   "total_model_seconds": 240.5,
   "mean_tokens_per_second": 76.6,
   "rungs": [
-    {"case_id": "01_scaffold", "status": "done", "attempts": 1},
-    {"case_id": "02_schemas", "status": "done", "attempts": 2}
+    {"case_id": "01_scaffold", "status": "done", "attempts": 1, "length_capped": 0},
+    {"case_id": "02_schemas", "status": "done", "attempts": 2, "length_capped": 1},
+    {"case_id": "07_routers", "status": "faulted", "attempts": 1, "length_capped": 0, "fault": "upstream 503"}
   ]
 }
 ```
@@ -105,7 +106,11 @@ One scorecard describes one model's run over the whole ladder. `--out` writes it
 - `total_completion_tokens` / `total_model_seconds` / `mean_tokens_per_second` — the economy of the
   run, summed across rungs. The mean is `null` when no model-seconds elapsed.
 - `rungs[]` — one line per rung in ladder order: its `case_id`, terminal `status` (`done` when the
-  oracle passed, otherwise the loop's failure status), and how many loop `attempts` it took.
+  oracle passed, otherwise the loop's failure status), how many loop `attempts` it took, and
+  `length_capped` — how many of those attempts the server ended at its own token cap (a budget
+  signal, not a failure), always present so every rung line has the same shape for comparison. A
+  rung that ended `faulted` also carries `fault`, the upstream error message; clean rungs omit the
+  key entirely.
 
 The token and decode totals are the **local** half of the economy story — what the model produced
 and burned. Whether offloading a given rung to a local model actually saved net orchestrator
