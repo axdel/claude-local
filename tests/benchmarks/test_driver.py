@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from casehelpers import golden_impl
 
 from benchmarks.harness import (
     BenchmarkCase,
@@ -35,11 +36,6 @@ def _load_all_cases() -> dict[str, BenchmarkCase]:
     return load_suite(_CASES, golden_app_root=_GOLDEN_APP)
 
 
-def _golden_source(case: BenchmarkCase) -> str:
-    """Return the golden implementation text for the file this case blanks."""
-    return next(file.content for file in case.golden_tree if file.path == case.task.impl_path)
-
-
 def _system_message(target_impl_path: str) -> dict[str, object]:
     """A minimal chat-completion body naming ``target_impl_path`` the way the prompt does."""
     return {
@@ -54,7 +50,7 @@ def test_run_suite_runs_every_rung_green_with_golden_replies(tmp_path: Path) -> 
     strongest end-to-end proof the suite assembles, runs, and isolates each case correctly.
     """
     cases = _load_all_cases()
-    sources = {case.task.impl_path: _golden_source(case) for case in cases.values()}
+    sources = {case.task.impl_path: golden_impl(case) for case in cases.values()}
     scratch_root = tmp_path / "suite-worktrees"
 
     with replay_suite_http_client(sources) as http_client:
@@ -79,11 +75,11 @@ def test_run_suite_aggregates_a_passing_and_a_failing_case_in_order(tmp_path: Pa
     cases = _load_all_cases()
     passing_case = cases["03_repositories"]
     failing_case = cases["01_scaffold"]
-    passing_source = _golden_source(passing_case)
-    failing_source = _golden_source(failing_case).replace(
+    passing_source = golden_impl(passing_case)
+    failing_source = golden_impl(failing_case).replace(
         'HealthResponse(status="ok")', 'HealthResponse(status="down")'
     )
-    assert failing_source != _golden_source(failing_case)
+    assert failing_source != golden_impl(failing_case)
     suite = {"passing": passing_case, "failing": failing_case}
     sources = {
         passing_case.task.impl_path: passing_source,
@@ -116,7 +112,7 @@ def test_run_suite_forwards_model_generation_params_and_base_url_to_each_case(
     """The suite's model, generation parameters, and base URL reach the per-case request."""
     cases = {"scaffold": _load_all_cases()["01_scaffold"]}
     case = cases["scaffold"]
-    sources = {case.task.impl_path: _golden_source(case)}
+    sources = {case.task.impl_path: golden_impl(case)}
     observed: list[httpx.Request] = []
 
     with replay_suite_http_client(sources, request_observer=observed.append) as http_client:
@@ -142,7 +138,7 @@ def test_run_suite_leaves_an_injected_client_open_for_its_caller(tmp_path: Path)
     """The suite runner never closes a client it did not create — the caller owns its lifecycle."""
     cases = {"scaffold": _load_all_cases()["01_scaffold"]}
     case = cases["scaffold"]
-    sources = {case.task.impl_path: _golden_source(case)}
+    sources = {case.task.impl_path: golden_impl(case)}
 
     with replay_suite_http_client(sources) as http_client:
         run_suite(

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from casehelpers import golden_impl
 
 from benchmarks.harness import RungScore, Scorecard, load_suite, replay_suite_http_client
 from benchmarks.run import _print_scorecard, main
@@ -24,18 +25,9 @@ _CASES = _BENCHMARK / "cases"
 
 
 def _golden_sources() -> dict[str, str]:
-    """Map every rung's ``impl_path`` to its golden text, keyed for the replay client.
-
-    The per-case ``next(...)`` extraction mirrors ``test_driver._golden_source`` — the second
-    occurrence of "pull a case's golden file text"; Rule of Three notes it, extract on a third.
-    """
+    """Map every rung's ``impl_path`` to its golden text, keyed for the replay client."""
     cases = load_suite(_CASES, golden_app_root=_GOLDEN_APP)
-    return {
-        case.task.impl_path: next(
-            file.content for file in case.golden_tree if file.path == case.task.impl_path
-        )
-        for case in cases.values()
-    }
+    return {case.task.impl_path: golden_impl(case) for case in cases.values()}
 
 
 def test_main_runs_the_full_suite_green_and_writes_the_scorecard(

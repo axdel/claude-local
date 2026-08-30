@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from casehelpers import golden_impl
 
 from benchmarks.harness import BenchmarkCase, BenchmarkDriver, load_case, replay_http_client
 from claude_local import Outcome, Status
@@ -28,11 +29,6 @@ _CASE_DIRS = sorted(path.parent for path in _CASES_ROOT.glob("*/case.toml"))
 def case(request: pytest.FixtureRequest) -> BenchmarkCase:
     """Load each committed case directory in turn from its manifest and fixtures."""
     return load_case(request.param, golden_app_root=_GOLDEN_APP)
-
-
-def _golden_impl(case: BenchmarkCase) -> str:
-    """Return the golden content of the one file this case blanks."""
-    return next(file.content for file in case.golden_tree if file.path == case.task.impl_path)
 
 
 def _replay_outcome(case: BenchmarkCase, reply: str, scratch_root: Path) -> Outcome:
@@ -56,7 +52,7 @@ def _replay_outcome(case: BenchmarkCase, reply: str, scratch_root: Path) -> Outc
 
 def test_golden_file_drives_the_case_to_done(case: BenchmarkCase, tmp_path: Path) -> None:
     """Replaying the committed golden file passes the case's immutable oracle."""
-    outcome = _replay_outcome(case, _golden_impl(case), tmp_path / "golden")
+    outcome = _replay_outcome(case, golden_impl(case), tmp_path / "golden")
 
     assert outcome.status is Status.DONE
     assert outcome.files_changed == (case.task.impl_path,)

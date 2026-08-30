@@ -11,6 +11,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from casehelpers import golden_impl
 
 from benchmarks.harness import BenchmarkCase, BenchmarkDriver, load_case, replay_http_client
 from claude_local import ContextFile, Status
@@ -175,9 +176,7 @@ def test_driver_runs_scaffold_case_green_with_neighbor_in_real_request(tmp_path:
     observed_requests: list[httpx.Request] = []
     observed_worktrees: list[Path] = []
     observed_assembled_files: dict[str, str] = {}
-    golden_main = next(
-        file.content for file in case.golden_tree if file.path == case.task.impl_path
-    )
+    golden_main = golden_impl(case)
     scratch_root = tmp_path / "driver-worktrees"
     driver = BenchmarkDriver(
         scratch_root=scratch_root,
@@ -263,9 +262,7 @@ def test_driver_seeded_stub_without_a_scored_edit_reports_no_code_and_cleans_up(
 def test_driver_preserves_a_reply_without_a_terminal_newline(tmp_path: Path) -> None:
     """Replay framing keeps complete source bytes when the model omits the final newline."""
     case = _build_scaffold_case()
-    golden_main = next(
-        file.content for file in case.golden_tree if file.path == case.task.impl_path
-    )
+    golden_main = golden_impl(case)
     reply_without_final_newline = golden_main.rstrip("\n")
     driver = BenchmarkDriver(
         scratch_root=tmp_path / "driver-worktrees",
@@ -290,9 +287,7 @@ def test_driver_rejects_behaviorally_wrong_scaffold_reply_and_removes_worktree(
     Cleanup still removes the worktree on the exhausted path.
     """
     case = _build_scaffold_case()
-    golden_main = next(
-        file.content for file in case.golden_tree if file.path == case.task.impl_path
-    )
+    golden_main = golden_impl(case)
     wrong_main = golden_main.replace(
         'HealthResponse(status="ok")', 'HealthResponse(status="down")'
     )
