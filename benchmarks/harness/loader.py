@@ -4,8 +4,8 @@ A case directory is data, not code: ``case.toml`` names the implementation hole
 (``impl_path``), its model-visible neighbors (``context_paths``), and the loop bounds
 (``[budget]``); ``spec.md``, ``oracle.py``, and ``blank/<impl_path>`` sit beside it.
 ``load_case`` reads those, snapshots the whole golden app tree so the assembled worktree
-imports and boots, and returns a validated :class:`BenchmarkCase`. ``load_suite`` loads every
-rung directory under a cases root into a name-keyed suite in ladder order.
+imports and boots, and returns a validated :class:`BenchmarkCase`. ``load_cases`` loads every
+case directory under a cases root into a name-keyed benchmark in ladder order.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from .case import BenchmarkCase
 def load_case(case_dir: Path, *, golden_app_root: Path) -> BenchmarkCase:
     """Build a validated case from its directory and the golden app it fills.
 
-    ``golden_app_root`` is the complete reference app every case assembles; its parent
+    ``golden_app_root`` is the complete golden app every case assembles; its parent
     anchors the ``app/``-prefixed paths shared by the manifest and the golden tree.
     """
     manifest = tomllib.loads((case_dir / "case.toml").read_text(encoding="utf-8"))
@@ -42,12 +42,13 @@ def load_case(case_dir: Path, *, golden_app_root: Path) -> BenchmarkCase:
     )
 
 
-def load_suite(cases_dir: Path, *, golden_app_root: Path) -> dict[str, BenchmarkCase]:
-    """Load every rung under ``cases_dir`` into a suite keyed by directory name, in ladder order.
+def load_cases(cases_dir: Path, *, golden_app_root: Path) -> dict[str, BenchmarkCase]:
+    """Load every case under ``cases_dir`` into a benchmark keyed by directory name, in ladder
+    order.
 
-    Each immediate subdirectory of ``cases_dir`` is one rung; ``sorted`` on the directory names
+    Each immediate subdirectory of ``cases_dir`` is one case; ``sorted`` on the directory names
     gives the ladder order (``01_scaffold`` before ``02_schemas``). Non-directory entries are
-    skipped, so a stray file beside the rungs never becomes a case.
+    skipped, so a stray file beside the cases never becomes a case.
     """
     return {
         case_dir.name: load_case(case_dir, golden_app_root=golden_app_root)

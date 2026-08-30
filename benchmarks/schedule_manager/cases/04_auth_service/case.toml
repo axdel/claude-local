@@ -1,4 +1,4 @@
-# Rung 4 — auth service: deterministic password + signed-identity authentication.
+# Case 4 — auth service: deterministic password + signed-identity authentication.
 impl_path = "app/services/auth_service.py"
 context_paths = [
     "app/schemas.py",

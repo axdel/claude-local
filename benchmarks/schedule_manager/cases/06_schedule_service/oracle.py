@@ -2,7 +2,7 @@
 
 Constructs the service over a real SQLite-backed repository with seeded users and
 asserts its contract directly — the ``is_due`` and ``next_fire_at`` methods have no
-HTTP endpoint, so this rung tests the unit itself rather than the API. Coverage:
+HTTP endpoint, so this case tests the unit itself rather than the API. Coverage:
 role-aware listing and access, cron validation, partial update and delete with the
 precise domain errors, and derived due / next-fire behavior. Expected values are
 hand-derived from the spec (an administrator sees every schedule while a user sees

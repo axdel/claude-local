@@ -1,4 +1,4 @@
-# Rung 5 — RBAC: identity resolution and administrator authorization.
+# Case 5 — RBAC: identity resolution and administrator authorization.
 impl_path = "app/security.py"
 context_paths = [
     "app/schemas.py",

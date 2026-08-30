@@ -67,7 +67,7 @@ class BenchmarkDriver:
 class CaseResult:
     """One benchmark case's identity paired with what the loop produced and burned for it.
 
-    ``case_id`` is the caller's key for the case (its rung-directory name in a full suite run).
+    ``case_id`` is the caller's key for the case (its case-directory name in a full benchmark run).
     ``outcome`` carries the terminal status, the produced code, and the local-half economy record,
     so a scorer reaches the record and status through the outcome rather than a duplicated copy.
     """
@@ -76,7 +76,7 @@ class CaseResult:
     outcome: Outcome
 
 
-def run_suite(
+def run_cases(
     cases: Mapping[str, BenchmarkCase],
     *,
     base_url: str,
@@ -89,7 +89,7 @@ def run_suite(
 
     Each case runs in its own disposable worktree with a fresh in-memory database (the golden app
     opens ``:memory:`` per ``create_app``), torn down before the next case starts, so no case can
-    observe another's files or rows. An injected ``http_client`` is shared across the whole suite —
+    observe another's files or rows. An injected ``http_client`` is shared across the benchmark —
     one warm connection to one resident model, closed by the caller; when omitted, each case owns a
     per-case client via ``implement``. Each case's economy record is captured on its
     ``CaseResult.outcome``; the net-savings verdict stays the orchestrator's, never computed here.
@@ -99,7 +99,7 @@ def run_suite(
             preserved in the returned list.
         base_url: The OpenAI-compatible server every case infers against.
         model: The model name requested for every case.
-        generation_params: Optional generation parameters applied uniformly across the suite.
+        generation_params: Optional generation parameters applied uniformly across the benchmark.
         scratch_root: Parent directory for each case's disposable worktree; a managed system temp
             directory when omitted.
         http_client: An HTTP client shared across every case. When omitted, each case creates and

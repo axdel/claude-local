@@ -1,4 +1,4 @@
-# Rung 2 — schemas: the strict request/response contracts every layer shares.
+# Case 2 — schemas: the strict request/response contracts every layer shares.
 impl_path = "app/schemas.py"
 context_paths = [
     "app/repositories/schedule_repository.py",

@@ -1,4 +1,4 @@
-# Rung 3 — repositories: the typed SQLite persistence boundary for schedules.
+# Case 3 — repositories: the typed SQLite persistence boundary for schedules.
 impl_path = "app/repositories/schedule_repository.py"
 context_paths = [
     "app/schemas.py",

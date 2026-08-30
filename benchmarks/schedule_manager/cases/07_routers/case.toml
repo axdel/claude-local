@@ -1,4 +1,4 @@
-# Rung 7 — schedule CRUD router: the full HTTP endpoint surface, pure delegation.
+# Case 7 — schedule CRUD router: the full HTTP endpoint surface, pure delegation.
 impl_path = "app/routers/schedules.py"
 context_paths = [
     "app/dependencies.py",

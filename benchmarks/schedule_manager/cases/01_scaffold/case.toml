@@ -1,4 +1,4 @@
-# Rung 1 — scaffold: the application factory, lifespan, and health endpoint.
+# Case 1 — scaffold: the application factory, lifespan, and health endpoint.
 impl_path = "app/main.py"
 context_paths = ["app/db.py"]
 

@@ -24,7 +24,7 @@ _CHUNK_BASE: dict[str, object] = {
 _REPLAY_COMPLETION_TOKENS = 1
 _REPLAY_PROMPT_TOKENS = 0
 _TARGET_FILE_MARKER = f"{TARGET_FILE_LABEL} "
-"""Prefix of the prompt's target-file line — the per-case dispatch key for a suite replay.
+"""Prefix of the prompt's target-file line — the per-case dispatch key for a benchmark replay.
 
 Derived from the public ``TARGET_FILE_LABEL`` ``PromptBuilder`` emits, so the parser can never
 drift from the producer: every request for a case names the same target, so dispatching on it
@@ -62,14 +62,14 @@ def replay_http_client(
     return httpx.Client(transport=httpx.MockTransport(replay_completion))
 
 
-def replay_suite_http_client(
+def replay_cases_http_client(
     sources_by_impl_path: Mapping[str, str],
     *,
     request_observer: Callable[[httpx.Request], None] | None = None,
 ) -> httpx.Client:
-    """Return one client that replays a whole suite, each request routed to its case's source.
+    """Return one client that replays the benchmark, each request routed to its case's source.
 
-    A single injected client serves every case in a suite run. Each request names its target file
+    A single injected client serves every case in a benchmark. Each request names its target file
     in the prompt (``Target file: <impl_path>``); this transport reads that marker and streams the
     matching source from ``sources_by_impl_path`` as one complete Python file. Dispatch is on the
     target, not on call order, so a case retried within its attempt budget still routes to the same
@@ -108,7 +108,7 @@ def _requested_impl_path(request: httpx.Request) -> str:
     """Return the target impl path a chat-completion request names in its system message.
 
     Reads the ``Target file: <impl_path>`` line the prompt places in the system message — the
-    retry-invariant key a suite replay routes on.
+    retry-invariant key a benchmark replay routes on.
 
     Raises:
         ValueError: the request carried no target-file line.

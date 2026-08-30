@@ -3,7 +3,7 @@
 Each case must bite: the committed golden file drives the loop to a DONE oracle,
 and the deliberately incomplete blank stub does not. This is the data-driven
 generalization of the scaffold mechanics proven in test_skeleton.py — one
-parametrized proof over every ``case.toml`` directory, so no rung can ship
+parametrized proof over every ``case.toml`` directory, so no case can ship
 without its own fail-to-pass guarantee. Cases run through the real sandboxed
 oracle with only the model transport replayed.
 """

@@ -1,9 +1,9 @@
-"""Tests for the suite scorer (``benchmarks.harness.scorer``).
+"""Tests for the benchmark scorer (``benchmarks.harness.scorer``).
 
-The scorer reduces a suite's ``CaseResult`` list to one comparable ``Scorecard``: a per-rung
-pass/fail table plus economy totals summed from each rung's ``LocalEconomyRecord``. Every expected
+The scorer reduces a benchmark's ``CaseResult`` list to one comparable ``Scorecard``: a per-case
+pass/fail table plus economy totals summed from each case's ``LocalEconomyRecord``. Every expected
 total here is hand-derived from a fixed set of records (sum, count, guarded quotient), never read
-back from ``score_suite``, so a swapped field or broken sum cannot survive. ``write`` round-trips
+back from ``score_cases``, so a swapped field or broken sum cannot survive. ``write`` round-trips
 through a REAL temp dir (the filesystem is local-substitutable — no mocks), asserting the reloaded
 JSON and the ``scorecard-<slug>-<ms>.json`` filename.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from factories import build_local_economy_record
 
-from benchmarks.harness import CaseResult, RungScore, score_suite
+from benchmarks.harness import CaseResult, CaseScore, score_cases
 from claude_local import Outcome, Status
 
 
@@ -32,7 +32,7 @@ def _case_result(
     """A ``CaseResult`` carrying a hand-specified economy record — the scorer's sole input.
 
     The record's own ``mean_tokens_per_second`` is left at the factory default; the scorer never
-    reads it, recomputing the suite mean from the summed totals instead. ``fault`` and
+    reads it, recomputing the benchmark mean from the summed totals instead. ``fault`` and
     ``length_capped`` default to the clean-run values; a test surfacing them overrides only those.
     """
     record = build_local_economy_record(
@@ -54,7 +54,7 @@ def _case_result(
     return CaseResult(case_id=case_id, outcome=outcome)
 
 
-def _mixed_suite() -> list[CaseResult]:
+def _mixed_cases() -> list[CaseResult]:
     """Two greens and one red with distinct token/second counts — totals hand-computable."""
     return [
         _case_result(
@@ -73,31 +73,31 @@ def _mixed_suite() -> list[CaseResult]:
     ]
 
 
-def test_score_suite_aggregates_hand_computed_totals() -> None:
+def test_score_cases_aggregates_hand_computed_totals() -> None:
     """Every scorecard total is the hand-derived sum/count/quotient of the input records."""
-    scorecard = score_suite(_mixed_suite())
+    scorecard = score_cases(_mixed_cases())
 
     # Oracle: tokens 120+240+40=400; seconds 2.0+4.0+2.0=8.0; mean 400/8.0=50.0; 2 of 3 DONE.
     assert scorecard.model == "local/candidate-7b"
     assert scorecard.total_completion_tokens == 400
     assert scorecard.total_model_seconds == 8.0
     assert scorecard.mean_tokens_per_second == 50.0
-    assert scorecard.rungs_passed == 2
-    assert scorecard.rungs_total == 3
-    assert scorecard.rungs == (
-        RungScore(case_id="01_scaffold", status=Status.DONE, attempts=1),
-        RungScore(case_id="02_schemas", status=Status.DONE, attempts=2),
-        RungScore(case_id="03_repositories", status=Status.EXHAUSTED, attempts=3),
+    assert scorecard.cases_passed == 2
+    assert scorecard.cases_total == 3
+    assert scorecard.cases == (
+        CaseScore(case_id="01_scaffold", status=Status.DONE, attempts=1),
+        CaseScore(case_id="02_schemas", status=Status.DONE, attempts=2),
+        CaseScore(case_id="03_repositories", status=Status.EXHAUSTED, attempts=3),
     )
 
 
-def test_score_suite_surfaces_each_rungs_fault_and_length_capped(tmp_path: Path) -> None:
-    """A capped rung's cap count and a FAULTED rung's upstream message reach the RungScore + JSON.
+def test_score_cases_surfaces_each_case_fault_and_length_capped(tmp_path: Path) -> None:
+    """A capped case's cap count and a FAULTED case's upstream message reach the CaseScore + JSON.
 
     The expected values are exactly what each ``Outcome``/record carried in — read from the input,
-    never from ``score_suite`` — so dropping either populate line flips this test red.
+    never from ``score_cases`` — so dropping either populate line flips this test red.
     """
-    suite = [
+    cases = [
         _case_result(
             "01_scaffold",
             Status.DONE,
@@ -116,17 +116,17 @@ def test_score_suite_surfaces_each_rungs_fault_and_length_capped(tmp_path: Path)
         ),
     ]
 
-    scorecard = score_suite(suite)
+    scorecard = score_cases(cases)
 
-    by_id = {rung.case_id: rung for rung in scorecard.rungs}
+    by_id = {case.case_id: case for case in scorecard.cases}
     assert by_id["01_scaffold"].length_capped == 1
     assert by_id["01_scaffold"].fault is None
     assert by_id["02_schemas"].fault == "upstream 503"
     assert by_id["02_schemas"].length_capped == 0
 
-    # length_capped is always emitted (a stable numeric field); fault only on the faulted rung.
+    # length_capped is always emitted (a stable numeric field); fault only on the faulted case.
     card = json.loads(scorecard.write(tmp_path).read_text(encoding="utf-8"))
-    assert card["rungs"] == [
+    assert card["cases"] == [
         {"case_id": "01_scaffold", "status": "done", "attempts": 2, "length_capped": 1},
         {
             "case_id": "02_schemas",
@@ -138,29 +138,29 @@ def test_score_suite_surfaces_each_rungs_fault_and_length_capped(tmp_path: Path)
     ]
 
 
-def test_score_suite_mean_is_none_when_no_model_seconds() -> None:
+def test_score_cases_mean_is_none_when_no_model_seconds() -> None:
     """No model-seconds elapsed → mean is None (never a crash), but tokens still sum."""
-    suite = [
+    cases = [
         _case_result("a", Status.DONE, attempts=1, completion_tokens=10, model_seconds=0.0),
         _case_result("b", Status.DONE, attempts=1, completion_tokens=20, model_seconds=0.0),
     ]
 
-    scorecard = score_suite(suite)
+    scorecard = score_cases(cases)
 
     assert scorecard.mean_tokens_per_second is None
     assert scorecard.total_completion_tokens == 30
     assert scorecard.total_model_seconds == 0.0
 
 
-def test_score_suite_rejects_an_empty_result_list() -> None:
-    """An empty suite has no model and no rungs — a caller error, not a 0/0 card."""
-    with pytest.raises(ValueError, match="empty suite"):
-        score_suite([])
+def test_score_cases_rejects_an_empty_result_list() -> None:
+    """An empty benchmark has no model and no cases — a caller error, not a 0/0 card."""
+    with pytest.raises(ValueError, match="empty benchmark"):
+        score_cases([])
 
 
-def test_score_suite_rejects_a_mixed_model_suite() -> None:
+def test_score_cases_rejects_a_mixed_model_benchmark() -> None:
     """One scorecard describes one model; records naming two models is a caller error."""
-    suite = [
+    cases = [
         _case_result("a", Status.DONE, attempts=1, completion_tokens=10, model_seconds=1.0),
         _case_result(
             "b",
@@ -173,12 +173,12 @@ def test_score_suite_rejects_a_mixed_model_suite() -> None:
     ]
 
     with pytest.raises(ValueError, match="one model"):
-        score_suite(suite)
+        score_cases(cases)
 
 
 def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
     """The written JSON reloads to the hand-derived mapping, under a scorecard-prefixed name."""
-    scorecard = score_suite(_mixed_suite())
+    scorecard = score_cases(_mixed_cases())
 
     path = scorecard.write(tmp_path)
 
@@ -187,12 +187,12 @@ def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
     assert path.suffix == ".json"
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "model": "local/candidate-7b",
-        "rungs_passed": 2,
-        "rungs_total": 3,
+        "cases_passed": 2,
+        "cases_total": 3,
         "total_completion_tokens": 400,
         "total_model_seconds": 8.0,
         "mean_tokens_per_second": 50.0,
-        "rungs": [
+        "cases": [
             {"case_id": "01_scaffold", "status": "done", "attempts": 1, "length_capped": 0},
             {"case_id": "02_schemas", "status": "done", "attempts": 2, "length_capped": 0},
             {
@@ -207,7 +207,7 @@ def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
 
 def test_scorecard_write_creates_the_directory_when_absent(tmp_path: Path) -> None:
     """``write`` creates a missing output directory rather than failing on it."""
-    scorecard = score_suite(_mixed_suite())
+    scorecard = score_cases(_mixed_cases())
     destination = tmp_path / "nested" / "scorecards"
 
     path = scorecard.write(destination)
@@ -218,7 +218,7 @@ def test_scorecard_write_creates_the_directory_when_absent(tmp_path: Path) -> No
 
 def test_scorecard_is_immutable() -> None:
     """A scorecard is a frozen value object — a scored result is never mutated after the fact."""
-    scorecard = score_suite(_mixed_suite())
+    scorecard = score_cases(_mixed_cases())
 
     with pytest.raises(AttributeError):
         scorecard.model = "tampered/model"  # type: ignore[misc]

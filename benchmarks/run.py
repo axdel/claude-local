@@ -1,7 +1,7 @@
-"""Run the standing model-evaluation benchmark suite against a local model.
+"""Run the standing model-evaluation benchmark against a local model.
 
 The benchmark is a fixed ladder of implementation tasks against one correctly-architected
-reference app (a schedule manager): each rung blanks exactly one file and hands the model the
+golden app (a schedule manager): each case blanks exactly one file and hands the model the
 spec, its neighbors, and a hidden correctness oracle. Driving a candidate model through the whole
 ladder and scoring it against the oracles yields one comparable scorecard — the same instrument
 for every model, so "add a model, bench it" is a single command.
@@ -13,8 +13,8 @@ with ``--model`` (or ``CLAUDE_LOCAL_MODEL``), and run from the repository root::
 
     uv run python -m benchmarks.run --model <name>
 
-The per-rung table and suite totals print to stderr; ``--out DIR`` also writes the scorecard as
-JSON. The process exits 0 only when every rung passed, 1 when any rung failed, 2 for a usage error
+The per-case table and benchmark totals print to stderr; ``--out DIR`` also writes the scorecard as
+JSON. The process exits 0 only when every case passed, 1 when any case failed, 2 for a usage error
 (no model named), and 3 when the benchmark harness itself faults — the prerequisite server is
 unreachable, the kernel sandbox is unavailable, or an oracle is broken. Exit 3 is a broken *host*,
 distinct from exit 1's model that simply failed the task.
@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from benchmarks.harness import load_suite, run_suite, score_suite
+from benchmarks.harness import load_cases, run_cases, score_cases
 from claude_local import BackendUnavailable, OracleError, SandboxUnavailable
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ _DEFAULT_BASE_URL = "http://localhost:8080"
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the model-evaluation benchmark suite against a local model."
+        description="Run the model-evaluation benchmark against a local model."
     )
     parser.add_argument(
         "--base-url",
@@ -67,19 +67,19 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _print_scorecard(scorecard: Scorecard) -> None:
-    """Print the per-rung table and suite totals to stderr — the human-readable verdict."""
+    """Print the per-case table and benchmark totals to stderr — the human-readable verdict."""
     print(f"model: {scorecard.model}", file=sys.stderr)
-    for rung in scorecard.rungs:
-        line = f"  {rung.case_id:<20} {rung.status.value:<10} {rung.attempts} attempt(s)"
-        if rung.length_capped:
-            line += f", {rung.length_capped} length-capped"
-        if rung.fault is not None:
-            line += f" — fault: {rung.fault}"
+    for case in scorecard.cases:
+        line = f"  {case.case_id:<20} {case.status.value:<10} {case.attempts} attempt(s)"
+        if case.length_capped:
+            line += f", {case.length_capped} length-capped"
+        if case.fault is not None:
+            line += f" — fault: {case.fault}"
         print(line, file=sys.stderr)
     mean = scorecard.mean_tokens_per_second
     rate = f"{mean:.1f}" if mean is not None else "n/a"
     print(
-        f"[suite] {scorecard.rungs_passed}/{scorecard.rungs_total} rungs passed, "
+        f"[benchmark] {scorecard.cases_passed}/{scorecard.cases_total} cases passed, "
         f"{scorecard.total_completion_tokens} completion tokens, "
         f"{scorecard.total_model_seconds:.1f}s decode, {rate} tok/s",
         file=sys.stderr,
@@ -87,33 +87,33 @@ def _print_scorecard(scorecard: Scorecard) -> None:
 
 
 def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = None) -> int:
-    """Run the whole suite against the named model; print the scorecard and return an exit code.
+    """Run the benchmark against the named model; print the scorecard and return an exit code.
 
-    Returns the process exit code: 0 when every rung passed, 1 when any rung failed, 2 for a usage
+    Returns the process exit code: 0 when every case passed, 1 when any case failed, 2 for a usage
     error (no model named), and 3 when the benchmark harness itself faults (unreachable server,
-    unavailable sandbox, or broken oracle). An injected ``http_client`` is shared across the suite
+    unavailable sandbox, or broken oracle). An injected ``http_client`` is shared across the cases
     and left open for its caller (the tests replay the transport through it); when omitted, each
-    rung owns a per-case client against the real server.
+    case owns a per-case client against the real server.
     """
     args = _parse_args(argv)
     if not args.model:
         print("error: no model given (pass --model or set CLAUDE_LOCAL_MODEL)", file=sys.stderr)
         return 2
 
-    cases = load_suite(_CASES, golden_app_root=_GOLDEN_APP)
+    cases = load_cases(_CASES, golden_app_root=_GOLDEN_APP)
     try:
-        results = run_suite(
+        results = run_cases(
             cases, base_url=args.base_url, model=args.model, http_client=http_client
         )
     except (BackendUnavailable, SandboxUnavailable, OracleError) as fault:
         print(f"error: benchmark harness fault: {fault}", file=sys.stderr)
         return 3
-    scorecard = score_suite(results)
+    scorecard = score_cases(results)
     _print_scorecard(scorecard)
     if args.out is not None:
         written = scorecard.write(args.out)
         print(f"scorecard written to {written}", file=sys.stderr)
-    return 0 if scorecard.rungs_passed == scorecard.rungs_total else 1
+    return 0 if scorecard.cases_passed == scorecard.cases_total else 1
 
 
 if __name__ == "__main__":

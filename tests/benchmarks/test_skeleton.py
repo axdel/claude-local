@@ -1,4 +1,4 @@
-"""Walking-skeleton tests for the benchmark harness and the rung-1 scaffold case.
+"""Walking-skeleton tests for the benchmark harness and the case-1 scaffold case.
 
 These tests drive benchmark data through the public ``claude_local`` entry point, with only the
 external model transport replayed. They prove the real sandboxed oracle, stable-prefix context,
@@ -28,7 +28,7 @@ def _read(path: Path) -> str:
 
 
 def _build_scaffold_case() -> BenchmarkCase:
-    """Load the rung-1 scaffold case from its committed manifest and fixtures."""
+    """Load the case-1 scaffold case from its committed manifest and fixtures."""
     return load_case(_SCAFFOLD_CASE, golden_app_root=_GOLDEN_APP)
 
 
