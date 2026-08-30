@@ -32,7 +32,13 @@ _TRUNCATION_MARKER = "\n[...truncated]"
 
 # Static prefix scaffolding — part of the byte-stable prefix, so these are frozen constants.
 _SPEC_HEADER = "## Implementation task"
-_TARGET_LABEL = "Target file:"
+TARGET_FILE_LABEL = "Target file:"
+"""Wire label prefixing the prompt's target-file line (``Target file: <impl_path>``).
+
+Public because the benchmark replay transport parses the wire by this label; it is the single
+owner of the literal, so the prompt producer and the replay parser can never encode it two
+different ways (D-BENCH-002 — the benchmark derives shared owners through the public API).
+"""
 _CONTEXT_HEADER = (
     "## Existing files — read-only, integrate with them, do NOT reimplement or output them."
 )
@@ -64,7 +70,7 @@ class PromptBuilder:
             "\n\n",
             _SPEC_HEADER,
             "\n",
-            _TARGET_LABEL,
+            TARGET_FILE_LABEL,
             " ",
             spec.impl_path,
             "\n\n",

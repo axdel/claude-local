@@ -21,7 +21,7 @@ from benchmarks.harness import (
     replay_suite_http_client,
     run_suite,
 )
-from claude_local import Status
+from claude_local import TARGET_FILE_LABEL, Status
 
 _ROOT = Path(__file__).parents[2]
 _BENCHMARK = _ROOT / "benchmarks" / "schedule_manager"
@@ -42,7 +42,9 @@ def _golden_source(case: BenchmarkCase) -> str:
 
 def _system_message(target_impl_path: str) -> dict[str, object]:
     """A minimal chat-completion body naming ``target_impl_path`` the way the prompt does."""
-    return {"messages": [{"role": "system", "content": f"Target file: {target_impl_path}\n"}]}
+    return {
+        "messages": [{"role": "system", "content": f"{TARGET_FILE_LABEL} {target_impl_path}\n"}]
+    }
 
 
 def test_run_suite_runs_every_rung_green_with_golden_replies(tmp_path: Path) -> None:

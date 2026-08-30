@@ -18,8 +18,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from claude_local import Status
-from claude_local.telemetry import slug_model_id
+from claude_local import Status, slug_model_id
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -12,6 +12,8 @@ from collections.abc import Callable, Mapping
 
 import httpx
 
+from claude_local import TARGET_FILE_LABEL
+
 _REPLAY_MODEL = "benchmark-replay"
 _CHUNK_BASE: dict[str, object] = {
     "id": "chatcmpl-benchmark-replay",
@@ -21,11 +23,12 @@ _CHUNK_BASE: dict[str, object] = {
 }
 _REPLAY_COMPLETION_TOKENS = 1
 _REPLAY_PROMPT_TOKENS = 0
-_TARGET_FILE_MARKER = "Target file: "
+_TARGET_FILE_MARKER = f"{TARGET_FILE_LABEL} "
 """Prefix of the prompt's target-file line — the per-case dispatch key for a suite replay.
 
-Mirrors the system-message target label ``PromptBuilder`` emits: every request for a case names
-the same target, so dispatching on it routes each request — and each retry — to that case's reply.
+Derived from the public ``TARGET_FILE_LABEL`` ``PromptBuilder`` emits, so the parser can never
+drift from the producer: every request for a case names the same target, so dispatching on it
+routes each request — and each retry — to that case's reply.
 """
 
 
