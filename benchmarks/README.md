@@ -76,7 +76,10 @@ uv run python -m benchmarks.run --model <model-name> --base-url http://localhost
 | `--out DIR` | — | Also write the scorecard as JSON into `DIR` (created if absent) |
 
 The per-rung table and suite totals print to stderr. The process exits `0` only when every rung
-passed, `1` when any rung failed, and `2` for a usage error (no model named).
+passed, `1` when any rung failed, `2` for a usage error (no model named), and `3` when the
+benchmark harness itself faults — the prerequisite server is unreachable, the kernel sandbox is
+unavailable, or an oracle is broken. Exit `3` is a broken *host*, distinct from exit `1`'s model
+that simply failed the task.
 
 ## The scorecard
 

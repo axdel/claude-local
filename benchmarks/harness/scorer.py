@@ -29,11 +29,20 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class RungScore:
-    """One rung's line on the scorecard: which case, its terminal status, and its loop attempts."""
+    """One rung's line on the scorecard: the case, its terminal status, attempts, and diagnostics.
+
+    ``length_capped`` counts how many of this rung's attempts the server ended at its own token
+    cap (a budget signal, not a failure), and ``fault`` carries the upstream error message when
+    the rung ended ``FAULTED`` — both read straight off the driver's ``Outcome``, never
+    recomputed. They default to the clean-run values (no fault, nothing capped), so a rung that
+    hit neither needs no ceremony to construct.
+    """
 
     case_id: str
     status: Status
     attempts: int
+    fault: str | None = None
+    length_capped: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,11 +94,26 @@ class Scorecard:
             "total_completion_tokens": self.total_completion_tokens,
             "total_model_seconds": self.total_model_seconds,
             "mean_tokens_per_second": self.mean_tokens_per_second,
-            "rungs": [
-                {"case_id": rung.case_id, "status": rung.status.value, "attempts": rung.attempts}
-                for rung in self.rungs
-            ],
+            "rungs": [self._rung_as_dict(rung) for rung in self.rungs],
         }
+
+    @staticmethod
+    def _rung_as_dict(rung: RungScore) -> dict[str, object]:
+        """One rung's JSON mapping: always ``length_capped``, ``fault`` only when it faulted.
+
+        ``length_capped`` is a stable numeric field (0 or more) so every rung line has the same
+        shape for cross-model comparison; ``fault`` is exceptional, so an absent key — not a
+        ``null`` on every clean rung — is what says the rung ended without an upstream error frame.
+        """
+        rung_dict: dict[str, object] = {
+            "case_id": rung.case_id,
+            "status": rung.status.value,
+            "attempts": rung.attempts,
+            "length_capped": rung.length_capped,
+        }
+        if rung.fault is not None:
+            rung_dict["fault"] = rung.fault
+        return rung_dict
 
 
 def score_suite(results: Sequence[CaseResult]) -> Scorecard:
@@ -125,6 +149,8 @@ def score_suite(results: Sequence[CaseResult]) -> Scorecard:
             case_id=result.case_id,
             status=result.outcome.status,
             attempts=result.outcome.record.attempts,
+            fault=result.outcome.fault,
+            length_capped=result.outcome.record.length_capped,
         )
         for result in results
     )

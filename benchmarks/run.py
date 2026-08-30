@@ -14,8 +14,10 @@ with ``--model`` (or ``CLAUDE_LOCAL_MODEL``), and run from the repository root::
     uv run python -m benchmarks.run --model <name>
 
 The per-rung table and suite totals print to stderr; ``--out DIR`` also writes the scorecard as
-JSON. The process exits 0 only when every rung passed, 1 when any rung failed, and 2 for a usage
-error (no model named).
+JSON. The process exits 0 only when every rung passed, 1 when any rung failed, 2 for a usage error
+(no model named), and 3 when the benchmark harness itself faults — the prerequisite server is
+unreachable, the kernel sandbox is unavailable, or an oracle is broken. Exit 3 is a broken *host*,
+distinct from exit 1's model that simply failed the task.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from benchmarks.harness import load_suite, run_suite, score_suite
+from claude_local import BackendUnavailable, OracleError, SandboxUnavailable
 
 if TYPE_CHECKING:
     import httpx
@@ -67,10 +70,12 @@ def _print_scorecard(scorecard: Scorecard) -> None:
     """Print the per-rung table and suite totals to stderr — the human-readable verdict."""
     print(f"model: {scorecard.model}", file=sys.stderr)
     for rung in scorecard.rungs:
-        print(
-            f"  {rung.case_id:<20} {rung.status.value:<10} {rung.attempts} attempt(s)",
-            file=sys.stderr,
-        )
+        line = f"  {rung.case_id:<20} {rung.status.value:<10} {rung.attempts} attempt(s)"
+        if rung.length_capped:
+            line += f", {rung.length_capped} length-capped"
+        if rung.fault is not None:
+            line += f" — fault: {rung.fault}"
+        print(line, file=sys.stderr)
     mean = scorecard.mean_tokens_per_second
     rate = f"{mean:.1f}" if mean is not None else "n/a"
     print(
@@ -85,9 +90,10 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     """Run the whole suite against the named model; print the scorecard and return an exit code.
 
     Returns the process exit code: 0 when every rung passed, 1 when any rung failed, 2 for a usage
-    error (no model named). An injected ``http_client`` is shared across the suite and left open
-    for its caller (the tests replay the transport through it); when omitted, each rung owns a
-    per-case client against the real server.
+    error (no model named), and 3 when the benchmark harness itself faults (unreachable server,
+    unavailable sandbox, or broken oracle). An injected ``http_client`` is shared across the suite
+    and left open for its caller (the tests replay the transport through it); when omitted, each
+    rung owns a per-case client against the real server.
     """
     args = _parse_args(argv)
     if not args.model:
@@ -95,7 +101,13 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
         return 2
 
     cases = load_suite(_CASES, golden_app_root=_GOLDEN_APP)
-    results = run_suite(cases, base_url=args.base_url, model=args.model, http_client=http_client)
+    try:
+        results = run_suite(
+            cases, base_url=args.base_url, model=args.model, http_client=http_client
+        )
+    except (BackendUnavailable, SandboxUnavailable, OracleError) as fault:
+        print(f"error: benchmark harness fault: {fault}", file=sys.stderr)
+        return 3
     scorecard = score_suite(results)
     _print_scorecard(scorecard)
     if args.out is not None:

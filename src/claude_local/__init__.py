@@ -13,10 +13,18 @@ Two shared owners are also re-exported here so downstream consumers derive them 
 top-level API rather than reaching into a submodule (D-BENCH-002): ``slug_model_id`` (the single
 owner of model-id → filename slugging) and ``TARGET_FILE_LABEL`` (the prompt's target-file wire
 label, which a replay transport parses).
+
+The three harness-fault exceptions ``implement`` documents under ``Raises`` are exported too, so a
+caller catches a broken *host* distinctly from a task the model simply failed (D-BENCH-014):
+``BackendUnavailable`` (the prerequisite server is unreachable), ``SandboxUnavailable`` (the host
+lacks the kernel sandbox), and ``OracleError`` (the oracle produced no verdict).
 """
 
+from claude_local.backend import BackendUnavailable
 from claude_local.entrypoint import Outcome, implement
 from claude_local.prompt import TARGET_FILE_LABEL
+from claude_local.runner import OracleError
+from claude_local.sandbox import SandboxUnavailable
 from claude_local.telemetry import slug_model_id
 from claude_local.types import Budget, ContextFile, Status, TaskSpec
 
@@ -24,9 +32,12 @@ __version__ = "0.1.0"
 
 __all__ = [
     "TARGET_FILE_LABEL",
+    "BackendUnavailable",
     "Budget",
     "ContextFile",
+    "OracleError",
     "Outcome",
+    "SandboxUnavailable",
     "Status",
     "TaskSpec",
     "implement",

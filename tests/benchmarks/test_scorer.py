@@ -26,11 +26,14 @@ def _case_result(
     completion_tokens: int,
     model_seconds: float,
     model: str = "local/candidate-7b",
+    fault: str | None = None,
+    length_capped: int = 0,
 ) -> CaseResult:
     """A ``CaseResult`` carrying a hand-specified economy record — the scorer's sole input.
 
     The record's own ``mean_tokens_per_second`` is left at the factory default; the scorer never
-    reads it, recomputing the suite mean from the summed totals instead.
+    reads it, recomputing the suite mean from the summed totals instead. ``fault`` and
+    ``length_capped`` default to the clean-run values; a test surfacing them overrides only those.
     """
     record = build_local_economy_record(
         model=model,
@@ -38,6 +41,7 @@ def _case_result(
         total_model_seconds=model_seconds,
         status=status,
         attempts=attempts,
+        length_capped=length_capped,
     )
     outcome = Outcome(
         status=status,
@@ -45,6 +49,7 @@ def _case_result(
         impl_path=f"app/{case_id}.py",
         files_changed=(f"app/{case_id}.py",) if status is Status.DONE else (),
         record=record,
+        fault=fault,
     )
     return CaseResult(case_id=case_id, outcome=outcome)
 
@@ -84,6 +89,53 @@ def test_score_suite_aggregates_hand_computed_totals() -> None:
         RungScore(case_id="02_schemas", status=Status.DONE, attempts=2),
         RungScore(case_id="03_repositories", status=Status.EXHAUSTED, attempts=3),
     )
+
+
+def test_score_suite_surfaces_each_rungs_fault_and_length_capped(tmp_path: Path) -> None:
+    """A capped rung's cap count and a FAULTED rung's upstream message reach the RungScore + JSON.
+
+    The expected values are exactly what each ``Outcome``/record carried in — read from the input,
+    never from ``score_suite`` — so dropping either populate line flips this test red.
+    """
+    suite = [
+        _case_result(
+            "01_scaffold",
+            Status.DONE,
+            attempts=2,
+            completion_tokens=100,
+            model_seconds=2.0,
+            length_capped=1,
+        ),
+        _case_result(
+            "02_schemas",
+            Status.FAULTED,
+            attempts=1,
+            completion_tokens=10,
+            model_seconds=1.0,
+            fault="upstream 503",
+        ),
+    ]
+
+    scorecard = score_suite(suite)
+
+    by_id = {rung.case_id: rung for rung in scorecard.rungs}
+    assert by_id["01_scaffold"].length_capped == 1
+    assert by_id["01_scaffold"].fault is None
+    assert by_id["02_schemas"].fault == "upstream 503"
+    assert by_id["02_schemas"].length_capped == 0
+
+    # length_capped is always emitted (a stable numeric field); fault only on the faulted rung.
+    card = json.loads(scorecard.write(tmp_path).read_text(encoding="utf-8"))
+    assert card["rungs"] == [
+        {"case_id": "01_scaffold", "status": "done", "attempts": 2, "length_capped": 1},
+        {
+            "case_id": "02_schemas",
+            "status": "faulted",
+            "attempts": 1,
+            "length_capped": 0,
+            "fault": "upstream 503",
+        },
+    ]
 
 
 def test_score_suite_mean_is_none_when_no_model_seconds() -> None:
@@ -141,9 +193,14 @@ def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
         "total_model_seconds": 8.0,
         "mean_tokens_per_second": 50.0,
         "rungs": [
-            {"case_id": "01_scaffold", "status": "done", "attempts": 1},
-            {"case_id": "02_schemas", "status": "done", "attempts": 2},
-            {"case_id": "03_repositories", "status": "exhausted", "attempts": 3},
+            {"case_id": "01_scaffold", "status": "done", "attempts": 1, "length_capped": 0},
+            {"case_id": "02_schemas", "status": "done", "attempts": 2, "length_capped": 0},
+            {
+                "case_id": "03_repositories",
+                "status": "exhausted",
+                "attempts": 3,
+                "length_capped": 0,
+            },
         ],
     }
 
