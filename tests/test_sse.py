@@ -266,6 +266,20 @@ def test_bytes_up_to_the_cap_without_a_delimiter_do_not_error() -> None:
     assert list(decode_sse([at_cap])) == []
 
 
+def test_unterminated_data_block_beyond_the_cap_yields_error_and_stops() -> None:
+    # The other flood shape: a run of ``data:`` lines never closed by a blank line. Each line
+    # drains from the buffer into the pending data block, so a cap watching only the buffer would
+    # let the block grow without bound (OOM) while the buffer stayed tiny. Oracle: the pending
+    # data block counts against _MAX_FRAME_BYTES too, so once it passes the cap the decoder yields
+    # one Error and stops. Falsifying difference: a buffer-only bound yields [] (the data: lines
+    # never dispatch and the stream just ends), a correct bound yields [Error].
+    line = b"data: " + b"x" * 1024 + b"\n"  # ~1 KiB of payload per line; the buffer drains it
+    stream = line * ((_MAX_FRAME_BYTES // 1024) + 8)  # accumulated block passes the cap
+    events = feed(stream, chunk_size=4096)
+    assert len(events) == 1
+    assert isinstance(events[0], Error)
+
+
 def test_many_frames_in_one_chunk_decode_in_order_and_match_one_byte_chunking() -> None:
     # Stress the scan-offset drain: 50 frames in a single chunk must decode in order, and
     # identically to the same bytes fed one byte at a time. A drain that mishandled the scan
