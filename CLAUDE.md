@@ -99,20 +99,3 @@ See [`TECH_DEBT.md`](TECH_DEBT.md) for the tech-debt ledger.
 ## Resource Ownership
 
 See [`RESOURCE_OWNERSHIP.md`](RESOURCE_OWNERSHIP.md) for the single-writer registry.
-
-## Roadmap — to spike later
-
-### Standing model-evaluation benchmark
-
-A reusable instrument for judging how any new or candidate local model performs as an
-implementer under the claude-local loop: a deliberately half-finished project shipped with a
-detailed plan and an orchestrator-owned immutable correctness oracle. Drop a candidate model in,
-drive it through the plan's tasks, and score its output against the oracle — the same instrument
-across every model, so results are directly comparable.
-
-An earlier internal study — a real parser feature with a hidden multi-case oracle, run through a
-deterministic driver across several local models — seeded this idea and confirmed the loop works.
-The work is to generalize it from a one-off study into a standing, repeatable benchmark that
-ships with claude-local.
-
-Status: deferred — the current focus is robust code around the loop engine itself. **To spike.**
