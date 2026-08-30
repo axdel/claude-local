@@ -1,6 +1,8 @@
 # Rung 5 — RBAC: identity resolution and administrator authorization.
 impl_path = "app/security.py"
 context_paths = [
+    "app/schemas.py",
+    "app/repositories/user_repository.py",
     "app/services/auth_service.py",
     "app/dependencies.py",
 ]
