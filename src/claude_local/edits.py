@@ -57,11 +57,14 @@ def extract_file(text: str, *, incomplete: bool = False) -> WholeFileReply | Non
         payload_bytes = payload.encode("utf-8")
     except UnicodeEncodeError:
         return None
-    available_text = str(len(payload_bytes))
-    declared_bytes = count_text.lstrip("0") or "0"
-    available_order = (len(available_text), available_text)
-    declared_order = (len(declared_bytes), declared_bytes)
-    if available_order > declared_order or (available_order < declared_order and not incomplete):
+    # Byte counts compared as normalized decimal strings, never via int() — see D-EDITS-001.
+    available_count_text = str(len(payload_bytes))
+    declared_count_text = count_text.lstrip("0") or "0"
+    available_count_key = (len(available_count_text), available_count_text)
+    declared_count_key = (len(declared_count_text), declared_count_text)
+    overlong = available_count_key > declared_count_key
+    short = available_count_key < declared_count_key
+    if overlong or (short and not incomplete):
         return None
     return WholeFileReply(path, payload_bytes)
 

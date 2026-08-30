@@ -135,6 +135,14 @@ def test_enormous_declared_count_retains_incomplete_payload_without_integer_conv
     )
 
 
+def test_enormous_declared_count_is_rejected_by_default_without_integer_conversion() -> None:
+    # The reject branch (short payload, no incomplete evidence) must also avoid int() — a
+    # 5000-digit count would raise ValueError past CPython's conversion limit (D-EDITS-001).
+    reply = f"FILE: src/claude_local/foo.py\nUTF8-BYTES: {'9' * 5_000}\n\nX"
+
+    assert extract_file(reply) is None
+
+
 @pytest.mark.parametrize(
     "reply",
     [
