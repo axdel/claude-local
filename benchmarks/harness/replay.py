@@ -8,7 +8,7 @@ still exercises its public HTTP, SSE, edit, sandbox, and oracle path.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import httpx
 
@@ -21,6 +21,12 @@ _CHUNK_BASE: dict[str, object] = {
 }
 _REPLAY_COMPLETION_TOKENS = 1
 _REPLAY_PROMPT_TOKENS = 0
+_TARGET_FILE_MARKER = "Target file: "
+"""Prefix of the prompt's target-file line — the per-case dispatch key for a suite replay.
+
+Mirrors the system-message target label ``PromptBuilder`` emits: every request for a case names
+the same target, so dispatching on it routes each request — and each retry — to that case's reply.
+"""
 
 
 def replay_http_client(
@@ -51,6 +57,65 @@ def replay_http_client(
         )
 
     return httpx.Client(transport=httpx.MockTransport(replay_completion))
+
+
+def replay_suite_http_client(
+    sources_by_impl_path: Mapping[str, str],
+    *,
+    request_observer: Callable[[httpx.Request], None] | None = None,
+) -> httpx.Client:
+    """Return one client that replays a whole suite, each request routed to its case's source.
+
+    A single injected client serves every case in a suite run. Each request names its target file
+    in the prompt (``Target file: <impl_path>``); this transport reads that marker and streams the
+    matching source from ``sources_by_impl_path`` as one complete Python file. Dispatch is on the
+    target, not on call order, so a case retried within its attempt budget still routes to the same
+    reply.
+
+    Args:
+        sources_by_impl_path: Implementation-file text to replay, keyed by each case's impl path.
+        request_observer: Optional observer called with the real outgoing request before replay.
+
+    Returns:
+        An injected-lifecycle ``httpx.Client`` backed by a per-case dispatching mock transport.
+
+    Raises:
+        ValueError: a request declared no target file, or named one absent from the source map.
+    """
+    sources = dict(sources_by_impl_path)
+
+    def replay_dispatched(request: httpx.Request) -> httpx.Response:
+        if request_observer is not None:
+            request_observer(request)
+        impl_path = _requested_impl_path(request)
+        try:
+            source = sources[impl_path]
+        except KeyError:
+            raise ValueError(f"no replay source for target file {impl_path!r}") from None
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_completion_stream(source, impl_path),
+        )
+
+    return httpx.Client(transport=httpx.MockTransport(replay_dispatched))
+
+
+def _requested_impl_path(request: httpx.Request) -> str:
+    """Return the target impl path a chat-completion request names in its system message.
+
+    Reads the ``Target file: <impl_path>`` line the prompt places in the system message — the
+    retry-invariant key a suite replay routes on.
+
+    Raises:
+        ValueError: the request carried no target-file line.
+    """
+    system_message = json.loads(request.content)["messages"][0]["content"]
+    for line in system_message.splitlines():
+        target = line.removeprefix(_TARGET_FILE_MARKER)
+        if target != line:
+            return target.strip()
+    raise ValueError("replayed request declared no target file")
 
 
 def _completion_stream(implementation_source: str, impl_path: str) -> bytes:
