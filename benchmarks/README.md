@@ -66,13 +66,13 @@ OpenAI-compatible server with your candidate model resident, then point the benc
 from the repository root:
 
 ```bash
-uv run python -m benchmarks.run --model <model-name> --base-url http://localhost:8080/v1
+uv run python -m benchmarks.run --model <model-name> --base-url http://localhost:8080
 ```
 
 | Flag | Env fallback | Meaning |
 |-|-|-|
 | `--model` | `CLAUDE_LOCAL_MODEL` | Model name the server should serve (required) |
-| `--base-url` | `CLAUDE_LOCAL_BASE_URL` | OpenAI-compatible server base URL (default `http://localhost:8080/v1`) |
+| `--base-url` | `CLAUDE_LOCAL_BASE_URL` | OpenAI-compatible server base URL (default `http://localhost:8080`) |
 | `--out DIR` | — | Also write the scorecard as JSON into `DIR` (created if absent) |
 
 The per-rung table and suite totals print to stderr. The process exits `0` only when every rung

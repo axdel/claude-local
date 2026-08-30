@@ -23,7 +23,7 @@ against it over HTTP; it never downloads or serves a model itself.
 ### Run it
 
 ```bash
-uv run python examples/quicksort/run.py --base-url http://localhost:8080/v1 --model <model-name>
+uv run python examples/quicksort/run.py --base-url http://localhost:8080 --model <model-name>
 ```
 
 Capture just the produced code with a redirect:

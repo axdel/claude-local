@@ -37,7 +37,7 @@ _HERE = Path(__file__).parent
 _BENCHMARK = _HERE / "schedule_manager"
 _CASES = _BENCHMARK / "cases"
 _GOLDEN_APP = _BENCHMARK / "golden" / "app"
-_DEFAULT_BASE_URL = "http://localhost:8080/v1"
+_DEFAULT_BASE_URL = "http://localhost:8080"
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

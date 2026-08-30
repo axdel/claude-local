@@ -39,13 +39,13 @@ is a prerequisite you provide.
 1. **Put a local model under `models/`.** Weights are git-ignored; downloads are explicit and
    user-initiated (see [`models/README.md`](models/README.md)).
 2. **Serve it over an OpenAI-compatible HTTP API** — e.g. mlx-lm, llama.cpp's server, LM Studio,
-   or vLLM. Note its base URL (the example defaults to `http://localhost:8080/v1`) and the model
+   or vLLM. Note its base URL (the example defaults to `http://localhost:8080`) and the model
    name it serves.
 3. **Run the bundled example** — it drives one bounded red→green loop over a quicksort task with
    an immutable multi-case oracle:
 
    ```bash
-   uv run python examples/quicksort/run.py --base-url http://localhost:8080/v1 --model <model-name>
+   uv run python examples/quicksort/run.py --base-url http://localhost:8080 --model <model-name>
    ```
 
    The produced implementation prints to stdout; the outcome and a local-economy line (calls,
@@ -70,7 +70,7 @@ spec = TaskSpec(
     budget=Budget(max_attempts=5, max_tokens=4096, timeout_s=120.0),
     context_files=(ContextFile(path="src/protocol.py", content="<existing neighbor source>"),),
 )
-outcome = implement(spec, base_url="http://localhost:8080/v1", model="<model-name>")
+outcome = implement(spec, base_url="http://localhost:8080", model="<model-name>")
 assert outcome.status is Status.DONE
 print(outcome.code)  # the produced implementation
 print(outcome.record)  # the local half of the economy record
