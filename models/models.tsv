@@ -3,7 +3,9 @@
 # NAME    the directory under models/ holding the weights, and the name every surface uses
 # REPO    HuggingFace MLX repo the weights came from (provenance; nothing here ever pulls)
 # DRAFT   MTP draft repo for speculative decoding, or "-" for none
-# PORT    default server port — distinct per model so several could run side by side
+# PORT    default server port — distinct per model so several could run side by side. 8080 is
+#         deliberately unused: Docker Desktop binds it (http-alt) for as long as it runs, so a row
+#         claiming it fails PortUnavailable on any machine with Docker up.
 # SIZE    upstream weight size in GB (du reports GiB, so it reads ~7% smaller)
 # FLAGS   this model's best-quality serving flags, space-separated, or "-"
 # NOTE    what this one is for, and measured behaviour worth not re-deriving
@@ -14,7 +16,7 @@
 #
 NAME|REPO|DRAFT|PORT|SIZE|FLAGS|NOTE
 Gemma4-26B-A4B|lmstudio-community/gemma-4-26B-A4B-it-MLX-6bit|-|8083|21.8G|--enable-thinking|MoE, ~4B active/token: 61 tok/s decode, 2070 tok/s prefill - 5x the rest on both. Vision + audio, 262K ctx.
-Qwen3.8-27B|lmstudio-community/Qwen3.8-27B-MLX-6bit|lukaskremla/Qwen3.8-27B-MTP-6bit-MLX|8080|22.8G|--enable-thinking|Reasoning + agentic coding flagship. Dense, so 24 tok/s with MTP and 427 tok/s prefill. Vision, 262K ctx. The MTP draft weights are NOT in the store - pull them before relying on speculative decoding.
+Qwen3.8-27B|lmstudio-community/Qwen3.8-27B-MLX-6bit|lukaskremla/Qwen3.8-27B-MTP-6bit-MLX|8089|22.8G|--enable-thinking|Reasoning + agentic coding flagship. Dense, so 24 tok/s with MTP and 427 tok/s prefill. Vision, 262K ctx. The MTP draft weights are NOT in the store - pull them before relying on speculative decoding.
 Qwen3.8-27B-abliterated|ailexleon/Huihui-Qwen3.8-27B-abliterated-mlx-6Bit|-|8081|22.8G|--enable-thinking|Huihui abliteration of the above - refusal directions removed. No MTP draft, so 12 tok/s. Vision, 262K ctx.
 Gemma4-31B|lmstudio-community/gemma-4-31B-it-MLX-6bit|-|8082|26.1G|--enable-thinking --kv-bits 8 --quantized-kv-start 8192|Google dense generalist, the slowest here at 7 tok/s. 140+ languages, strong math. 8-bit KV: fp16 needs 43.8G at 262K and will not fit.
 Qwen3-Coder-30B|lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-6bit|-|8084|24.8G|-|MoE, 3.3B active/token so fast decode like Gemma-MoE. Instruct (no thinking channel). Qwen3-Coder flagship coder, 256K ctx.
