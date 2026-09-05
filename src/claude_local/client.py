@@ -64,11 +64,6 @@ class GenerationResult:
     finish_reason: str | None = None
 
     @property
-    def is_incomplete(self) -> bool:
-        """Whether no terminal finish arrived or the server stopped at its length cap."""
-        return self.finish_reason is None or self.finish_reason == _LENGTH_FINISH_REASON
-
-    @property
     def is_length_capped(self) -> bool:
         """Whether the server stopped this generation at its own token limit."""
         return self.finish_reason == _LENGTH_FINISH_REASON

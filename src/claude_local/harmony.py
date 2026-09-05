@@ -23,7 +23,7 @@ _FINAL_MESSAGE = "<|channel|>final<|message|>"
 """Opens the one channel that is user-facing; ``analysis`` and ``commentary`` are not."""
 
 _TERMINATORS = ("<|return|>", "<|end|>")
-"""Close a harmony message. Grammar, not content — 8-10 bytes that would break a byte count."""
+"""Close a harmony message. Grammar, not content — 8-10 bytes that are never the file."""
 
 
 def assistant_content(text: str) -> str:

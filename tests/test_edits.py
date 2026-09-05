@@ -24,7 +24,21 @@ def load_output(name: str) -> str:
     return (FIXTURES / name).read_bytes().decode("utf-8")
 
 
-# --- extract_file: byte-counted single-file frame ---------------------------------
+# --- extract_file: single-file frame ----------------------------------------------
+
+
+def test_a_frame_carrying_no_byte_count_is_accepted() -> None:
+    """The frame is a path line, a blank line, and the payload to the end of the reply.
+
+    Oracle: the reply-format contract in the rules card, which asks for no count. The requirement
+    it replaced asked the model to declare its payload's exact UTF-8 length, which measured 1 pass
+    in 5 against gpt-oss-20b on a 15-line file and degrades as the payload grows — it gated out an
+    implementation that passed its oracle 7/7. Truncation now surfaces where it is actionable: the
+    short file reaches the immutable oracle, which reports the SyntaxError (D-EDITS-002).
+    """
+    assert extract_file("FILE: src/claude_local/foo.py\n\nVALUE = 1\n") == WholeFileReply(
+        path="src/claude_local/foo.py", payload=b"VALUE = 1\n"
+    )
 
 
 def test_complete_frame_preserves_payload_without_terminal_newline() -> None:
@@ -49,25 +63,45 @@ def test_fixture_payload_preserves_unicode_and_terminal_newline() -> None:
     )
 
 
-def test_short_frame_is_blocked_by_default() -> None:
-    assert extract_file(load_output("truncated_payload.txt")) is None
+def test_a_cut_off_payload_parses_as_a_short_file() -> None:
+    """A truncated reply is a short file, not a parse failure — the oracle is what reports it.
 
-
-def test_explicit_incomplete_mode_retains_the_exact_available_payload() -> None:
+    Oracle: the frame grammar, which declares no length, so nothing in the text distinguishes a
+    complete short file from a cut-off long one. This is the one cost of retiring the byte count,
+    and it lands where the loop is stronger: this payload reaches the immutable oracle as an
+    unterminated expression, and pytest names the line (D-EDITS-002).
+    """
     available_source = "def trunc() -> int:\n    return 1 +"
 
-    assert extract_file(load_output("truncated_payload.txt"), incomplete=True) == WholeFileReply(
+    assert extract_file(load_output("truncated_payload.txt")) == WholeFileReply(
         path="src/claude_local/trunc.py", payload=available_source.encode("utf-8")
     )
 
 
-def test_explicit_incomplete_mode_still_blocks_overlong_payload() -> None:
-    reply = "FILE: src/claude_local/foo.py\nUTF8-BYTES: 0\n\nX"
+def test_trailing_prose_is_absorbed_into_the_payload() -> None:
+    """Commentary after the file is payload, because the frame declares no terminator.
 
-    assert extract_file(reply, incomplete=True) is None
+    Oracle: the frame grammar — the file runs to the end of the reply. D-EDITS-002 keeps rejecting
+    an end-sentinel (source may contain any textual delimiter), so there is nothing to find; the
+    prose becomes a syntax error the oracle reports rather than a silent BLOCKED.
+    """
+    reply = "FILE: src/claude_local/foo.py\n\nVALUE = 1\nThat's the implementation."
+
+    assert extract_file(reply) == WholeFileReply(
+        path="src/claude_local/foo.py", payload=b"VALUE = 1\nThat's the implementation."
+    )
 
 
-def test_utf8_byte_count_preserves_unicode_payload() -> None:
+def test_a_second_frame_is_absorbed_into_the_payload() -> None:
+    """Only the first blank line splits; a second framed record is payload text of the first."""
+    second_frame_as_payload = "FIRST = 1\nFILE: src/claude_local/second.py\n\nSECOND = 2\n"
+
+    assert extract_file(load_output("second_frame.txt")) == WholeFileReply(
+        path="src/claude_local/first.py", payload=second_frame_as_payload.encode("utf-8")
+    )
+
+
+def test_unicode_payload_is_preserved_byte_for_byte() -> None:
     implementation_source = 'GREETING = "héllø 世界"'
 
     assert extract_file(
@@ -86,31 +120,16 @@ def test_extracted_reply_owns_validated_utf8_payload_bytes() -> None:
     assert reply.payload == implementation_source.encode("utf-8")
 
 
-def test_code_point_count_is_rejected_when_utf8_payload_is_overlong() -> None:
-    implementation_source = 'GREETING = "héllø 世界"'
-    reply = (
-        f"FILE: src/claude_local/foo.py\n"
-        f"UTF8-BYTES: {len(implementation_source)}\n\n"
-        f"{implementation_source}"
-    )
-
-    assert extract_file(reply) is None
-
-
-def test_non_ascii_decimal_count_is_rejected() -> None:
-    reply = "FILE: src/claude_local/foo.py\nUTF8-BYTES: \N{ARABIC-INDIC DIGIT ONE}\n\nX"
-
-    assert extract_file(reply) is None
-
-
 @pytest.mark.parametrize(
     "implementation_source",
     [
         pytest.param("", id="empty-source"),
         pytest.param("```python\nVALUE = 1\n```", id="fence-looking-lines"),
-        pytest.param("FILE: inner.py\nUTF8-BYTES: 0\n\n", id="header-looking-lines"),
+        pytest.param("FILE: inner.py\n\nVALUE = 1\n", id="header-looking-lines"),
         pytest.param("VALUE = 1\n", id="one-terminal-newline"),
         pytest.param("VALUE = 1\n\n\n", id="many-terminal-newlines"),
+        pytest.param("\nVALUE = 1\n", id="leading-blank-line"),
+        pytest.param("SECTION_A = 1\n\nSECTION_B = 2\n", id="interior-blank-line"),
     ],
 )
 def test_complete_frame_preserves_arbitrary_payload_text(implementation_source: str) -> None:
@@ -121,70 +140,40 @@ def test_complete_frame_preserves_arbitrary_payload_text(implementation_source: 
     )
 
 
-def test_leading_zero_count_is_valid_decimal() -> None:
-    assert extract_file("FILE: src/claude_local/foo.py\nUTF8-BYTES: 0001\n\nX") == WholeFileReply(
-        path="src/claude_local/foo.py", payload=b"X"
-    )
-
-
-def test_enormous_declared_count_retains_incomplete_payload_without_integer_conversion() -> None:
-    reply = f"FILE: src/claude_local/foo.py\nUTF8-BYTES: {'9' * 5_000}\n\nX"
-
-    assert extract_file(reply, incomplete=True) == WholeFileReply(
-        path="src/claude_local/foo.py", payload=b"X"
-    )
-
-
-def test_enormous_declared_count_is_rejected_by_default_without_integer_conversion() -> None:
-    # The reject branch (short payload, no incomplete evidence) must also avoid int() — a
-    # 5000-digit count would raise ValueError past CPython's conversion limit (D-EDITS-001).
-    reply = f"FILE: src/claude_local/foo.py\nUTF8-BYTES: {'9' * 5_000}\n\nX"
-
-    assert extract_file(reply) is None
-
-
 @pytest.mark.parametrize(
     "reply",
     [
-        pytest.param("XFILE: src/claude_local/foo.py\nUTF8-BYTES: 0\n\n", id="leading-prose"),
-        pytest.param(load_output("second_frame.txt"), id="second-frame-fixture"),
+        pytest.param("XFILE: src/claude_local/foo.py\n\n", id="leading-prose"),
         pytest.param(load_output("no_marker_single_fence.txt"), id="legacy-single-fence"),
         pytest.param(load_output("no_marker_multiple_fences.txt"), id="legacy-multiple-fences"),
         pytest.param(load_output("prose_no_blocks.txt"), id="prose-fixture"),
-        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: 0\n\nX", id="overlong"),
+        pytest.param("FILE: src/claude_local/foo.py", id="missing-separator"),
+        pytest.param("FILE: src/claude_local/foo.py\nVALUE = 1\n", id="single-newline-separator"),
+        pytest.param("src/claude_local/foo.py\n\nX", id="missing-file-header"),
+        pytest.param("FILE: \n\n", id="empty-path"),
+        pytest.param("FILE:    \n\n", id="whitespace-path"),
+        pytest.param("FILE: src/\ud800.py\n\n", id="unencodable-path"),
+        pytest.param("FILE:src/claude_local/foo.py\n\nX", id="file-space"),
         pytest.param(
-            "FILE: src/claude_local/foo.py\nUTF8-BYTES: 1\n\nXtrailing prose",
-            id="trailing-prose",
+            "FILE: src/claude_local/foo.py\nUTF8-BYTES: 9\n\nVALUE = 1",
+            id="retired-byte-count-header",
         ),
-        pytest.param(
-            "FILE: src/claude_local/foo.py\nUTF8-BYTES: 1\n\nX"
-            "FILE: src/claude_local/second.py\nUTF8-BYTES: 1\n\nY",
-            id="second-frame",
-        ),
-        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: 0", id="missing-separator"),
-        pytest.param("UTF8-BYTES: 0\n\n", id="missing-file-header"),
-        pytest.param("FILE: \nUTF8-BYTES: 0\n\n", id="empty-path"),
-        pytest.param("FILE:    \nUTF8-BYTES: 0\n\n", id="whitespace-path"),
-        pytest.param("FILE: src/\ud800.py\nUTF8-BYTES: 0\n\n", id="unencodable-path"),
-        pytest.param("FILE: src/claude_local/foo.py\n\n", id="missing-count-header"),
-        pytest.param("FILE:src/claude_local/foo.py\nUTF8-BYTES: 0\n\n", id="file-space"),
-        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: \n\n", id="empty-count"),
-        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: -1\n\n", id="negative-count"),
-        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: +1\n\nX", id="signed-count"),
-        pytest.param("FILE: src/claude_local/foo.py\nUTF8-BYTES: 1.0\n\nX", id="float-count"),
-        pytest.param(
-            "FILE: src/claude_local/foo.py\nOTHER: x\nUTF8-BYTES: 0\n\n",
-            id="extra-header",
-        ),
-        pytest.param("FILE: src/claude_local/foo.py\r\nUTF8-BYTES: 0\r\n\r\n", id="crlf"),
+        pytest.param("FILE: src/claude_local/foo.py\nOTHER: x\n\n", id="extra-header"),
+        pytest.param("FILE: src/claude_local/foo.py\r\n\r\nX", id="crlf"),
     ],
 )
 def test_invalid_or_ambiguous_reply_is_blocked(reply: str) -> None:
+    """The header is exactly one ``FILE: `` line; anything else is refused before a write.
+
+    ``retired-byte-count-header`` is load-bearing rather than historical: a model that still emits
+    the retired ``UTF8-BYTES`` line — from habit, a cached prefix, or a stale prompt — must be
+    refused, never written with a stray header line silently prepended to its source.
+    """
     assert extract_file(reply) is None
 
 
 def test_unencodable_payload_is_blocked() -> None:
-    assert extract_file("FILE: src/foo.py\nUTF8-BYTES: 3\n\n\ud800") is None
+    assert extract_file("FILE: src/foo.py\n\n\ud800") is None
 
 
 # --- apply_file: containment + persisted state ------------------------------------
@@ -241,7 +230,7 @@ def test_extract_then_apply_round_trips_exact_utf8_bytes(tmp_path: Path) -> None
 
 def test_extract_then_apply_rejects_a_wrong_framed_path_without_write(tmp_path: Path) -> None:
     root, permitted = _permitted_root(tmp_path)
-    reply = extract_file("FILE: src/claude_local/other.py\nUTF8-BYTES: 9\n\nVALUE = 2")
+    reply = extract_file("FILE: src/claude_local/other.py\n\nVALUE = 2")
     assert reply is not None
 
     with pytest.raises(KeepOnlyViolation):

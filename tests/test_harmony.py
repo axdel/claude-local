@@ -26,14 +26,14 @@ _CAPTURED_SHORT_REPLY = (
 
 # The same server driving the bundled quicksort task wrapped its answer in this exact markup.
 # Split provenance, stated because it matters: the channel structure is captured verbatim, while
-# the payload is synthetic with a COMPUTED byte count. Transcribing the real 523-byte payload out
-# of terminal output produced a fixture 16 bytes adrift on the first attempt — a hand-copied
-# byte-counted frame cannot be trusted, which is the same lesson the module itself encodes.
+# the payload is synthetic. Transcribing the real 523-byte payload out of terminal output landed
+# 16 bytes adrift — the same arithmetic slip that later retired the declared byte count from the
+# frame itself (D-EDITS-002), measured here first on a human rather than the model.
 _CODE = "def quicksort(values: list[int]) -> list[int]:\n    return sorted(values)\n"
 _WHOLE_FILE_REPLY_IN_CAPTURED_MARKUP = (
     "<|channel|>analysis<|message|>We need to implement quicksort in src/quicksort.py. "
     "Let's produce the file.<|end|><|start|>assistant<|channel|>final<|message|>"
-    f"FILE: src/quicksort.py\nUTF8-BYTES: {len(_CODE.encode())}\n\n{_CODE}"
+    f"FILE: src/quicksort.py\n\n{_CODE}"
 )
 
 
@@ -49,10 +49,10 @@ def test_the_final_channel_is_returned_without_the_reasoning_that_preceded_it() 
 def test_a_captured_reply_becomes_parseable_as_a_whole_file_frame() -> None:
     """The end-to-end property, on the real capture: markup in, a usable frame out.
 
-    Oracle: `extract_file` requires the two-line header to be the entire text before the blank
-    line (edits.py:45-50). This is the differential form of the bug — the same bytes fail before
-    the channel content is separated and succeed after, so it pins the defect rather than the
-    parser's shape.
+    Oracle: `extract_file` requires a single `FILE: ` line to be the entire text before the blank
+    line, so channel markup ahead of it disqualifies the frame. This is the differential form of
+    the bug — the same bytes fail before the channel content is separated and succeed after, so it
+    pins the defect rather than the parser's shape.
     """
     assert (
         extract_file(_WHOLE_FILE_REPLY_IN_CAPTURED_MARKUP) is None
@@ -68,11 +68,11 @@ def test_a_captured_reply_becomes_parseable_as_a_whole_file_frame() -> None:
 def test_text_without_channel_markup_is_returned_byte_identically() -> None:
     """Every other model in the registry must be untouched by this.
 
-    Oracle: the whole-file frame is a byte-counted contract (D-EDITS-001), so altering even
-    trailing whitespace would break the count for models that never emit channels. Identity is
-    the requirement, not merely "still parses".
+    Oracle: the frame's payload runs to the end of the reply (D-EDITS-002), so trailing whitespace
+    IS the file's last bytes for models that never emit channels — dropping it would silently
+    rewrite their source. Identity is the requirement, not merely "still parses".
     """
-    plain = "FILE: src/thing.py\nUTF8-BYTES: 11\n\nprint(1)\n\n\n"
+    plain = "FILE: src/thing.py\n\nprint(1)\n\n\n"
 
     assert assistant_content(plain) == plain
 
@@ -85,12 +85,7 @@ def test_a_payload_that_merely_mentions_the_markup_is_returned_byte_identically(
     writing a parser for this very format have its file silently replaced by a fragment of
     itself — and, worse, emptied when no final channel follows.
     """
-    payload = (
-        "FILE: src/harmony.py\n"
-        "UTF8-BYTES: 44\n"
-        "\n"
-        'MARKER = "<|channel|>"  # opens a harmony message\n'
-    )
+    payload = 'FILE: src/harmony.py\n\nMARKER = "<|channel|>"  # opens a harmony message\n'
 
     assert assistant_content(payload) == payload
 

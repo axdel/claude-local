@@ -153,7 +153,7 @@ def test_replay_client_emits_schema_complete_streaming_chunks() -> None:
             "choices": [
                 {
                     "index": 0,
-                    "delta": {"content": 'FILE: app/main.py\nUTF8-BYTES: 16\n\nTEXT = "世界"\n'},
+                    "delta": {"content": 'FILE: app/main.py\n\nTEXT = "世界"\n'},
                     "finish_reason": None,
                 }
             ],

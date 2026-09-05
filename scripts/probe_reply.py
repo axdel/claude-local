@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"--- derail_reason: {generation.derail_reason}", file=sys.stderr)
     print(f"--- completion_tokens: {generation.completion_tokens}", file=sys.stderr)
     print(f"--- reply chars: {len(generation.text)}", file=sys.stderr)
-    reply = extract_file(generation.text, incomplete=generation.is_incomplete)
+    reply = extract_file(generation.text)
     print(f"--- extract_file: {'None' if reply is None else reply.path}", file=sys.stderr)
     sys.stdout.write(generation.text)
     return 0

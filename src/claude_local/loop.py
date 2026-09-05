@@ -148,7 +148,7 @@ class Loop:
             if gen.derail_reason is not None:
                 derailed = True
                 break
-            reply = extract_file(gen.text, incomplete=gen.is_incomplete)
+            reply = extract_file(gen.text)
             if reply is None:  # prose with no usable whole-file reply — structurally blocked
                 blocked = True
                 break

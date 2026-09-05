@@ -88,8 +88,8 @@ def test_a_streamed_harmony_transcript_yields_only_the_assistant_message() -> No
     decode all of it.
 
     The fixture also pins the reason this defect was invisible: the server reports a clean
-    `stop`, so `is_incomplete` is False and nothing upstream of here could tell that the reply
-    was unusable.
+    `stop` and never hit its token cap, so every completion signal reads healthy and nothing
+    upstream of here could tell that the reply was unusable.
     """
     client = ModelClient(
         ReplayBackend([load_bytes("harmony_channel_stream.bytes")]), now=ScriptedClock(0.0)
@@ -102,7 +102,7 @@ def test_a_streamed_harmony_transcript_yields_only_the_assistant_message() -> No
 
     assert result.text == "OK"
     assert result.finish_reason == "stop"
-    assert result.is_incomplete is False
+    assert result.is_length_capped is False
     assert result.completion_tokens == 53
     assert result.tokens_estimated is False
 
@@ -111,23 +111,27 @@ def test_a_streamed_harmony_transcript_yields_only_the_assistant_message() -> No
 
 
 @pytest.mark.parametrize(
-    ("finish_reason", "expected_incomplete", "expected_length_capped"),
+    ("finish_reason", "expected_length_capped"),
     [
-        pytest.param(None, True, False, id="no-finish"),
-        pytest.param("length", True, True, id="length-cap"),
-        pytest.param("stop", False, False, id="clean-stop"),
-        pytest.param("tool_calls", False, False, id="other-terminal-reason"),
-        pytest.param([], False, False, id="unhashable-defense-in-depth"),
+        pytest.param(None, False, id="no-finish"),
+        pytest.param("length", True, id="length-cap"),
+        pytest.param("stop", False, id="clean-stop"),
+        pytest.param("tool_calls", False, id="other-terminal-reason"),
+        pytest.param([], False, id="unhashable-defense-in-depth"),
     ],
 )
-def test_generation_result_owns_completion_semantics_without_hashing(
+def test_generation_result_owns_length_cap_semantics_without_hashing(
     finish_reason: object,
-    expected_incomplete: bool,
     expected_length_capped: bool,
 ) -> None:
+    """Only an exact ``"length"`` is the server's own token cap; every other reason is not.
+
+    Oracle: the OpenAI chat-completions ``finish_reason`` vocabulary — ``length`` alone means the
+    server truncated at its cap. The unhashable case is defense in depth: the comparison must stay
+    an ``==`` against one string, never a ``in {...}`` membership test that would raise on a list.
+    """
     generation = build_generation_result(finish_reason=finish_reason)
 
-    assert generation.is_incomplete is expected_incomplete
     assert generation.is_length_capped is expected_length_capped
 
 

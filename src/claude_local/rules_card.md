@@ -5,18 +5,17 @@ file. Your only job: write the complete implementation file so that every test p
 
 ## Output format — follow exactly
 
-Return the ENTIRE implementation file as exactly one byte-counted frame:
+Return the ENTIRE implementation file as exactly one frame:
 
 FILE: <the relative implementation path named in the task>
-UTF8-BYTES: <the exact number of UTF-8 bytes in the complete file>
 
 <the complete raw file content begins here>
 
 Rules for the frame:
 - Begin the reply with `FILE: ` at byte zero; use the task's exact relative implementation path.
-- On line two, write `UTF8-BYTES: ` followed by ASCII decimal digits for the payload byte count.
-- After line two, write exactly one blank line, then the raw complete file from first byte to last.
-- Count only the raw file payload after the blank line, including every terminal `\n` byte.
+- That one line is the whole header. Write no second header line and no byte count.
+- After it, write exactly one blank line, then the raw complete file from first byte to last.
+- The file runs to the very end of your reply. Stop when the file stops.
 - Add no Markdown transport fence, prose, explanation, commentary, quotes, or trailing bytes.
 - Preserve fence-looking or `FILE:` lines when they are part of the implementation source.
 - Emit exactly one frame: no second file, diff, "unchanged" placeholder, or ellipsis (`...`).

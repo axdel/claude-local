@@ -122,12 +122,8 @@ def _requested_impl_path(request: httpx.Request) -> str:
 
 
 def _completion_stream(implementation_source: str, impl_path: str) -> bytes:
-    """Encode one byte-counted completion with role, content, finish, usage, and terminator."""
-    file_reply = (
-        f"FILE: {impl_path}\n"
-        f"UTF8-BYTES: {len(implementation_source.encode('utf-8'))}\n\n"
-        f"{implementation_source}"
-    )
+    """Encode one framed completion with role, content, finish, usage, and terminator."""
+    file_reply = f"FILE: {impl_path}\n\n{implementation_source}"
     frames = (
         {
             **_CHUNK_BASE,
