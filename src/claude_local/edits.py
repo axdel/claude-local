@@ -1,10 +1,17 @@
 """Whole-file extraction and containment writes.
 
-``extract_file`` accepts one strict ``FILE`` frame — a path line, a blank line, then the payload
+``extract_file`` accepts one ``FILE`` frame — a path line, an optional blank line, then the payload
 to the end of the reply — and preserves those bytes without newline normalization. The single
 markdown construct it interprets is a fence wrapping the payload end to end, which is transport
 rather than source and is removed (D-EDITS-003). ``apply_file`` retains the loop's keep-only
 boundary through ``paths.resolve_within``.
+
+Both of those tolerances were bought by measurement, and both trade the same way. A model emits a
+fence and skips the blank line whatever the card asks, and a parser that refuses either produces
+BLOCKED — the one terminal outcome carrying no diagnosis, so the attempt is spent and the feedback
+tail has nothing to work from. Accepting the reply instead sends whatever is wrong with it to the
+immutable oracle, which names the line. Strictness that turns a repairable failure into a silent
+one is worth less than the malformed replies it catches (D-EDITS-003, D-EDITS-004).
 
 The frame carried a declared ``UTF8-BYTES`` count until it was measured against a real model:
 gpt-oss-20b passed 1 run in 5 on a 15-line file, missing by 16, 10, and 100 bytes, and the failure
@@ -29,7 +36,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _FILE_PREFIX = "FILE: "
-_HEADER_SEPARATOR = "\n\n"
+_LINE_BREAK = "\n"
+_CARRIAGE_RETURN = "\r"
 _FENCE = "```"
 
 
@@ -44,9 +52,11 @@ class WholeFileReply:
 def extract_file(text: str) -> WholeFileReply | None:
     """Parse one whole-file frame: a single path line, a blank line, then the payload.
 
-    The header must be exactly one ``FILE: `` line, so a reply that adds a second header line, a
-    leading word, or a second frame ahead of the first is refused rather than half-read. Everything
-    after the blank line is the file, byte for byte, with no delimiter to find at the end — source
+    The header is the first line, and a leading word or a missing ``FILE: `` prefix refuses the
+    reply rather than half-reading it. The blank line the rules card asks for is consumed when
+    present but never required: models write the file on the very next line, and refusing that
+    costs a whole attempt while the header ends where the line ends either way (D-EDITS-004).
+    Everything after it is the file, byte for byte, with no delimiter to find at the end — source
     may contain any textual terminator, which is why D-EDITS-002 keeps rejecting one. The one
     exception is a fence wrapping the payload end to end, which ``_unwrap_fence`` removes.
 
@@ -56,15 +66,15 @@ def extract_file(text: str) -> WholeFileReply | None:
     Returns:
         The framed whole-file reply, or ``None`` when the reply is not one well-formed frame.
     """
-    header, separator, payload = text.partition(_HEADER_SEPARATOR)
-    if not separator or "\n" in header or not header.startswith(_FILE_PREFIX):
+    header, separator, payload = text.partition(_LINE_BREAK)
+    if not separator or _CARRIAGE_RETURN in header or not header.startswith(_FILE_PREFIX):
         return None
     path = header.removeprefix(_FILE_PREFIX)
     if not path.strip():
         return None
     try:
         path.encode("utf-8")
-        payload_bytes = _unwrap_fence(payload).encode("utf-8")
+        payload_bytes = _unwrap_fence(payload.removeprefix(_LINE_BREAK)).encode("utf-8")
     except UnicodeEncodeError:
         return None
     return WholeFileReply(path, payload_bytes)

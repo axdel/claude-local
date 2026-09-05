@@ -212,28 +212,75 @@ def test_an_unbalanced_fence_is_left_in_the_file(payload: str) -> None:
         pytest.param(load_output("no_marker_multiple_fences.txt"), id="legacy-multiple-fences"),
         pytest.param(load_output("prose_no_blocks.txt"), id="prose-fixture"),
         pytest.param("FILE: src/claude_local/foo.py", id="missing-separator"),
-        pytest.param("FILE: src/claude_local/foo.py\nVALUE = 1\n", id="single-newline-separator"),
         pytest.param("src/claude_local/foo.py\n\nX", id="missing-file-header"),
         pytest.param("FILE: \n\n", id="empty-path"),
         pytest.param("FILE:    \n\n", id="whitespace-path"),
         pytest.param("FILE: src/\ud800.py\n\n", id="unencodable-path"),
         pytest.param("FILE:src/claude_local/foo.py\n\nX", id="file-space"),
-        pytest.param(
-            "FILE: src/claude_local/foo.py\nUTF8-BYTES: 9\n\nVALUE = 1",
-            id="retired-byte-count-header",
-        ),
-        pytest.param("FILE: src/claude_local/foo.py\nOTHER: x\n\n", id="extra-header"),
         pytest.param("FILE: src/claude_local/foo.py\r\n\r\nX", id="crlf"),
     ],
 )
 def test_invalid_or_ambiguous_reply_is_blocked(reply: str) -> None:
-    """The header is exactly one ``FILE: `` line; anything else is refused before a write.
+    """The header is one ``FILE: `` line naming a usable path; anything else is refused.
 
-    ``retired-byte-count-header`` is load-bearing rather than historical: a model that still emits
-    the retired ``UTF8-BYTES`` line — from habit, a cached prefix, or a stale prompt — must be
-    refused, never written with a stray header line silently prepended to its source.
+    ``crlf`` stays refused rather than trimmed: the header runs to the first newline, so under CRLF
+    the path would carry a trailing carriage return and name a different file than the model meant.
     """
     assert extract_file(reply) is None
+
+
+def test_the_blank_line_after_the_header_is_optional() -> None:
+    """A reply that starts the file on the very next line yields the same file as a spaced one.
+
+    Oracle: measured against a real model. Qwen3-Coder-Next-4bit writes the header and then the
+    file with no blank line between, and the ladder scored BLOCKED on cases 01, 02, and 04 for that
+    alone — all three with ``length_capped: 0``, so the replies were complete and the parser, not
+    the model, refused them. BLOCKED is the worst terminal outcome the loop has: it burns the
+    attempt and leaves the feedback tail with nothing to repair from, while the same model scored
+    13/13 on case 06. The blank line is a convention of the rules card, not information — the
+    header ends where the line ends either way.
+    """
+    spaced = "FILE: src/claude_local/foo.py\n\nVALUE = 1\n"
+    tight = "FILE: src/claude_local/foo.py\nVALUE = 1\n"
+
+    assert extract_file(tight) == extract_file(spaced)
+    assert extract_file(tight) == WholeFileReply(
+        path="src/claude_local/foo.py", payload=b"VALUE = 1\n"
+    )
+
+
+def test_only_one_blank_line_is_separator_and_the_rest_is_the_file() -> None:
+    """A second blank line belongs to the source, so a file may legitimately start blank."""
+    reply = extract_file("FILE: src/claude_local/foo.py\n\n\nVALUE = 1\n")
+
+    assert reply is not None
+    assert reply.payload == b"\nVALUE = 1\n"
+
+
+@pytest.mark.parametrize(
+    "stray_line",
+    [
+        pytest.param("UTF8-BYTES: 9", id="retired-byte-count-header"),
+        pytest.param("OTHER: x", id="extra-header"),
+    ],
+)
+def test_a_stray_header_line_reaches_the_oracle_instead_of_blocking(stray_line: str) -> None:
+    """A second header-shaped line is source now, so the oracle names it and the model repairs it.
+
+    This replaces the guarantee that such a reply is refused at the parser. Nothing structural
+    separates ``FILE: p`` + ``UTF8-BYTES: 9`` from ``FILE: p`` + a line of code — telling them
+    apart means guessing whether line two is a header, which is the delimiter ambiguity the
+    whole-file frame exists to avoid. So the choice is which failure to take, and D-EDITS-002
+    already settled it: a refused reply produces a silent BLOCKED with nothing to repair from,
+    while a written one produces a ``SyntaxError`` naming the exact line. The strictness defended
+    a line no model has been observed emitting — the card forbids it and D-EDITS-002 retired it —
+    against a shape a real model sends on 3 of 7 cases.
+    """
+    reply = extract_file(f"FILE: src/claude_local/foo.py\n{stray_line}\n\nVALUE = 1")
+
+    assert reply is not None
+    assert reply.path == "src/claude_local/foo.py"
+    assert reply.payload.decode("utf-8").startswith(stray_line)
 
 
 def test_unencodable_payload_is_blocked() -> None:
