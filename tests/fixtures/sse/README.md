@@ -4,13 +4,14 @@ Raw Server-Sent-Events byte samples for the streaming chat-completions decoder
 (`claude_local.sse.decode_sse`). Each `*.bytes` file is one wire stream, stored
 verbatim as the decoder receives it.
 
-## Source (schema-derived, not hand-invented)
+## Source — two tiers, each labelled per file
 
-These fixtures are **schema-derived** from the published OpenAI-compatible
-streaming Chat Completions SSE format — the contract every target server
-(`mlx_lm.server`, llama.cpp, LM Studio, vLLM) implements. They are NOT authored
-from a mental model of the wire; the shape of every frame was verified on
-2026-08-27 against:
+`harmony_channel_stream.bytes` is a **real capture** (highest trust) — see its
+entry under Files. Every other fixture is **schema-derived** from the published
+OpenAI-compatible streaming Chat Completions SSE format, the contract every
+target server (`mlx_lm.server`, llama.cpp, LM Studio, vLLM) implements. The
+derived ones are NOT authored from a mental model of the wire; the shape of every
+frame was verified on 2026-08-27 against:
 
 - OpenAI API Reference — Chat Completions streaming events
   (https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events)
@@ -18,10 +19,25 @@ from a mental model of the wire; the shape of every frame was verified on
   (https://developers.openai.com/cookbook/examples/how_to_stream_completions)
 - mlx-lm HTTP server (ml-explore/mlx-lm) — OpenAI-compatible `/v1/chat/completions`
 
-A real captured session is unavailable here by design (no model is downloaded in
-this environment), so the published provider schema is the trust anchor — the
-"High trust" tier of boundary-fixture fidelity. When a real capture becomes
-available it should replace these, verbatim.
+Until 2026-09-05 no model was downloaded here, so the published schema was the
+only available anchor. That is no longer true, and the standing rule is unchanged:
+**a real capture replaces a derived fixture whenever one becomes available.**
+Record one with the committed script, never by hand — the request body then comes
+from `HttpxBackend.generate` itself, so the fixture cannot drift from the request
+the loop actually sends:
+
+```
+scripts/capture_sse_fixture.py <model> <destination.bytes> --user "<prompt>"
+```
+
+### The one normalization a capture makes
+
+The script replaces the served model id with the catalog name, and changes nothing
+else. Models are named by absolute store path so a repo id can never fall through
+to `snapshot_download`, so every chunk would otherwise echo the capturing machine's
+home directory — one copy per token. `decode_sse` reads `choices`, `delta.content`,
+`finish_reason`, and `usage`; it never reads `model`, so frame boundaries, delta
+granularity, marker placement, and the usage trailer are preserved exactly.
 
 ## The closed variant set covered
 
@@ -49,6 +65,22 @@ available it should replace these, verbatim.
 - `aborted_midstream.bytes` — role, two complete deltas, then a final frame **cut off
   mid-JSON** with no terminating blank line — the network-truncation case. The decoder
   must yield the two deltas and NO phantom terminator.
+- `harmony_channel_stream.bytes` — **a real capture**, recorded 2026-09-05 from
+  `mlx_vlm.server` serving `gpt-oss-20b` (system `"You are a terse assistant."`,
+  user `"Reply with exactly: OK"`). 52 content deltas, `finish_reason:"stop"`,
+  `usage.completion_tokens=53`. The server returns the model's whole harmony
+  transcript as `content` instead of the assistant's message, which is what
+  `claude_local.harmony` exists to undo (ml-explore/mlx-lm#875). Three facts this
+  capture establishes that no derived fixture could:
+  - The **streaming** path leaks the transcript exactly as the non-streaming one
+    does — the seam being fixed is on the path the loop actually consumes.
+  - `<|channel|>`, `<|message|>`, `<|end|>`, `<|start|>` are single tokens in this
+    model's vocabulary, so each arrives as its own complete delta and never
+    straddles a boundary. Convenient, and the opposite of the safe assumption —
+    the client joins before parsing regardless, so it does not depend on this.
+  - The server calls it a clean `stop` while returning an unusable reply. Nothing
+    upstream of the client has any signal that the generation failed, which is why
+    the loop reported BLOCKED with a correct answer in hand.
 - `invalid_finish_reason_array.bytes` / `invalid_finish_reason_object.bytes` — schema-invalid
   non-null, non-string finish reasons paired with valid-looking implementation content and a
   later valid choice. The decoder must emit `Error` and stop the frame before any `Finish`.

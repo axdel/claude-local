@@ -48,6 +48,11 @@ bench = [
 # whole registry, and its native prefix caching is what the stable-prefix invariant rides on.
 serve = [
     "mlx-vlm>=0.6.15",
+    # transformers renders a model's chat_template.jinja through jinja2 but declares it only as
+    # an extra, so mlx-vlm installs without it and every chat completion 500s on the first
+    # request with "apply_chat_template requires jinja2" — after the weights have loaded, so the
+    # server looks healthy and readiness passes. Serving a chat model requires it; pin it here.
+    "jinja2>=3.1",
 ]
 dev = [
     "pytest>=8.0",
@@ -134,5 +139,5 @@ layers = [
     "telemetry",
     "client | prompt | snapshot",
     "backend | derail | edits | model_server | runner",
-    "model_registry | paths | sandbox | sse | types",
+    "harmony | model_registry | paths | sandbox | sse | types",
 ]

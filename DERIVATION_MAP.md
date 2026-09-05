@@ -10,5 +10,6 @@
 | Scorecard | per-case run outcomes: each case's terminal status and local economy record | the CaseResult list from run_cases | score_cases() reduces the results; Scorecard.write() serializes JSON | active |  |
 | TestScore | pytest JUnit-XML report | the attempt's test run | TestRunner.run() parses the XML | active |  |
 | benchmark-expected-tests | benchmark-case oracle source | module-level test_* declarations | BenchmarkCase.from_fixtures parses the oracle AST | active |  |
+| harmony_channel_stream.bytes | the running mlx_vlm server's wire format | one live streaming chat-completions response, recorded verbatim | scripts/capture_sse_fixture.py gpt-oss-20b tests/fixtures/sse/harmony_channel_stream.bytes --user 'Reply with exactly: OK' — re-record when mlx_vlm changes its wire format; a fresh capture is equivalent, not byte-identical (sampling varies), and the script's one substitution is the model id | active |  |
 | stable-prefix | src/claude_local/rules_card.md + TaskSpec | rules card + TaskSpec | PromptBuilder.stable_prefix(spec), assembled in-process | active |  |
 | uv.lock | pyproject.toml | project and dependency-group requirements | uv lock | active |  |

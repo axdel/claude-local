@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from claude_local.derail import CHARS_PER_TOKEN, DerailGuard
+from claude_local.harmony import assistant_content
 from claude_local.sse import Delta, Error, Finish, Usage, decode_sse
 
 _LENGTH_FINISH_REASON = "length"
@@ -140,7 +141,10 @@ class ModelClient:
             completion_tokens = server_tokens
             estimated = False
         return GenerationResult(
-            text="".join(parts),
+            # A server that leaks the model's channel transcript instead of its user-facing
+            # message is normalized here, at the one place the reply text is assembled. Text from
+            # a server that behaves passes through byte-identically.
+            text=assistant_content("".join(parts)),
             completion_tokens=completion_tokens,
             tokens_estimated=estimated,
             seconds=seconds,

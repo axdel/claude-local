@@ -74,6 +74,39 @@ def test_clean_stream_reports_server_usage_and_full_text() -> None:
     )
 
 
+# --- A leaked channel transcript is normalized at this seam -----------------------
+
+
+def test_a_streamed_harmony_transcript_yields_only_the_assistant_message() -> None:
+    """The captured wire, end to end: transcript in over SSE, assistant content out.
+
+    `harmony_channel_stream.bytes` is a real recorded session, so this is the seam test the
+    `harmony` unit tests cannot be: they call the function directly and would all stay green if
+    the call were deleted from `generate`. Oracle for the text is OpenAI's published harmony
+    grammar — the answer is the `final` channel's content — and for the count, the server's own
+    `usage.completion_tokens=53`, which meters the whole transcript because the model really did
+    decode all of it.
+
+    The fixture also pins the reason this defect was invisible: the server reports a clean
+    `stop`, so `is_incomplete` is False and nothing upstream of here could tell that the reply
+    was unusable.
+    """
+    client = ModelClient(
+        ReplayBackend([load_bytes("harmony_channel_stream.bytes")]), now=ScriptedClock(0.0)
+    )
+
+    # The exact prompt the capture was recorded with (see the fixtures README).
+    result = client.generate(
+        "You are a terse assistant.", "Reply with exactly: OK", build_budget()
+    )
+
+    assert result.text == "OK"
+    assert result.finish_reason == "stop"
+    assert result.is_incomplete is False
+    assert result.completion_tokens == 53
+    assert result.tokens_estimated is False
+
+
 # --- Finish frame: the server's own terminal reason -------------------------------
 
 

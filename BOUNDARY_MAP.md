@@ -12,6 +12,7 @@
 | claude_local | benchmarks | must-not-import | Reusable loop never depends on benchmark subjects or harness code. | active |  |
 | client | backend | may-import | Streams raw SSE bytes from the transport. | active |  |
 | client | derail | may-import | Watches decode for repetition/cap/timeout. | active |  |
+| client | harmony | may-import | Normalizes a leaked channel-transcript at the one place reply text is assembled. | active |  |
 | client | sse | may-import | Decodes raw bytes via the shared decoder. | active |  |
 | client | types | may-import | Consumes Budget and value objects. | active |  |
 | derail | types | may-import | Guard consumes Budget. | active |  |
