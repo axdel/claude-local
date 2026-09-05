@@ -1,0 +1,140 @@
+"""The curated catalog of servable models, resolved against the store on disk.
+
+Two concepts meet here and must not be conflated. The **model registry** is the curated,
+version-controlled catalog: one row per model that *may* be served, naming its upstream repo,
+the port it serves on, its best-quality serving flags, and any speculative-decoding draft
+model. The **model store** is the machine-local directory of weights actually pulled. A row is
+a claim about what is available upstream; only the store proves what is on disk, so the two
+failures stay distinct — an uncatalogued name and an unpulled model call for different fixes.
+
+The catalog is the single source for a model's serving configuration. It is committed, so a
+new model becomes servable by adding one row and pulling its weights, with no code change.
+
+A leaf: imports nothing from the package, so every consumer can depend inward on it.
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
+
+_STORE_ROOT_ENV = "CLAUDE_LOCAL_MODELS"
+"""Overrides the store location — the weights live outside any one git worktree."""
+
+_HEADER_FIELD = "NAME"
+"""First field of the column-header row, which carries no model."""
+
+_ABSENT = "-"
+"""A column with nothing to declare: no draft model, no extra serving flags."""
+
+_FIELDS_PER_ROW = 7
+"""NAME|REPO|DRAFT|PORT|SIZE|FLAGS|NOTE — a short row would silently mis-assign columns."""
+
+
+class UnknownModel(Exception):
+    """The requested name is absent from the catalog, so nothing can serve it."""
+
+
+class ModelNotPresent(Exception):
+    """The catalog names the model, but its weights are not in the store."""
+
+
+class MalformedRegistry(Exception):
+    """A catalog row does not match the declared column format."""
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedModel:
+    """One catalog row, resolved to a concrete location on this machine.
+
+    Carries only what a consumer acts on. The catalog's human-facing columns (on-disk size,
+    the note explaining what a model is for) stay in the file rather than riding along here.
+    """
+
+    name: str
+    repo: str
+    draft_repo: str | None
+    port: int
+    flags: tuple[str, ...]
+    path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ModelRegistry:
+    """The catalog paired with the store its rows resolve against.
+
+    Both locations are injected so a test can resolve against a fixture catalog and a scratch
+    store; ``default`` supplies the real pair.
+    """
+
+    registry_path: Path
+    store_root: Path
+
+    @classmethod
+    def default(cls) -> ModelRegistry:
+        """The committed catalog, resolved against this machine's store.
+
+        The catalog is repo-relative and therefore present in every worktree. The store is not:
+        weights live in one place outside any worktree, so ``CLAUDE_LOCAL_MODELS`` overrides it
+        and the repo-relative directory is only the fallback.
+        """
+        repo_root = Path(__file__).resolve().parents[2]
+        override = os.environ.get(_STORE_ROOT_ENV, "").strip()
+        return cls(
+            registry_path=repo_root / "models" / "models.tsv",
+            store_root=Path(override) if override else repo_root / "models",
+        )
+
+    def names(self) -> tuple[str, ...]:
+        """Every catalogued model name, in the order the catalog declares them."""
+        return tuple(row[0] for row in self._rows())
+
+    def resolve(self, name: str) -> ResolvedModel:
+        """Resolve a catalogued name to everything needed to serve it.
+
+        Args:
+            name: A model name from the catalog's NAME column.
+
+        Returns:
+            The row's serving configuration, with ``path`` pointing into the store.
+
+        Raises:
+            UnknownModel: no catalog row declares this name.
+            ModelNotPresent: the row exists but the weights were never pulled.
+            MalformedRegistry: a catalog row does not match the column format.
+        """
+        for row in self._rows():
+            if row[0] != name:
+                continue
+            path = self.store_root / name
+            if not path.is_dir():
+                raise ModelNotPresent(
+                    f"{name} is catalogued but absent from the store at {path} — pull it first"
+                )
+            return ResolvedModel(
+                name=name,
+                repo=row[1],
+                draft_repo=None if row[2] == _ABSENT else row[2],
+                port=int(row[3]),
+                flags=() if row[5] == _ABSENT else tuple(row[5].split()),
+                path=path,
+            )
+        raise UnknownModel(f"no catalog row for {name!r}; available: {', '.join(self.names())}")
+
+    def _rows(self) -> Iterator[tuple[str, ...]]:
+        """Yield each model row, skipping comments, blanks, and the column header."""
+        for number, line in enumerate(self.registry_path.read_text().splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            fields = tuple(field.strip() for field in stripped.split("|"))
+            if fields[0] == _HEADER_FIELD:
+                continue
+            if len(fields) != _FIELDS_PER_ROW:
+                raise MalformedRegistry(
+                    f"{self.registry_path}:{number} has {len(fields)} fields, "
+                    f"expected {_FIELDS_PER_ROW}"
+                )
+            yield fields

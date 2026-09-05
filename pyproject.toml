@@ -122,5 +122,5 @@ layers = [
     "telemetry",
     "client | prompt | snapshot",
     "backend | derail | edits | runner",
-    "paths | sandbox | sse | types",
+    "model_registry | paths | sandbox | sse | types",
 ]
