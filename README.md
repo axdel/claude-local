@@ -109,7 +109,11 @@ Three deliberate choices make weak models usable:
 
 - **Whole-file edits, not diffs.** The model returns the entire file; the loop writes it. Weak
   models reliably fail search/replace diff matching — so we never ask them to. With no edit-call
-  protocol, the single failure mode that kills weak models inside agents simply cannot occur.
+  protocol, the single failure mode that kills weak models inside agents simply cannot occur. The
+  one thing the loop does *not* take literally is a markdown fence wrapping the payload end to
+  end: models emit one whatever the prompt asks, and written through it makes the file uncompilable,
+  so a scorecard would grade the wrapper instead of the model. Both ends are required, so a fence
+  belonging to the source survives untouched.
 - **The orchestrator owns every test.** The local model never sees a writable test file — it
   *cannot* weaken the oracle, because it never touches it. Test immutability is enforced by the
   loop (it writes only the impl path), not requested politely.

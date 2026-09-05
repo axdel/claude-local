@@ -124,7 +124,10 @@ def test_extracted_reply_owns_validated_utf8_payload_bytes() -> None:
     "implementation_source",
     [
         pytest.param("", id="empty-source"),
-        pytest.param("```python\nVALUE = 1\n```", id="fence-looking-lines"),
+        # A payload wrapped END TO END in a fence is transport, not source, and is unwrapped
+        # instead — see the fenced-reply tests below. What stays preserved is every fence that is
+        # genuinely part of the file: an inner one, and an unbalanced one.
+        pytest.param("VALUE = 1\n```\nstill source\n", id="unbalanced-inner-fence"),
         pytest.param("FILE: inner.py\n\nVALUE = 1\n", id="header-looking-lines"),
         pytest.param("VALUE = 1\n", id="one-terminal-newline"),
         pytest.param("VALUE = 1\n\n\n", id="many-terminal-newlines"),
@@ -138,6 +141,67 @@ def test_complete_frame_preserves_arbitrary_payload_text(implementation_source: 
     ) == WholeFileReply(
         path="src/claude_local/foo.py", payload=implementation_source.encode("utf-8")
     )
+
+
+def test_a_fence_wrapping_the_whole_payload_is_unwrapped() -> None:
+    """A reply fenced end to end yields the file the fence contains, not the fence.
+
+    Oracle: measured against a real model. Qwen3-Coder-30B wraps its whole-file reply in a
+    ```python fence on every attempt; taken byte for byte that payload does not compile
+    (``SyntaxError`` at line 1), so the oracle collects nothing and the case scores 0/N however
+    good the code inside is. All seven benchmark cases scored zero on their first attempt for
+    exactly this reason. A fence is transport — the same class of artifact as a run fact in the
+    feedback tail — and a benchmark that scores it is measuring the wrapper, not the model.
+    """
+    fenced = build_whole_file_reply("src/claude_local/foo.py", "```python\nVALUE = 1\n```")
+
+    assert extract_file(fenced) == WholeFileReply(
+        path="src/claude_local/foo.py", payload=b"VALUE = 1\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        pytest.param("```\nVALUE = 1\n```", b"VALUE = 1\n", id="no-language-tag"),
+        pytest.param("```py\nVALUE = 1\n```\n\n", b"VALUE = 1\n", id="trailing-blank-lines"),
+        pytest.param("```python\nA = 1\n\nB = 2\n```", b"A = 1\n\nB = 2\n", id="interior-blank"),
+        pytest.param("```python\n```", b"", id="empty-body"),
+        pytest.param(
+            '```python\nDOC = """\n```py\ninner\n```\n"""\n```',
+            b'DOC = """\n```py\ninner\n```\n"""\n',
+            id="inner-fence-survives-the-outer-unwrap",
+        ),
+    ],
+)
+def test_fence_unwrapping_keeps_the_file_between_the_fences(payload: str, expected: bytes) -> None:
+    """Only the outermost balanced pair is transport; everything between it is the file."""
+    reply = extract_file(build_whole_file_reply("src/claude_local/foo.py", payload))
+
+    assert reply is not None
+    assert reply.payload == expected
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param("```python\nVALUE = 1", id="opener-with-no-closer"),
+        pytest.param("VALUE = 1\n```", id="closer-with-no-opener"),
+        pytest.param("    ```python\nVALUE = 1\n    ```", id="indented-so-inside-a-block"),
+        pytest.param("```python\nVALUE = 1\n``` trailing", id="closer-is-not-alone-on-its-line"),
+    ],
+)
+def test_an_unbalanced_fence_is_left_in_the_file(payload: str) -> None:
+    """Unwrapping needs BOTH ends, so a fence that is part of the source is never eaten.
+
+    The rules card promises to preserve fence-looking lines that belong to the implementation, and
+    only a wrap of the entire payload can be read as transport with any confidence. Half a fence is
+    ambiguous, and the safe reading of an ambiguous payload is the literal one.
+    """
+    reply = extract_file(build_whole_file_reply("src/claude_local/foo.py", payload))
+
+    assert reply is not None
+    assert reply.payload == payload.encode("utf-8")
 
 
 @pytest.mark.parametrize(

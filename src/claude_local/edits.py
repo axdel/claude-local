@@ -1,9 +1,10 @@
 """Whole-file extraction and containment writes.
 
 ``extract_file`` accepts one strict ``FILE`` frame — a path line, a blank line, then the payload
-to the end of the reply — and preserves those bytes without markdown interpretation or newline
-normalization. ``apply_file`` retains the loop's keep-only boundary through
-``paths.resolve_within``.
+to the end of the reply — and preserves those bytes without newline normalization. The single
+markdown construct it interprets is a fence wrapping the payload end to end, which is transport
+rather than source and is removed (D-EDITS-003). ``apply_file`` retains the loop's keep-only
+boundary through ``paths.resolve_within``.
 
 The frame carried a declared ``UTF8-BYTES`` count until it was measured against a real model:
 gpt-oss-20b passed 1 run in 5 on a 15-line file, missing by 16, 10, and 100 bytes, and the failure
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 
 _FILE_PREFIX = "FILE: "
 _HEADER_SEPARATOR = "\n\n"
+_FENCE = "```"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +47,8 @@ def extract_file(text: str) -> WholeFileReply | None:
     The header must be exactly one ``FILE: `` line, so a reply that adds a second header line, a
     leading word, or a second frame ahead of the first is refused rather than half-read. Everything
     after the blank line is the file, byte for byte, with no delimiter to find at the end — source
-    may contain any textual terminator, which is why D-EDITS-002 keeps rejecting one.
+    may contain any textual terminator, which is why D-EDITS-002 keeps rejecting one. The one
+    exception is a fence wrapping the payload end to end, which ``_unwrap_fence`` removes.
 
     Args:
         text: The complete decoded model reply available to the caller.
@@ -61,10 +64,44 @@ def extract_file(text: str) -> WholeFileReply | None:
         return None
     try:
         path.encode("utf-8")
-        payload_bytes = payload.encode("utf-8")
+        payload_bytes = _unwrap_fence(payload).encode("utf-8")
     except UnicodeEncodeError:
         return None
     return WholeFileReply(path, payload_bytes)
+
+
+def _is_fence_opener(line: str) -> bool:
+    """Whether ``line`` is a lone fence opener — the marker plus at most an info string.
+
+    Leading whitespace disqualifies it: an indented fence sits inside a block of the file, where a
+    transport wrapper never does.
+    """
+    trailing_trimmed = line.rstrip()
+    return trailing_trimmed.startswith(_FENCE) and _FENCE not in trailing_trimmed[len(_FENCE) :]
+
+
+def _unwrap_fence(payload: str) -> str:
+    """Drop a markdown fence that wraps the WHOLE payload; leave every other fence in place.
+
+    Models reliably wrap code in a fence whatever the prompt asks — Qwen3-Coder-30B does it on
+    every attempt. Written through byte for byte, that payload is not the file the model meant: it
+    does not compile, so the oracle collects nothing and the attempt scores zero however good the
+    code inside is. The fence is transport, and scoring transport measures the wrapper rather than
+    the model (D-EDITS-003).
+
+    Unwrapping requires BOTH ends — a lone opener first, a bare closer last — because only a wrap
+    of the entire payload reads as transport. Half a fence is ambiguous, and an ambiguous payload
+    is taken literally, which is what keeps the rules card's promise to preserve fence-looking
+    lines that belong to the implementation. Blank lines after the closer are transport too.
+    """
+    lines = payload.split("\n")
+    end = len(lines)
+    while end > 0 and not lines[end - 1].strip():
+        end -= 1
+    if end < 2 or not _is_fence_opener(lines[0]) or lines[end - 1].strip() != _FENCE:
+        return payload
+    body = "\n".join(lines[1 : end - 1])
+    return f"{body}\n" if body else ""
 
 
 def apply_file(reply: WholeFileReply, root: Path, permitted: str) -> Path:
