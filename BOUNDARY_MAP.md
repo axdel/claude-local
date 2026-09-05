@@ -34,6 +34,8 @@
 | loop | snapshot | may-import | Keeps the best-passing snapshot. | active |  |
 | loop | telemetry | may-import | Writes the local economy record. | active |  |
 | loop | types | may-import | Returns LoopResult. | active |  |
+| model_server | model_registry | may-import | Turns a resolved catalog row into a launch command; store paths keep the download branch unreachable. | active |  |
+| model_server | sandbox | must-not-import | The oracle profile denies network, so a listening server cannot run under it; hosting one would widen the cage that contains untrusted model code. Separate spawn paths by design. | active |  |
 | prompt | runner | may-import | Distills feedback over the oracle TestScore. | active |  |
 | prompt | types | may-import | Assembles the stable prefix from TaskSpec. | active |  |
 | runner | sandbox | may-import | Runs the oracle under kernel confinement. | active |  |

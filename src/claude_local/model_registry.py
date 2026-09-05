@@ -32,6 +32,9 @@ _ABSENT = "-"
 _FIELDS_PER_ROW = 7
 """NAME|REPO|DRAFT|PORT|SIZE|FLAGS|NOTE — a short row would silently mis-assign columns."""
 
+_DRAFT_SUFFIX = "-MTP"
+"""A draft model is stored beside the model it accelerates, under this suffixed name."""
+
 
 class UnknownModel(Exception):
     """The requested name is absent from the catalog, so nothing can serve it."""
@@ -59,6 +62,14 @@ class ResolvedModel:
     port: int
     flags: tuple[str, ...]
     path: Path
+    draft_path: Path | None
+    """The draft model's weights, or None when the row declares one that was never pulled.
+
+    Separate from ``draft_repo`` for the same reason the registry is separate from the store:
+    the repo says what *may* be pulled, this says what is actually on disk. A consumer must
+    serve from this, never from the repo id — a server handed an id it cannot find locally
+    downloads it, so the two being distinct is what keeps that path unreachable.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,13 +124,20 @@ class ModelRegistry:
                 raise ModelNotPresent(
                     f"{name} is catalogued but absent from the store at {path} — pull it first"
                 )
+            draft_repo = None if row[2] == _ABSENT else row[2]
+            draft_path = self.store_root / f"{name}{_DRAFT_SUFFIX}"
             return ResolvedModel(
                 name=name,
                 repo=row[1],
-                draft_repo=None if row[2] == _ABSENT else row[2],
+                draft_repo=draft_repo,
                 port=int(row[3]),
                 flags=() if row[5] == _ABSENT else tuple(row[5].split()),
                 path=path,
+                # Absent unless BOTH the row declares a draft and its weights are on disk. A
+                # declared-but-unpulled draft is the common case (the catalog names one for
+                # Qwen3.8-27B that was never pulled), and it must read as "no draft" rather
+                # than as a repo id a server would try to fetch.
+                draft_path=draft_path if draft_repo and draft_path.is_dir() else None,
             )
         raise UnknownModel(f"no catalog row for {name!r}; available: {', '.join(self.names())}")
 

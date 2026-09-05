@@ -149,9 +149,18 @@ driver:** a bundled skill (`skills/claude-local/`) teaches it the plan → autho
 implement-local → verify recipe. Any orchestrator that can write a failing test and a tight spec
 can drive the same entry point.
 
-It does exactly one thing — infer against an already-running OpenAI-compatible server. It does
-not download models and it does not serve them; that stays the orchestrator's (or your) job, so
-the loop is serving-agnostic. The runtime dependency is `httpx`, nothing more.
+The loop does exactly one thing — infer against an already-listening OpenAI-compatible server.
+It is serving-agnostic by construction: `implement()` takes a `base_url` and never starts
+anything, so its only runtime dependency is `httpx`.
+
+Serving is a separate, optional capability. `uv sync --group serve` installs the MLX stack, and
+`model_server` then spawns a server for a catalogued model and guarantees it is torn down
+afterwards — a model is resident only while something is using it. That group is deliberately
+not a runtime dependency: MLX is Apple-silicon only, and the loop must install anywhere.
+
+**Nothing here ever downloads a model.** Models are named by their path in the local store, so a
+name that is catalogued but not pulled is refused rather than fetched; pulling weights stays an
+explicit, user-initiated act.
 
 ## License
 

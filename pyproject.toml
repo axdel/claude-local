@@ -37,6 +37,18 @@ bench = [
     "fastapi>=0.141.1",
     "pydantic>=2.13.4",
 ]
+# The MLX serving stack, opt-in: `uv sync --group serve`. A GROUP, not a runtime dependency,
+# for a reason that is not merely weight — mlx is Apple-silicon only, while requires-python
+# ">=3.12" promises the loop installs anywhere. The loop itself only ever speaks HTTP to an
+# already-listening server, so a hard dependency would make claude-local uninstallable off
+# Apple silicon for the majority of its use. model_server never imports these: it spawns
+# `python -m mlx_vlm.server`, so the requirement is on the interpreter's environment, not on
+# an import edge, and a missing stack surfaces as the subprocess's own ModuleNotFoundError.
+# mlx_vlm rather than mlx_lm: it serves the text-only models too, so one stack covers the
+# whole registry, and its native prefix caching is what the stable-prefix invariant rides on.
+serve = [
+    "mlx-vlm>=0.6.15",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.9",
@@ -121,6 +133,6 @@ layers = [
     "loop",
     "telemetry",
     "client | prompt | snapshot",
-    "backend | derail | edits | runner",
+    "backend | derail | edits | model_server | runner",
     "model_registry | paths | sandbox | sse | types",
 ]

@@ -86,9 +86,10 @@ class ReplayBackend:
 class BackendUnavailable(RuntimeError):
     """The model server at ``base_url`` could not be reached, or answered with an error status.
 
-    A precondition failure, not a task outcome: claude-local requires an already-running
-    OpenAI-compatible server at ``base_url`` (it never serves one), so a server that is down,
-    unreachable, or returning a non-2xx status means the prerequisite is unmet. Carries the URL
+    A precondition failure, not a task outcome: this transport requires an already-listening
+    OpenAI-compatible server at ``base_url`` — it never starts one, though ``model_server`` can
+    (D-SERVE-002) — so a server that is down, unreachable, or returning a non-2xx status means
+    the prerequisite is unmet. Carries the URL
     and model for diagnosis and chains the originating ``httpx`` error as ``__cause__``. Like
     ``SandboxUnavailable`` (D-SANDBOX-001), it propagates as a harness fault — never mapped to a
     ``Status`` — so a missing server fails loud instead of masquerading as a failed task. Distinct

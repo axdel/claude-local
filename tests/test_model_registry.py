@@ -58,6 +58,47 @@ def test_resolve_carries_the_draft_model_when_the_row_names_one(tmp_path: Path) 
     assert resolved.draft_repo == "lukaskremla/Qwen3.8-MTP"
 
 
+def test_a_declared_draft_whose_weights_are_absent_resolves_to_no_draft_path(
+    tmp_path: Path,
+) -> None:
+    """A draft named in the catalog but never pulled must not read as servable.
+
+    Oracle: the registry/store split — the DRAFT column says what may be pulled, only the store
+    proves what is on disk. A consumer handed the repo id for absent weights downloads them, so
+    the path staying None is what keeps that branch unreachable. This is the real shipped state:
+    the catalog names a draft for Qwen3.8-27B whose weights are not in the store.
+    """
+    resolved = _registry(tmp_path, present=("Qwen3.8-27B",)).resolve("Qwen3.8-27B")
+
+    assert resolved.draft_repo == "lukaskremla/Qwen3.8-MTP"  # the row still records provenance
+    assert resolved.draft_path is None
+
+
+def test_a_draft_present_in_the_store_resolves_to_its_path(tmp_path: Path) -> None:
+    """Oracle: a draft is stored beside the model it accelerates, under a '-MTP' suffix."""
+    resolved = _registry(tmp_path, present=("Qwen3.8-27B", "Qwen3.8-27B-MTP")).resolve(
+        "Qwen3.8-27B"
+    )
+
+    assert resolved.draft_path == tmp_path / "store" / "Qwen3.8-27B-MTP"
+
+
+def test_a_model_with_no_declared_draft_has_no_draft_path_even_if_a_directory_exists(
+    tmp_path: Path,
+) -> None:
+    """The row decides whether a draft exists at all; a stray directory must not enable one.
+
+    Oracle: speculative decoding needs a draft that actually matches the model, which only the
+    catalog can assert. Inferring one from a directory name would serve an unvalidated pairing.
+    """
+    resolved = _registry(tmp_path, present=("gpt-oss-20b", "gpt-oss-20b-MTP")).resolve(
+        "gpt-oss-20b"
+    )
+
+    assert resolved.draft_repo is None
+    assert resolved.draft_path is None
+
+
 def test_resolve_splits_serving_flags_into_separate_arguments(tmp_path: Path) -> None:
     resolved = _registry(tmp_path, present=("Gemma4-31B",)).resolve("Gemma4-31B")
 
