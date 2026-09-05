@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --quiet python
 """Serve one catalogued model and run the standing benchmark against it, end to end.
 
 `benchmarks/run.py` scores a model over the whole case ladder, but takes an already-running server
@@ -22,6 +22,9 @@ full ladder's cost.
 
 The model store is read from CLAUDE_LOCAL_MODELS when set. That override is what makes the script
 usable from a git worktree, whose own `models/` holds the catalog but no weights.
+
+Run from the repository root, like every other command here — the shebang resolves the project's
+environment from the working directory. Under a bare `python3` it dies on the first import.
 
 Exit codes are `benchmarks/run.py`'s, passed through unchanged: 0 when every case passed, 1 when a
 case failed, 2 for a usage error, and 3 for a harness fault. A model that never becomes ready

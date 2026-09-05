@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --quiet python
 """Sweep the whole catalog: benchmark every model in turn, one resident at a time.
 
 `benchmark_model.py` already owns the per-model chain — resolve, serve, benchmark, tear down — and
@@ -18,6 +18,10 @@ would defeat it.
 
 Weights live outside any worktree, so ``CLAUDE_LOCAL_MODELS`` must point at the store. No path is
 hardcoded here: where the store lives is the registry's fact, not this script's.
+
+Run from the repository root, like every other command here — the shebang resolves the project's
+environment from the working directory, so this script imports ``claude_local`` and hands its own
+interpreter to each per-model subprocess. Under a bare ``python3`` it dies on the first import::
 
     CLAUDE_LOCAL_MODELS=/path/to/models scripts/bench-all-models.py
     CLAUDE_LOCAL_MODELS=/path/to/models scripts/bench-all-models.py --skip Muse-Glimmer-30B-6bit

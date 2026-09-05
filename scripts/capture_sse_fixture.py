@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --quiet python
 """Record one real streaming chat-completions response, verbatim, as a byte fixture.
 
 `tests/fixtures/sse/README.md` ranks a captured session above a schema-derived one and says

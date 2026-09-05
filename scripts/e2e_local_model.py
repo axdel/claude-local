@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --quiet python
 """Serve one catalogued model and drive the bundled example against it, end to end.
 
 This is the whole chain a downstream user composes, in one re-runnable command: resolve a name

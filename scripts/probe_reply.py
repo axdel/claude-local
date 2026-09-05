@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --quiet python
 """Serve a model, send it one task's real prompt, and print the reply verbatim.
 
 When the loop reports BLOCKED there is exactly one question worth asking — what did the model
