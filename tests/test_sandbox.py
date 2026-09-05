@@ -152,6 +152,49 @@ def test_an_interpreter_reached_through_a_directory_symlink_still_runs(tmp_path:
     assert ran.read_text() == "ok"
 
 
+def test_an_interpreter_reached_through_a_symlinked_parent_directory_still_runs(
+    tmp_path: Path,
+) -> None:
+    """A runtime whose path *descends through* a symlinked directory still launches.
+
+    The sibling test above puts the symlink at the hop's final component. This puts one in the
+    middle of the hop's directory portion, with further levels beneath it — the shape ``/tmp ->
+    /private/tmp`` has, built explicitly here so the platform's own symlink is not the fixture.
+
+    Oracle: POSIX resolution rewrites the remainder of the path once it crosses a symlink, so
+    the kernel matches every component below ``gateway`` under its canonical ``inner`` name. A
+    profile that names those components by the pre-resolution name grants nothing the kernel
+    will ever match — the rules are present and dead, which is why this fails as a *denied
+    spawn* rather than a missing rule. Neither fact was read off the profile builder.
+
+    The launcher points outside the fixture on purpose: were it a real file, the endpoint grant
+    derived from ``realpath`` would cover the very directories under test and mask the defect —
+    which is exactly how the production layout hides it, since ``realpath(sys.base_prefix)``
+    happens to cover the alias's target tree.
+    """
+    inner = tmp_path / "inner"
+    (inner / "nested/bin").mkdir(parents=True)
+    launcher = inner / "nested/bin/python3"
+    launcher.symlink_to(os.path.realpath(sys.executable))
+    gateway = tmp_path / "gateway"
+    gateway.symlink_to(inner)  # crossing this rewrites every component after it
+
+    box = tmp_path / "box"
+    box.mkdir()
+    ran = box / "ran.txt"
+    payload = f"import pathlib; pathlib.Path({str(ran)!r}).write_text('ok')"
+
+    _stdout, stderr = sandboxed_spawn(
+        [str(gateway / "nested/bin/python3"), "-c", payload],
+        cwd=box,
+        write_box=box,
+        timeout_s=30.0,
+    )
+
+    assert ran.exists(), f"the runtime never ran: {stderr.decode(errors='replace')}"
+    assert ran.read_text() == "ok"
+
+
 def test_spawn_returns_captured_stdout_and_stderr(tmp_path: Path) -> None:
     """The parent receives both diagnostic streams from the confined process."""
     box = tmp_path / "box"

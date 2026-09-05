@@ -204,6 +204,17 @@ def _sbpl_quote(path: str) -> str:
     return path.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _canonicalize_parents(path: str) -> str:
+    """Resolve every directory above ``path`` while leaving its final component intact.
+
+    ``os.path.realpath`` cannot be used on the whole path here: it would collapse the very
+    symlink this module exists to name, reducing the chain back to its endpoints. Only the
+    parents are resolved, so the link is still named individually — under the name the kernel
+    will actually match it by.
+    """
+    return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+
+
 def _symlink_chain(path: str) -> tuple[str, ...]:
     """Return every path the kernel visits while resolving ``path``, hop by hop.
 
@@ -215,6 +226,16 @@ def _symlink_chain(path: str) -> tuple[str, ...]:
     than a child. Granting the chain's endpoints alone leaves that middle ungranted and the
     deny-default profile refuses the spawn.
 
+    Each hop is reported **twice** when the two spellings differ — as written, and with its
+    parents resolved — because crossing a symlink rewrites the remainder of the path and the
+    kernel needs both halves. It reads the link under the name that points at it (``/tmp``,
+    the version alias), then matches every component below under the resolved name
+    (``/private/tmp``). Naming only the first leaves the components beneath ungranted; naming
+    only the resolved form leaves the link itself untraversable, so the walk stops at the very
+    hop it exists to reach. Emitting one spelling and not the other is a denied spawn either
+    way, and the failure hides in the common case — a missing grant is silently covered
+    whenever another root's subpath happens to span the same tree.
+
     Yielding the traversed paths keeps the profile *narrower* than granting the alias
     directory's subtree would: each hop is one file, so its grant covers only that file.
     The walk terminates on a symlink cycle by construction, having visited each path once.
@@ -225,6 +246,9 @@ def _symlink_chain(path: str) -> tuple[str, ...]:
     while current not in visited:
         visited.add(current)
         chain.append(current)
+        resolved_parents = _canonicalize_parents(current)
+        if resolved_parents != current:
+            chain.append(resolved_parents)
         if not os.path.islink(current):
             break
         target = os.readlink(current)
