@@ -6,6 +6,7 @@
 |-|-|-|-|-|-|
 | LocalEconomyRecord | run measurements: client token usage and timing | per-attempt GenerationResult aggregates | Telemetry aggregation at loop exit | active |  |
 | PackageVersion | src/claude_local/__init__.py __version__ | — (root) | hatchling [tool.hatch.version] path reads __version__ at build | active |  |
+| ResolvedModel | models/models.tsv | one catalog row, split positionally | ModelRegistry.resolve(name) — no build step; edit the row | active |  |
 | Scorecard | per-case run outcomes: each case's terminal status and local economy record | the CaseResult list from run_cases | score_cases() reduces the results; Scorecard.write() serializes JSON | active |  |
 | TestScore | pytest JUnit-XML report | the attempt's test run | TestRunner.run() parses the XML | active |  |
 | benchmark-expected-tests | benchmark-case oracle source | module-level test_* declarations | BenchmarkCase.from_fixtures parses the oracle AST | active |  |
