@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Serve one catalogued model and drive the bundled example against it, end to end.
+
+This is the whole chain a downstream user composes, in one re-runnable command: resolve a name
+through the model registry, spawn the MLX server for it, and run the documented example — the
+exact `examples/quicksort/run.py` invocation the README prints — against the server that just
+came up. The model is resident only inside the `running()` block, so teardown is structural
+rather than remembered, on success and on failure alike.
+
+It is a script rather than a hand-typed sequence because it is needed more than once: the
+multi-model sweep runs this same chain per model, and a procedure re-derived from memory each
+time drifts silently from the code it exercises.
+
+    scripts/e2e_local_model.py gpt-oss-20b
+
+The model store is read from CLAUDE_LOCAL_MODELS when set. That override is what makes the
+script usable from a git worktree, whose own `models/` holds the catalog but no weights.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess  # nosec B404 (argv is built here from catalog data, never shell-interpreted)
+import sys
+import time
+from pathlib import Path
+
+import httpx
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "src"))
+
+from claude_local.model_registry import ModelRegistry  # noqa: E402
+from claude_local.model_server import ModelServer  # noqa: E402
+
+_EXAMPLE = _REPO_ROOT / "examples/quicksort/run.py"
+
+
+def _served_model_id(base_url: str) -> str:
+    """Ask the running server which model it is serving.
+
+    The server names the model however it chose to, and the chat-completions request must echo
+    that id back. Reading it beats assuming it equals the catalog name or the store path.
+    """
+    payload = httpx.get(f"{base_url}/v1/models", timeout=30.0).json()
+    return str(payload["data"][0]["id"])
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("model", help="A name from the model registry (e.g. gpt-oss-20b).")
+    parser.add_argument(
+        "--startup-timeout",
+        type=float,
+        default=600.0,
+        help="Seconds to wait for the model to load; a cold first read streams 11+ GB off disk.",
+    )
+    args = parser.parse_args(argv)
+
+    resolved = ModelRegistry.default().resolve(args.model)
+    server = ModelServer.for_model(resolved)
+    print(f"[e2e] weights   : {resolved.path}", file=sys.stderr)
+    print(f"[e2e] command   : {' '.join(server.command)}", file=sys.stderr)
+
+    started = time.monotonic()
+    with server.running(timeout_s=args.startup_timeout) as handle:
+        ready_after = time.monotonic() - started
+        served = _served_model_id(handle.base_url)
+        print(f"[e2e] ready in  : {ready_after:.1f}s (pid {handle.pid})", file=sys.stderr)
+        print(f"[e2e] serving   : {served}", file=sys.stderr)
+
+        # The documented consumer path, invoked exactly as the README prints it — not an
+        # in-process call to implement(), which would skip the surface a user actually drives.
+        done = subprocess.run(  # noqa: S603
+            [sys.executable, str(_EXAMPLE), "--base-url", handle.base_url, "--model", served],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        print(f"[e2e] example exit: {done.returncode}", file=sys.stderr)
+        print(done.stderr, file=sys.stderr)
+        print(json.dumps({"produced_code": done.stdout}, indent=2)[:400], file=sys.stderr)
+
+    print(f"[e2e] server torn down after {time.monotonic() - started:.1f}s", file=sys.stderr)
+    return done.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
