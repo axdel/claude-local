@@ -11,6 +11,16 @@ edit parser made of it.
 
 The task directory is one holding `spec.md` and a single `*_oracle.py`, matching the layout the
 bundled example uses. The model is resident only inside the `running()` block.
+
+A BENCHMARK CASE is not that layout and must not be forced into it: a case names its own impl path
+and its ordered context neighbors in `case.toml`, and both reach the prompt. Reconstructing them
+here would send a prompt the benchmark does not send, which is exactly the failure this script
+exists to avoid. Ask the benchmark instead, which drives the real case through the real driver::
+
+    scripts/benchmark_model.py <model> --only 01_scaffold --stream
+
+What is left here that the benchmark cannot do is `--raw`: the reply before `assistant_content`
+normalizes it, which is where a reasoning model's channel markup is visible.
 """
 
 from __future__ import annotations

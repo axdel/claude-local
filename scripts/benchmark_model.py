@@ -14,6 +14,12 @@ drifts silently from the code it exercises.
 
     scripts/benchmark_model.py gpt-oss-20b
 
+``--only <case_id>`` (repeatable) and ``--stream`` are forwarded to the benchmark unchanged, which
+turns this into the diagnosis path too: one case, with the model's raw text, at a fraction of a
+full ladder's cost.
+
+    scripts/benchmark_model.py gpt-oss-20b --only 01_scaffold --stream
+
 The model store is read from CLAUDE_LOCAL_MODELS when set. That override is what makes the script
 usable from a git worktree, whose own `models/` holds the catalog but no weights.
 
@@ -61,6 +67,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Also print the model's raw text as it decodes; the ladder is live either way.",
     )
+    parser.add_argument(
+        "--only",
+        action="append",
+        metavar="CASE_ID",
+        help="Run just this case; repeatable. Forwarded verbatim, so the benchmark owns validity.",
+    )
     args = parser.parse_args(argv)
 
     resolved = ModelRegistry.default().resolve(args.model)
@@ -92,6 +104,10 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if args.stream:
             command.append("--stream")
+        for case_id in args.only or ():
+            # Forwarded, never checked here: the benchmark loads the ladder, so it is the only
+            # thing that knows which ids exist, and a second validator would drift from it.
+            command.extend(("--only", case_id))
         done = subprocess.run(command, cwd=_REPO_ROOT, check=False)  # noqa: S603
 
     print(f"[bench] server torn down after {time.monotonic() - started:.1f}s", file=sys.stderr)

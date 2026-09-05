@@ -24,10 +24,17 @@ attempt resolves, and the case's verdict as it closes — because a full run tak
 and a scorecard printed only at the end leaves a watcher with nothing to watch. ``--stream`` adds
 the model's own raw text as it decodes. The per-case table and benchmark totals still print at the
 end; ``--out DIR`` also writes the scorecard as JSON. The process exits 0 only when every case
-passed, 1 when any case failed, 2 for a usage error (no model named), and 3 when the benchmark
-harness itself faults — the prerequisite server is unreachable, the kernel sandbox is unavailable,
-or an oracle is broken. Exit 3 is a broken *host*, distinct from exit 1's model that simply failed
-the task.
+passed, 1 when any case failed, 2 for a usage error (no model named, or an unknown ``--only`` id),
+and 3 when the benchmark harness itself faults — the prerequisite server is unreachable, the kernel
+sandbox is unavailable, or an oracle is broken. Exit 3 is a broken *host*, distinct from exit 1's
+model that simply failed the task.
+
+``--only <case_id>`` narrows the run to the named cases and is repeatable. A scorecard is a claim
+about a whole ladder, so the full run stays the default — but when the question is why ONE case
+failed, paying the other six to ask it makes the question too expensive. Pair it with ``--stream``
+to read what the model actually wrote for that case::
+
+    uv run python -m benchmarks.run --model <name> --only 01_scaffold --stream
 """
 
 from __future__ import annotations
@@ -80,6 +87,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--stream",
         action="store_true",
         help="Also print the model's raw text as it decodes; the ladder is live either way.",
+    )
+    parser.add_argument(
+        "--only",
+        action="append",
+        metavar="CASE_ID",
+        help="Run just this case; repeatable. Ladder order is kept whatever order they are given.",
     )
     return parser.parse_args(argv)
 
@@ -204,6 +217,21 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
         return 2
 
     cases = load_cases(_CASES, golden_app_root=_GOLDEN_APP)
+    if args.only:
+        selected = set(args.only)  # membership is the whole access pattern here
+        unknown = sorted(selected - set(cases))
+        if unknown:
+            # Never narrow to nothing and exit 0: an empty run satisfies passed == total, so a
+            # mistyped id would report a green benchmark that never ran a single case.
+            print(
+                f"error: unknown case id(s): {', '.join(unknown)} — "
+                f"the ladder is {', '.join(cases)}",
+                file=sys.stderr,
+            )
+            return 2
+        # Rebuilt from the loaded mapping, never from argv, so the ladder order is the committed
+        # one: a case must never be driven from a later case's position in the progression.
+        cases = {case_id: case for case_id, case in cases.items() if case_id in selected}
     try:
         results = run_cases(
             cases,

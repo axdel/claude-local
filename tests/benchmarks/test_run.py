@@ -91,6 +91,62 @@ def test_main_exits_1_when_a_case_fails() -> None:
     assert exit_code == 1
 
 
+def test_main_runs_only_the_named_cases_in_ladder_order(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--only`` narrows the ladder to the named cases, keeping the committed ladder order.
+
+    Diagnosing why one case failed needs that case's replies, and paying the whole seven-case
+    ladder for one of them makes the question too expensive to ask. The two ids are passed in
+    REVERSE ladder order to pin that the run follows the committed order rather than argv order —
+    the ladder is a progression, so a case must never see a later case's position.
+    """
+    sources = _golden_sources()
+
+    with replay_cases_http_client(sources) as http_client:
+        exit_code = main(
+            [
+                "--base-url",
+                "http://benchmark.local",
+                "--model",
+                "replay/golden",
+                "--only",
+                "05_rbac",
+                "--only",
+                "01_scaffold",
+                "--out",
+                str(tmp_path),
+            ],
+            http_client=http_client,
+        )
+
+    assert exit_code == 0
+    (scorecard_path,) = tmp_path.glob("scorecard-*.json")
+    card = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert [case["case_id"] for case in card["cases"]] == ["01_scaffold", "05_rbac"]
+    assert card["cases_total"] == 2  # the other five never ran
+    assert "02_schemas" not in capsys.readouterr().err
+
+
+def test_main_exits_2_when_only_names_an_unknown_case(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unknown ``--only`` id is a usage error naming the valid ids, never an empty green run.
+
+    Scoring zero cases would satisfy ``cases_passed == cases_total`` and exit 0, so a typo would
+    report success for a benchmark that never ran — the silent-skip failure this guard exists to
+    make impossible. No transport is needed: the guard fires before any case is driven.
+    """
+    exit_code = main(
+        ["--base-url", "http://benchmark.local", "--model", "replay/golden", "--only", "05_rback"]
+    )
+
+    assert exit_code == 2
+    err = capsys.readouterr().err
+    assert "05_rback" in err  # the id that was not found
+    assert "05_rbac" in err  # and the real ids, so the typo is correctable from the message
+
+
 def test_main_exits_2_when_no_model_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
     """With no --model and no env fallback, the script reports a usage error and exits 2.
 
