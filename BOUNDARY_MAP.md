@@ -6,10 +6,17 @@
 |-|-|-|-|-|-|
 | __init__ | entrypoint | may-import | Public front door re-exports implement and Outcome. | active |  |
 | __init__ | types | may-import | Public front door re-exports task value objects. | active |  |
+| __main__ | cli | may-import | The python -m shim resolves the same front door as the installed console script. | active |  |
 | backend | httpx | may-import | Only external transport dependency. | active |  |
 | backend | types | may-import | Transport consumes Budget. | active |  |
 | benchmarks | claude_local | may-import | Downstream benchmark consumes only the top-level public package API. | active |  |
 | claude_local | benchmarks | must-not-import | Reusable loop never depends on benchmark subjects or harness code. | active |  |
+| cli | backend | may-import | Catches BackendUnavailable so a broken host exits apart from a failed task. | active |  |
+| cli | entrypoint | may-import | Adapts one invocation to a TaskSpec; implement stays the composition root. | active |  |
+| cli | model_server | must-not-import | The CLI never serves. A dispatched child runs under a profile granting outbound loopback but not network-bind, so it cannot listen; --base-url must name an already-running server. The layers contract would permit this import, so only this rule bars it. | active |  |
+| cli | runner | may-import | Catches OracleError; a broken oracle produced no verdict, so no task outcome exists. | active |  |
+| cli | sandbox | may-import | Catches SandboxUnavailable; a host without the kernel sandbox is a fault, not a status. | active |  |
+| cli | types | may-import | Builds TaskSpec, Budget, and ContextFile from the stdin task envelope. | active |  |
 | client | backend | may-import | Streams raw SSE bytes from the transport. | active |  |
 | client | derail | may-import | Watches decode for repetition/cap/timeout. | active |  |
 | client | harmony | may-import | Normalizes a leaked channel-transcript at the one place reply text is assembled. | active |  |

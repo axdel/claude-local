@@ -31,7 +31,7 @@ from sse_wire import sse_frame_json
 
 from claude_local.backend import BackendUnavailable, ReplayBackend
 from claude_local.client import ModelClient
-from claude_local.loop import _ORACLE_TEST_FILENAME, Loop, LoopResult, _classify_terminal
+from claude_local.loop import ORACLE_TEST_FILENAME, Loop, LoopResult, _classify_terminal
 from claude_local.prompt import PromptBuilder
 from claude_local.runner import OracleError, TestRunner
 from claude_local.snapshot import SnapshotStore
@@ -576,7 +576,7 @@ def test_writes_the_frozen_oracle_test_before_running(tmp_path: Path) -> None:
     loop.run(spec, worktree)
 
     # The loop owns writing the immutable oracle, verbatim, to its loop-owned path outside src.
-    oracle = worktree / _ORACLE_TEST_FILENAME
+    oracle = worktree / ORACLE_TEST_FILENAME
     assert oracle.read_text(encoding="utf-8") == _ORACLE_TEXT
     assert not oracle.is_relative_to(worktree / "src")  # never inside the snapshot subtree
 

@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 # The immutable oracle test is written to the worktree ROOT — outside the SnapshotStore's src
 # subtree (so restore_best never clobbers it) and distinct from any impl path (so apply_file never
 # overwrites it). A run-stable name, carrying no timestamp, keeps the worktree predictable.
-_ORACLE_TEST_FILENAME = "test_loop_oracle.py"
+ORACLE_TEST_FILENAME = "test_loop_oracle.py"
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +120,7 @@ class Loop:
         harness fault fails loud rather than masquerading as a failing implementation.
         """
         stable = self._prompt.stable_prefix(spec)  # built ONCE — the prefill-cache invariant
-        oracle_path = worktree / _ORACLE_TEST_FILENAME
+        oracle_path = worktree / ORACLE_TEST_FILENAME
         oracle_path.write_text(spec.test_text, encoding="utf-8")
 
         results: list[GenerationResult] = []
