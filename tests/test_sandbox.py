@@ -15,6 +15,7 @@ a macOS-kernel fact, so there is nothing meaningful to assert without the kernel
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import sys
@@ -114,6 +115,41 @@ def test_write_inside_the_box_is_allowed(tmp_path: Path) -> None:
     _run(payload, box)
     # Oracle: the single file-write allow rule (subpath box) — the sandbox must not over-restrict.
     assert report.read_text() == "<ok/>"
+
+
+def test_an_interpreter_reached_through_a_directory_symlink_still_runs(tmp_path: Path) -> None:
+    """A runtime named *through* a symlinked directory still launches under confinement.
+
+    Reproduces the layout uv installs: a version-alias directory symlink (``cpython-3.14-...``
+    -> ``cpython-3.14.7-...``) beside the real runtime, with the launcher pointing through the
+    alias. ``realpath`` collapses every component and so reports only the destination, while the
+    kernel resolves the path the launcher literally names — so a profile granting just the
+    chain's endpoints leaves the traversed middle ungranted and the spawn is refused with
+    ``Operation not permitted``.
+
+    Oracle: the sandbox must permit the very runtime it was handed (the capability half of
+    D-SANDBOX-004), and POSIX path resolution visits every component of every hop. Both facts
+    are independent of this module — neither was read off the profile builder. Grant only the
+    endpoints and this goes red, which is the F2P proof it bites.
+    """
+    runtime_root = Path(sys.base_prefix)
+    real_interpreter = Path(os.path.realpath(sys.executable))
+    alias = tmp_path / "runtime-version-alias"
+    alias.symlink_to(runtime_root)  # a DIRECTORY symlink, as uv publishes
+    launcher = tmp_path / "python3"
+    launcher.symlink_to(alias / real_interpreter.relative_to(runtime_root))
+
+    box = tmp_path / "box"
+    box.mkdir()
+    ran = box / "ran.txt"
+    payload = f"import pathlib; pathlib.Path({str(ran)!r}).write_text('ok')"
+
+    _stdout, stderr = sandboxed_spawn(
+        [str(launcher), "-c", payload], cwd=box, write_box=box, timeout_s=30.0
+    )
+
+    assert ran.exists(), f"the runtime never ran: {stderr.decode(errors='replace')}"
+    assert ran.read_text() == "ok"
 
 
 def test_spawn_returns_captured_stdout_and_stderr(tmp_path: Path) -> None:

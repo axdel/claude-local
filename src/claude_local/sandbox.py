@@ -182,7 +182,8 @@ def _build_profile(cwd: Path, write_box: Path, cmd: Sequence[str]) -> str:
     }
     executable = shutil.which(cmd[0], path=_sandbox_path())
     if executable is not None:
-        read_roots.update((executable, os.path.realpath(executable)))
+        read_roots.update(_symlink_chain(executable))
+        read_roots.add(os.path.realpath(executable))
     metadata_rules = "\n".join(
         f'(allow file-read-metadata file-test-existence (literal "{_sbpl_quote(path)}"))'
         for path in _path_ancestors(read_roots)
@@ -201,6 +202,38 @@ def _build_profile(cwd: Path, write_box: Path, cmd: Sequence[str]) -> str:
 def _sbpl_quote(path: str) -> str:
     """Escape a path for embedding in an SBPL double-quoted string literal."""
     return path.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _symlink_chain(path: str) -> tuple[str, ...]:
+    """Return every path the kernel visits while resolving ``path``, hop by hop.
+
+    ``os.path.realpath`` reports only the destination, because it collapses every component
+    at once. Path resolution instead walks each name a symlink points at, and an intermediate
+    hop can sit outside the resolved runtime root entirely: uv installs a *version-alias
+    directory* symlink (``cpython-3.14-...`` -> ``cpython-3.14.7-...``) and points the venv
+    launcher through it, so the traversed middle is a sibling of ``sys.base_prefix`` rather
+    than a child. Granting the chain's endpoints alone leaves that middle ungranted and the
+    deny-default profile refuses the spawn.
+
+    Yielding the traversed paths keeps the profile *narrower* than granting the alias
+    directory's subtree would: each hop is one file, so its grant covers only that file.
+    The walk terminates on a symlink cycle by construction, having visited each path once.
+    """
+    chain: list[str] = []
+    visited: set[str] = set()
+    current = os.path.abspath(path)
+    while current not in visited:
+        visited.add(current)
+        chain.append(current)
+        if not os.path.islink(current):
+            break
+        target = os.readlink(current)
+        current = (
+            target
+            if os.path.isabs(target)
+            else os.path.normpath(os.path.join(os.path.dirname(current), target))
+        )
+    return tuple(chain)
 
 
 def _path_ancestors(paths: set[str]) -> tuple[str, ...]:
