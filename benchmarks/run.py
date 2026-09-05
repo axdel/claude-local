@@ -45,7 +45,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from benchmarks.harness import load_cases, run_cases, score_cases
+from benchmarks.harness import load_cases, run_cases, score_cases, write_produced_code
 from claude_local import BackendUnavailable, OracleError, SandboxUnavailable
 
 if TYPE_CHECKING:
@@ -254,6 +254,11 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     if args.out is not None:
         written = scorecard.write(args.out)
         print(f"scorecard written to {written}", file=sys.stderr)
+        # The scorecard says how many oracle tests passed; only the code says whether what passed
+        # them is worth keeping. Both are written, because a run that discards the implementation
+        # leaves no way to judge naming, structure, or how narrowly a case missed.
+        code_directory = write_produced_code(results, scorecard.model, args.out)
+        print(f"produced code written to {code_directory}", file=sys.stderr)
     return 0 if scorecard.cases_passed == scorecard.cases_total else 1
 
 
