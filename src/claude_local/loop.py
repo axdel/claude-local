@@ -56,16 +56,19 @@ class AttemptProgress:
     cause that, and a watcher must tell them apart: the server faulted, the guard cut a derail, or
     the model returned nothing usable to write — the last being what ``blocked`` names.
 
-    ``repeats_previous`` marks the attempt whose generation came back byte-identical to the one
-    before it — the attempt that ends a run early (D-LOOP-004). It is carried here rather than
-    inferred by a watcher because only the loop holds the previous attempt's text, and an early
-    stop nobody can explain is the blindness this event exists to end.
+    ``repeats_previous`` marks a generation that came back byte-identical to the one before it, and
+    ``nudged`` marks one generated under an escalation because an earlier attempt did (D-LOOP-005).
+    Both are carried here rather than inferred, because only the loop holds the previous attempt's
+    text, and each answers a question the other cannot: the first says why the model produced
+    nothing new, the second says why the loop kept paying anyway. A watcher given only one of them
+    sees either a loop re-buying a known answer or an escalation with no trigger.
     """
 
     attempt: int
     generation: GenerationResult
     score: TestScore | None
     repeats_previous: bool = False
+    nudged: bool = False
 
     @property
     def blocked(self) -> bool:
@@ -207,9 +210,11 @@ class Loop:
 
         results: list[GenerationResult] = []
         last_attempt: _ScoredAttempt | None = None
+        nudge = ""
+        verbatim_repeats = 0
 
         for index in range(spec.budget.max_attempts):
-            tail = "" if last_attempt is None else self._repair_brief(last_attempt)
+            tail = "" if last_attempt is None else self._repair_brief(last_attempt, nudge)
             generation = self._client.generate(stable, tail, spec.budget)
             repeats_previous = bool(results) and generation.text == results[-1].text
             results.append(generation)
@@ -221,10 +226,16 @@ class Loop:
                         generation=generation,
                         score=None if last_attempt is None else last_attempt.run.score,
                         repeats_previous=repeats_previous,
+                        nudged=bool(nudge),
                     )
                 )
-            if repeats_previous or last_attempt is None or last_attempt.run.score.is_green:
+            if last_attempt is None or last_attempt.run.score.is_green:
                 break
+            verbatim_repeats += int(repeats_previous)
+            escalation = self._escalation(repeats_previous, verbatim_repeats)
+            if escalation is None:
+                break
+            nudge = escalation
 
         self._snapshots.restore_best()
         best = self._snapshots.best()
@@ -245,9 +256,27 @@ class Loop:
             fault=final.fault if final is not None else None,
         )
 
-    def _repair_brief(self, attempt: _ScoredAttempt) -> str:
-        """The next attempt's tail: the file the last attempt wrote, and how it failed."""
-        return self._prompt.distill_feedback(attempt.run.score, attempt.run.output, attempt.source)
+    def _repair_brief(self, attempt: _ScoredAttempt, nudge: str) -> str:
+        """The next tail: the file the last attempt wrote, how it failed, and any escalation."""
+        return self._prompt.distill_feedback(
+            attempt.run.score, attempt.run.output, attempt.source, nudge
+        )
+
+    def _escalation(self, repeats_previous: bool, verbatim_repeats: int) -> str | None:
+        """The next attempt's nudge: empty while the model still moves, ``None`` to stop.
+
+        A model that produced something new needs no escalation — the failure speaks for itself, so
+        an earlier nudge clears. One that replayed gets the next rung, and ``None`` past the last
+        rung is where the run genuinely ends: every question this card knows how to ask has been
+        asked, and the rest of the budget would only re-buy an answer already given.
+
+        ``verbatim_repeats`` counts every replay in the run rather than the current consecutive
+        streak, so the ladder is walked at most once and termination is guaranteed by construction.
+        A count that reset on progress could re-offer the first rung indefinitely.
+        """
+        if not repeats_previous:
+            return ""
+        return self._prompt.nudge_for(verbatim_repeats)
 
     def _score_attempt(
         self,

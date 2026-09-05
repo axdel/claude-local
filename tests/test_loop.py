@@ -439,15 +439,19 @@ def test_all_partial_reaches_exhausted(tmp_path: Path) -> None:
     assert result.best_score.passed == 2 and not result.best_score.is_green
 
 
-def test_repeated_generation_stops_the_loop_before_the_budget_is_spent(tmp_path: Path) -> None:
-    """A byte-identical regeneration is a replay, not a repair, so the loop stops paying for it.
+def test_a_repeated_generation_is_nudged_rather_than_ending_the_run(tmp_path: Path) -> None:
+    """A replay means the question must change, not that the run is over.
 
-    Oracle: measured against gpt-oss-20b on the standing benchmark, where two cases regenerated
-    byte-identical output across consecutive attempts and burned 2753 completion tokens proving
-    it. The identical text writes the identical file, so the oracle returns the identical verdict
-    and the next tail is identical — and the repeat is itself the evidence that this model, on
-    this prompt, answers deterministically. Every double here supplies the FULL budget of four,
-    so nothing but the loop's own judgment can stop it: the ledger reading three is the saving.
+    Oracle: a byte-identical regeneration proves the prompt is an absorbing state — the same file
+    scores the same, distils to the same brief, and so regenerates forever (INV-004). Stopping was
+    the right response while the prompt was the only thing we could not change. It is the wrong one
+    now that the tail can carry a different question, and the cost of the old rule is measured: on
+    the standing benchmark with the repair brief, four of seven cases ended on a repeat with budget
+    unspent, one of them holding six of seven oracle tests already passing, and two of them cases
+    that had passed on a later attempt before.
+
+    The fixture is the general shape of that loss: the third reply repeats the second, and the
+    FOURTH is a different implementation the old rule threw away unread. Spending it is the point.
     """
     worktree = _setup_worktree(tmp_path)
     backend = ReplayBackend(
@@ -464,30 +468,31 @@ def test_repeated_generation_stops_the_loop_before_the_budget_is_spent(tmp_path:
 
     result = loop.run(spec, worktree)
 
-    assert backend.served == 3  # the fourth budgeted generation was never spent
-    assert client.total_calls == 3
-    assert result.record.attempts == 3
+    assert backend.served == 4  # the fourth generation — a DIFFERENT file — is now reached
+    assert client.total_calls == 4
+    assert result.record.attempts == 4
     # The repeat is still a real attempt: scored, counted, and left holding the partial best.
     assert result.status is Status.EXHAUSTED
     assert result.best_score is not None
     assert result.best_score.passed == 2 and not result.best_score.is_green
 
 
-def test_a_repeated_generation_reports_itself_as_the_repeat_that_ended_the_run(
-    tmp_path: Path,
-) -> None:
-    """The attempt that ends the run says so live — a scored repeat, never a silent early stop.
+def test_a_repeat_and_the_nudge_that_answers_it_are_both_reported_live(tmp_path: Path) -> None:
+    """The live view shows both halves: which attempt replayed, and which was asked differently.
 
-    Oracle: two independent facts, and the live view needs both. It reached the oracle and got a
-    verdict, so ``score`` must carry it — reporting ``blocked`` would render "no usable file
-    frame" for a perfectly usable file. And it stopped a run three attempts short of a budget of
-    four, so ``repeats_previous`` must mark WHICH attempt ended it; without that a watcher sees
-    an unexplained early stop, which is precisely the blindness the progress seam exists to end.
+    Oracle: the two facts have different consumers. ``repeats_previous`` explains why the model
+    produced nothing new; ``nudged`` explains why the loop kept paying anyway. A watcher given only
+    the first sees a loop stubbornly re-buying a known answer; given only the second, an escalation
+    with no trigger. Each attempt is also still a real scored attempt — reporting ``blocked`` for a
+    perfectly usable file would name the wrong cause entirely.
+
+    The ladder is walked to its end here: three consecutive replays, so the run stops when the
+    escalation runs out rather than when the budget does.
     """
     worktree = _setup_worktree(tmp_path)
     seen: list[AttemptProgress] = []
-    backend = ReplayBackend([_edit_script(_V1), _edit_script(_V1)])
-    spawn = ScriptedSpawn(*([_junit("one_failure.xml")] * 2))
+    backend = ReplayBackend([_edit_script(_V1)] * 4)
+    spawn = ScriptedSpawn(*([_junit("one_failure.xml")] * 4))
     loop, _ = _make_loop(worktree, backend, spawn, on_attempt=seen.append)
     spec = build_task_spec(
         impl_path="src/widget.py",
@@ -498,13 +503,45 @@ def test_a_repeated_generation_reports_itself_as_the_repeat_that_ended_the_run(
 
     loop.run(spec, worktree)
 
-    assert [progress.attempt for progress in seen] == [1, 2]
-    # The first attempt has nothing to repeat; the second is the verbatim one that ended the run.
-    assert [progress.repeats_previous for progress in seen] == [False, True]
+    assert [progress.attempt for progress in seen] == [1, 2, 3, 4]
+    # Attempt 1 has nothing to repeat; every later one replays it.
+    assert [progress.repeats_previous for progress in seen] == [False, True, True, True]
+    # A nudge is a response to a repeat, so it can only appear on the attempt AFTER one.
+    assert [progress.nudged for progress in seen] == [False, False, True, True]
     final = seen[-1]
     assert final.blocked is False
     assert final.score is not None
     assert final.score.passed == 2
+
+
+def test_the_run_ends_when_the_nudge_ladder_is_spent_not_when_the_budget_is(
+    tmp_path: Path,
+) -> None:
+    """A model that replays through every rung has been asked everything the card can ask.
+
+    Oracle: the ladder is finite by design, so the run has to end somewhere other than the budget —
+    otherwise a persistently deterministic model would spend every remaining attempt re-buying one
+    answer, which is the exact waste the original stop-on-repeat rule existed to prevent. This
+    keeps that saving and narrows it to the case where it is actually true: after the escalation is
+    exhausted, not on the first sign of a replay. The budget here is six and the ladder ends it at
+    four, so nothing but the ladder can be what stopped it.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = ReplayBackend([_edit_script(_V1)] * 6)
+    spawn = ScriptedSpawn(*([_junit("one_failure.xml")] * 6))
+    loop, client = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=6),
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert client.total_calls == 4  # two unspent attempts the ladder had no new question for
+    assert result.record.attempts == 4
+    assert result.status is Status.EXHAUSTED
 
 
 def test_first_attempt_derail_reaches_derailed(tmp_path: Path) -> None:

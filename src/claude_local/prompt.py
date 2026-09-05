@@ -16,6 +16,7 @@ committed static asset), never per call, so no filesystem read sits on the per-i
 from __future__ import annotations
 
 import re
+from itertools import takewhile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -37,6 +38,47 @@ _TRUNCATION_MARKER = "\n[...truncated]"
 # holds a whole module at the size these tasks produce.
 PREVIOUS_SOURCE_BYTE_CAP = 8192
 _PREVIOUS_SOURCE_HEADER = "## Your previous attempt — the complete file you wrote, scored below."
+
+# Escalating questions for a model that has replayed an answer. A replay proves the prompt is an
+# absorbing state — same file, same score, same brief, same file again — so the only way out is to
+# ask something else, and under a deterministic decoder that is the ONLY lever there is: sampling
+# knobs are ignored by the server, and an emptied tail just reproduces the first attempt.
+#
+# The rungs escalate in what they license the model to discard. The first keeps work that already
+# passes, which matters: a case sitting at six of seven oracle tests must not be told to start
+# over. The second gives up on the shape once narrowing has failed twice.
+#
+# Each rung POINTS AT the counterevidence hoisted above it (``_repeat_escalation``) rather than
+# asking the model to go find it. That split is deliberate: a controlled study of repair prompting
+# on frozen small code models found executed counterevidence carries the repair signal while
+# generic retry instructions have minimal independent effect, so the rung's job is to say what to
+# do with a concrete failure the loop has already extracted — never to request the extraction.
+_NUDGE_LADDER = (
+    "You returned a file byte-identical to your previous attempt, so the oracle ran the same code "
+    "and reached the same result. Sending it again cannot change that. Fix the failure shown "
+    "directly above: make that path produce the value the test expects, and change nothing that "
+    "already passes.",
+    "You have repeated yourself again, so narrowing has now failed twice and what is wrong is the "
+    "approach, not a detail inside it. Abandon the structure you have been writing. Read the "
+    "test's failing assertions in order and build the implementation up from what they require — "
+    "a different shape, not the same one restated.",
+)
+
+# The first failure's executed counterevidence, hoisted to sit directly above the rung it leads. It
+# is one statement and its result, so a small cap is generous; bounding it keeps a long assertion
+# diff from displacing the imperative that follows it.
+REPEAT_EVIDENCE_BYTE_CAP = 512
+_REPEAT_EVIDENCE_HEADER = (
+    "## What your file actually does — the first failure, verbatim from the run."
+)
+
+# pytest marks the failing statement with ``>`` and each line of the concrete result with ``E``.
+# Captured from a real run rather than recalled: an assertion failure renders ``> assert add(2,2)
+# == 4`` / ``E assert 0 == 4``, and a raised exception renders ``> return a - b`` / ``E TypeError:
+# …`` — one shape, whether the failing line sits in the test or in the implementation. ``ERROR``
+# short-summary lines do not collide, having no space in that position.
+_FAILING_STATEMENT_MARKER = "> "
+_FAILURE_DETAIL_MARKER = "E "
 
 # Static prefix scaffolding — part of the byte-stable prefix, so these are frozen constants.
 _SPEC_HEADER = "## Implementation task"
@@ -103,8 +145,24 @@ class PromptBuilder:
         parts.extend((_TEST_HEADER, "\n\n", spec.test_text, "\n"))
         return "".join(parts)
 
+    def nudge_for(self, repeat_count: int) -> str | None:
+        """The escalation for the ``repeat_count``-th replay, or ``None`` past the last rung.
+
+        ``None`` is the loop's stop signal, and it is what keeps the original saving of stopping on
+        a replay: after every rung has been tried, there is no further question this card knows how
+        to ask, and continuing would spend the rest of the budget re-buying an answer already given
+        three ways. ``repeat_count`` is 1-based — the first replay takes the first rung.
+        """
+        if repeat_count < 1 or repeat_count > len(_NUDGE_LADDER):
+            return None
+        return _NUDGE_LADDER[repeat_count - 1]
+
     def distill_feedback(
-        self, score: TestScore, raw_output: str, previous_attempt_source: str = ""
+        self,
+        score: TestScore,
+        raw_output: str,
+        previous_attempt_source: str = "",
+        nudge: str = "",
     ) -> str:
         """Build the repair brief: the file the model last wrote, then how that file failed.
 
@@ -119,14 +177,24 @@ class PromptBuilder:
         rendering an empty file under the header would state something false about the model's own
         work. Each section is capped separately (see ``PREVIOUS_SOURCE_BYTE_CAP``).
 
+        ``nudge`` is the escalation for a model that replayed its last answer (``nudge_for``). It
+        goes last, closest to generation: everything above it is context, and it is the only
+        imperative about what to do differently, and it is led by the first failure's own
+        counterevidence (``_repeat_escalation``). It is short and bounded, so it cannot displace
+        anything the caps kept.
+
         Every fact about the run — as opposed to about the code — is stripped, so one unchanged
-        failure distills to one unchanged brief (INV-004).
+        failure distills to one unchanged brief (INV-004). The nudge is a function of how many
+        times the model has replayed, never of the run, so that property survives it.
         """
-        brief = _failure_brief(score, raw_output)
-        if not previous_attempt_source:
-            return brief
-        shown = _cap_bytes(previous_attempt_source, PREVIOUS_SOURCE_BYTE_CAP)
-        return f"{_PREVIOUS_SOURCE_HEADER}\n\n{shown}\n\n{brief}"
+        sections = []
+        if previous_attempt_source:
+            shown = _cap_bytes(previous_attempt_source, PREVIOUS_SOURCE_BYTE_CAP)
+            sections.append(f"{_PREVIOUS_SOURCE_HEADER}\n\n{shown}")
+        sections.append(_failure_brief(score, raw_output))
+        if nudge:
+            sections.append(_repeat_escalation(nudge, raw_output))
+        return "\n\n".join(sections)
 
 
 def _failure_brief(score: TestScore, raw_output: str) -> str:
@@ -147,6 +215,47 @@ def _failure_brief(score: TestScore, raw_output: str) -> str:
     if tail.strip():
         sections.append(tail)
     return _cap_bytes("\n\n".join(sections), FEEDBACK_BYTE_CAP)
+
+
+def _repeat_escalation(nudge: str, raw_output: str) -> str:
+    """Lead the ``nudge`` with the first failure's executed counterevidence.
+
+    A replay means the model has already read the failure brief above and answered it with the same
+    file, so restating that brief is not what breaks the tie — but an instruction on its own is the
+    weakest available intervention. Hoisting the one concrete expected-vs-actual to sit directly
+    above the imperative puts executed counterevidence at the point of maximum salience and gives
+    the rung something specific to point at.
+
+    Falls back to the bare rung when a run produced no marked failure — a collection error or an
+    import failure has no failing statement to quote, and an empty header would assert one existed.
+    """
+    evidence = _first_failure_evidence(_strip_run_facts(raw_output))
+    if not evidence:
+        return nudge
+    capped = _cap_bytes(evidence, REPEAT_EVIDENCE_BYTE_CAP)
+    return f"{_REPEAT_EVIDENCE_HEADER}\n\n{capped}\n\n{nudge}"
+
+
+def _first_failure_evidence(text: str) -> str:
+    """The first failure's statement and result — pytest's ``>`` line and the ``E`` run below it.
+
+    Scoped to the FIRST failure on purpose: a model that must fix everything at once fixes nothing,
+    and the rung it leads asks for one path to change. The statement is the nearest ``>`` line
+    above the result rather than the first in the output, so an earlier passing frame in the same
+    traceback is never quoted as the cause.
+    """
+    lines = text.splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if line.startswith(_FAILURE_DETAIL_MARKER)), None
+    )
+    if start is None:
+        return ""
+    detail = takewhile(lambda line: line.startswith(_FAILURE_DETAIL_MARKER), lines[start:])
+    preceding = reversed(lines[:start])
+    statement = next(
+        (line for line in preceding if line.startswith(_FAILING_STATEMENT_MARKER)), ""
+    )
+    return "\n".join(filter(None, (statement, *detail)))
 
 
 def _strip_run_facts(raw_output: str) -> str:

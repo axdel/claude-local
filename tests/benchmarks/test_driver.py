@@ -102,11 +102,14 @@ def test_run_cases_aggregates_a_passing_and_a_failing_case_in_order(tmp_path: Pa
     assert by_id["passing"].outcome.code == passing_source
     assert by_id["failing"].outcome.status is Status.EXHAUSTED
     assert by_id["failing"].outcome.code == failing_source
-    # Two, not the budgeted four: the replay serves the identical corrupted file every call, so
-    # attempt 2 comes back byte-identical and the loop stops rather than replay a scored answer
-    # to the end of the budget (D-LOOP-004). One attempt to try it, one to prove it repeats.
-    assert failing_case.task.budget.max_attempts > 2  # the budget really did allow more
-    assert by_id["failing"].outcome.record.attempts == 2
+    # The replay serves the identical corrupted file every call, so every attempt after the first
+    # is a verbatim repeat. A repeat no longer ends the run: it escalates, walking the nudge ladder
+    # one rung per replay, and the run ends when the ladder is spent. At this budget the ladder
+    # outlasts it — 1 first attempt + 1 unescalated repeat + 2 nudged repeats == 4 — so a
+    # permanently stuck model spends the whole budget here. Ladder exhaustion is only observable at
+    # a budget above that, which is where tests/test_loop.py pins it.
+    assert failing_case.task.budget.max_attempts == 4
+    assert by_id["failing"].outcome.record.attempts == 4
     assert list(scratch_root.iterdir()) == []
 
 
@@ -222,12 +225,13 @@ def test_run_cases_reports_each_case_and_attempt_as_the_run_advances(tmp_path: P
     """A run is watchable only if its events arrive interleaved with the work, in order.
 
     Oracle: the mixed pass/fail ladder above already pins what these two cases do — a golden reply
-    reaches DONE on its first attempt, and the mutated reply fails, repeats itself verbatim, and
-    EXHAUSTS on the second (D-LOOP-004). The event sequence is therefore fully determined by
-    fixture data, without running anything: open case 1, resolve one attempt, close it, then open
-    case 2, resolve two, close it. A run that reported only after finishing would put both
-    ``start`` events adjacent, which this sequence refuses. The joined deltas pin the other half:
-    text decoded inside the client reached an observer three layers up.
+    reaches DONE on its first attempt, and the mutated reply fails, repeats itself verbatim on
+    every call, and EXHAUSTS once it has walked the nudge ladder to the end of its budget. The
+    event sequence is therefore fully determined by fixture data, without running anything: open
+    case 1, resolve one attempt, close it, then open case 2, resolve four, close it. A run that
+    reported only after finishing would put both ``start`` events adjacent, which this sequence
+    refuses. The joined deltas pin the other half: text decoded inside the client reached an
+    observer three layers up.
     """
     cases = _load_all_cases()
     passing_case = cases["03_repositories"]
@@ -242,7 +246,7 @@ def test_run_cases_reports_each_case_and_attempt_as_the_run_advances(tmp_path: P
         failing_case.task.impl_path: failing_source,
     }
     recorder = RecordingProgress()
-    assert failing_case.task.budget.max_attempts > 2  # the budget allowed more than it spent
+    assert failing_case.task.budget.max_attempts == 4  # every one of which the nudge ladder spends
 
     with replay_cases_http_client(replies) as http_client:
         run_cases(
@@ -261,6 +265,8 @@ def test_run_cases_reports_each_case_and_attempt_as_the_run_advances(tmp_path: P
         f"start failing 2/2 of {failing_case.task.impl_path}",
         "attempt 1 green=False",
         "attempt 2 green=False",
+        "attempt 3 green=False",
+        "attempt 4 green=False",
         "finish failing EXHAUSTED",
     ]
     assert passing_source in "".join(recorder.deltas)

@@ -240,6 +240,160 @@ def test_a_large_previous_attempt_cannot_evict_the_failure_diagnostics(tmp_path:
     assert "# filler" in out  # the source is still shown, just trimmed
 
 
+def test_the_nudge_ladder_escalates_and_is_finite(tmp_path: Path) -> None:
+    """Each rung asks a different question, and the ladder ends rather than repeating.
+
+    Oracle: a nudge exists only to make the next prompt differ from the one that produced a replay,
+    so two rungs with the same text would be no perturbation at all — the second would reproduce
+    the first's absorbing state exactly. And the ladder has to end: past the last rung there is no
+    further question this card knows how to ask, and continuing would spend the remaining budget
+    re-asking one the model has already answered three ways.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+
+    first = builder.nudge_for(1)
+    second = builder.nudge_for(2)
+
+    assert first and second
+    assert first != second
+    assert builder.nudge_for(99) is None
+
+
+def test_a_nudge_reaches_the_end_of_the_repair_brief(tmp_path: Path) -> None:
+    """The nudge is the instruction for the next attempt, so it sits closest to generation.
+
+    Oracle: everything else in the brief is context — the file, the failure. The nudge is the only
+    imperative about what to do differently, and it is what has to change the prompt's bytes, so
+    burying it above several kilobytes of source would waste the one section that exists to be
+    read. It is also short and fixed-size, so placing it after the capped sections cannot push
+    anything out.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+    nudge = builder.nudge_for(1)
+    assert nudge is not None
+
+    out = builder.distill_feedback(
+        _score(0, 1, 0, 1, 1),
+        "FAILED tests/t.py::test_add - boom\n",
+        previous_attempt_source="def add(a, b):\n    return a - b\n",
+        nudge=nudge,
+    )
+
+    assert out.endswith(nudge)
+
+
+# Captured verbatim from `pytest -q` on a two-failure module, not authored from memory: an
+# assertion failure whose `>` line is in the TEST, and a raised exception whose `>` line is in the
+# IMPLEMENTATION. Boundary fixtures are only evidence when they are the real wire bytes.
+_REAL_PYTEST_FAILURES = """\
+=================================== FAILURES ===================================
+_____________________________ test_add_two_and_two _____________________________
+
+    def test_add_two_and_two():
+>       assert add(2, 2) == 4
+E       assert 0 == 4
+E        +  where 0 = add(2, 2)
+
+test_impl.py:5: AssertionError
+___________________________ test_add_raises_on_text ____________________________
+
+    def test_add_raises_on_text():
+>       add("a", 1)
+
+test_impl.py:9:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+a = 'a', b = 1
+
+    def add(a, b):
+>       return a - b
+               ^^^^^
+E       TypeError: unsupported operand type(s) for -: 'str' and 'int'
+
+impl.py:2: TypeError
+=========================== short test summary info ============================
+FAILED test_impl.py::test_add_two_and_two - assert 0 == 4
+FAILED test_impl.py::test_add_raises_on_text - TypeError: unsupported operand...
+2 failed in 0.01s
+"""
+
+# The escalation section, sliced at its own header rather than by a byte offset back from the
+# nudge. The distinction matters: the failure brief ABOVE the escalation also quotes failures, so a
+# loose window would let these tests pass on the brief's content while the injection was broken.
+_ESCALATION_ANCHOR = "verbatim from the run"
+
+
+def _escalation_of(brief: str) -> str:
+    """The part of a repair brief from the counterevidence header onward, or empty if absent."""
+    return "" if _ESCALATION_ANCHOR not in brief else brief[brief.index(_ESCALATION_ANCHOR) :]
+
+
+def test_a_nudge_is_led_by_the_executed_counterevidence_not_by_exhortation(tmp_path: Path) -> None:
+    """The escalation quotes what the code actually did, not a request to go find out.
+
+    Oracle: pytest's own contract, read off the captured bytes above — it marks the statement that
+    failed with ``>`` and the concrete result with ``E``, so ``assert 0 == 4`` is the expected
+    value here because that is what the run printed — derived independently of anything this
+    module computes. The design reason is the controlled finding this ladder is built on: on
+    frozen small code models, executed counterevidence carries the repair signal while generic
+    retry instructions carry almost none. A rung that only exhorts is the arm found inert.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+    nudge = builder.nudge_for(1)
+    assert nudge is not None
+
+    out = builder.distill_feedback(_score(0, 2, 0, 2, 2), _REAL_PYTEST_FAILURES, nudge=nudge)
+    escalation = _escalation_of(out)
+
+    assert "assert 0 == 4" in escalation
+    assert "assert add(2, 2) == 4" in escalation
+
+
+def test_only_the_first_failures_evidence_leads_the_nudge(tmp_path: Path) -> None:
+    """One failure is quoted, because the rung it introduces asks for one path to change.
+
+    Oracle: the captured run holds two independent failures — an assertion and a ``TypeError``. The
+    rung says "make that path produce the value the test expects", which is a single-target
+    instruction; leading it with every failure at once contradicts it and asks a model that already
+    replayed once to fix everything simultaneously. The second failure stays reachable in the
+    diagnostics above, so nothing is hidden — it is only not what the imperative points at.
+
+    Both halves are asserted. "The second failure is absent" is vacuously true of an escalation
+    that quoted nothing, so on its own it would pass against the very defect it exists to catch.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+    nudge = builder.nudge_for(1)
+    assert nudge is not None
+
+    out = builder.distill_feedback(_score(0, 2, 0, 2, 2), _REAL_PYTEST_FAILURES, nudge=nudge)
+    escalation = _escalation_of(out)
+
+    assert "assert 0 == 4" in escalation  # the first failure IS quoted
+    assert "TypeError: unsupported operand" not in escalation  # the second is NOT
+
+
+def test_a_run_with_no_marked_failure_falls_back_to_the_bare_rung(tmp_path: Path) -> None:
+    """No failing statement to quote means no counterevidence header — never an empty one.
+
+    Oracle: a collection error or an import failure aborts before any test body runs, so pytest
+    emits no ``>``/``E`` pair at all. Rendering the header over nothing would assert that a failing
+    statement was found and shown, which is false, and a model reconciles what the prompt claims —
+    the same reason an absent previous attempt renders no source section.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+    nudge = builder.nudge_for(1)
+    assert nudge is not None
+
+    out = builder.distill_feedback(
+        _score(0, 1, 1, 0, 1),
+        "ERROR tests/t.py - ImportError: no module named 'app'\n",
+        nudge=nudge,
+    )
+
+    assert out.endswith(nudge)
+    assert _escalation_of(out) == ""
+
+
 def test_distill_feedback_strips_absolute_paths(tmp_path: Path) -> None:
     # The volatile worktree/tmp prefix is stripped; the useful relative tail (file:line) is kept.
     builder = PromptBuilder(_card(tmp_path))

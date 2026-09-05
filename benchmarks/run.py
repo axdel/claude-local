@@ -148,19 +148,25 @@ class ConsoleProgress:
 
     def attempt(self, progress: AttemptProgress) -> None:
         rate = progress.generation.tokens_per_second
-        # A repeat ends the run short of its budget, so the marker is additive to the verdict:
-        # without it a watcher sees an unexplained halt, with it the cause and the score both.
-        repeat = (
-            " (verbatim repeat of the previous attempt — stopping)"
-            if (progress.repeats_previous)
-            else ""
-        )
+        # Two facts the score alone cannot show: that an attempt replayed its predecessor (the
+        # repeat), and that its prompt carried an escalation (the loop's answer to one). Both are
+        # additive to the verdict — without them a watcher sees a run end short of its budget with
+        # no visible cause. "repeat" describes what this attempt WROTE; "nudged" what it was ASKED.
+        marks = [
+            label
+            for label, fired in (
+                ("repeat", progress.repeats_previous),
+                ("nudged", progress.nudged),
+            )
+            if fired
+        ]
+        annotation = f"  [{', '.join(marks)}]" if marks else ""
         self._line(
             f"    attempt {progress.attempt}  "
             f"{progress.generation.completion_tokens:6d} tok  "
             f"{progress.generation.seconds:6.1f}s  "
             f"{'  n/a' if rate is None else f'{rate:5.1f}'} tok/s  ->  "
-            f"{_attempt_verdict(progress)}{repeat}"
+            f"{_attempt_verdict(progress)}{annotation}"
         )
 
     def case_finished(self, result: CaseResult) -> None:

@@ -152,9 +152,14 @@ A weak model is only worth using if it is fast enough to be cheaper than your ow
 - **One model resident at a time** — local inference is memory-bandwidth-bound.
 - **Derail guard** — repetition penalty + hard token cap + repetition-loop detector + graceful
   timeout, streaming so a runaway is aborted mid-generation.
-- **Repeat detection across attempts** — an attempt that comes back byte-identical to the one
-  before it is a replay of an answer already scored, not a repair, so the loop stops there
-  instead of spending the rest of the budget re-asking a question it has already had answered.
+- **Repeat detection across attempts, answered by a nudge ladder** — an attempt that comes back
+  byte-identical to the one before it proves the prompt is an absorbing state: under greedy
+  decoding the same prompt yields the same file forever, so re-asking is arithmetic, not patience.
+  The loop escalates instead of stopping — each repeat takes the next rung of a fixed ladder,
+  appended last in the tail and led by the first failure's own executed counterevidence (the
+  statement pytest marked and the result beneath it). The run ends when the ladder is spent. This
+  is the only lever the runtime has: the server ignores temperature, top-p and seed, and emptying
+  the tail just replays the first attempt.
 
 ## Where It Fits
 

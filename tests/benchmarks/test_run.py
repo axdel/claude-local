@@ -281,29 +281,34 @@ def test_console_progress_names_what_each_attempt_produced(
     assert "attempt 1" in err
 
 
-def test_console_progress_explains_the_repeat_that_ends_a_run_early(
+def test_console_progress_marks_a_repeated_attempt_and_the_escalation_it_earned(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A run that stops short of its budget must say why, on the attempt that caused it.
+    """A verbatim repeat and the loop's answer to it are facts the score alone cannot show.
 
-    Oracle: the loop stops on a byte-identical regeneration, so a watcher otherwise sees "3 of 4
-    attempts" and an unexplained halt — indistinguishable from a crash. The marker rides on the
-    attempt line rather than the case line because the repeat is a fact about that attempt, and
-    it is additive: the oracle verdict it earned is still reported alongside it.
+    Oracle: the two flags answer different questions — ``repeat`` is what the attempt WROTE
+    (byte-identical to its predecessor), ``nudged`` is what it was ASKED (its prompt carried an
+    escalation). A watcher seeing neither reads a run that walks its whole budget at an unchanged
+    score as a hang. Both ride on the attempt line rather than the case line because each is a fact
+    about that attempt, and both are additive: the oracle verdict is still reported alongside them.
     """
     ConsoleProgress().attempt(
         build_attempt_progress(
             score=build_test_score(passed=2, failed=6, collected=8, expected=8),
             repeats_previous=True,
+            nudged=True,
         )
     )
 
     err = capsys.readouterr().err
-    assert "2/8 oracle tests passed" in err  # the verdict survives the marker
-    assert "verbatim repeat" in err
+    assert "2/8 oracle tests passed" in err  # the verdict survives the marks
+    assert "repeat" in err
+    assert "nudged" in err
 
     ConsoleProgress().attempt(build_attempt_progress())
-    assert "verbatim repeat" not in capsys.readouterr().err
+    unmarked = capsys.readouterr().err
+    assert "repeat" not in unmarked
+    assert "nudged" not in unmarked
 
 
 def test_console_progress_shows_the_decode_rate_it_was_given(
