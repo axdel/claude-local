@@ -644,9 +644,23 @@ def test_writes_the_frozen_oracle_test_before_running(tmp_path: Path) -> None:
     assert not oracle.is_relative_to(worktree / "src")  # never inside the snapshot subtree
 
 
-def test_prefix_is_stable_and_retry_tail_uses_oracle_output_not_prior_source(
+def test_prefix_is_stable_and_the_retry_tail_carries_the_file_that_failed(
     tmp_path: Path,
 ) -> None:
+    """The prefix never moves; the tail carries both the failure AND the source that caused it.
+
+    Oracle: ``rules_card.md`` tells the model to "return the corrected complete file. Change what
+    the failure points to; keep what already passed." Both clauses name the previous file, so a
+    tail without it asks for a repair of an artifact the model was never given — it must re-derive
+    the whole implementation from the spec each attempt and guess which part of its own unseen code
+    produced the failure.
+
+    This overturns an earlier assertion that the prior source stays OUT of the tail. That assertion
+    carried no rationale and no decision record; the shipped card is the stronger authority,
+    because it is the instruction actually sent to the model. The prefix half of the guarantee is
+    unchanged and still asserted here: the source rides in the tail, so KV-cache reuse is untouched
+    (D-PROMPT-001).
+    """
     worktree = _setup_worktree(tmp_path)
     recording = RecordingReplayBackend([_edit_script(_V0), _edit_script(_V1)])
     assertion_failure = (
@@ -670,7 +684,7 @@ def test_prefix_is_stable_and_retry_tail_uses_oracle_output_not_prior_source(
     assert prefixes[0] == prefixes[1]  # the KV-cacheable prefix never mutates between attempts
     assert tails[0] == ""  # attempt 0 has no feedback to distil
     assert "AssertionError: assert 0 == 1" in tails[1]
-    assert _V0 not in tails[1]
+    assert _V0 in tails[1]  # the file attempt 0 wrote — the artifact the card asks it to correct
 
 
 def test_prefix_is_built_once_per_task(tmp_path: Path) -> None:

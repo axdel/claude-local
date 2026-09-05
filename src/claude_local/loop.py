@@ -3,8 +3,8 @@
 This is the top of the engine: it owns the control flow the README calls the loop. Given a task
 spec and a worktree, it builds the KV-cacheable prefix ONCE, then loops under the budget —
 generate, apply the whole-file reply to the one permitted impl path, score the immutable oracle
-test, snapshot the attempt — feeding the runner-owned pytest diagnostics (never prior model
-source) back as distilled feedback until the oracle is green or the budget is spent. On exit it
+test, snapshot the attempt — feeding the runner-owned pytest diagnostics back with the file that
+produced them until the oracle is green or the budget is spent. On exit it
 restores the best-scoring snapshot and classifies a
 terminal ``Status`` by strict precedence, then aggregates the local economy record for the run.
 
@@ -79,6 +79,21 @@ class AttemptProgress:
             and self.generation.fault is None
             and self.generation.derail_reason is None
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _ScoredAttempt:
+    """One attempt that reached the oracle: the file it wrote, and the verdict on that file.
+
+    The pair travels together because the next prompt needs both — the failure says what broke and
+    the source says what broke it, and a brief carrying one without the other asks the model to
+    repair code it cannot see. ``None`` in place of this whole object is how the loop reads "that
+    attempt never reached the oracle", which is what keeps a stale file from ever being reported
+    to the model as its latest work.
+    """
+
+    source: str
+    run: OracleRun
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,35 +206,31 @@ class Loop:
         oracle_path.write_text(spec.test_text, encoding="utf-8")
 
         results: list[GenerationResult] = []
-        last_run: OracleRun | None = None
+        last_attempt: _ScoredAttempt | None = None
 
         for index in range(spec.budget.max_attempts):
-            tail = (
-                ""
-                if last_run is None
-                else self._prompt.distill_feedback(last_run.score, last_run.output)
-            )
+            tail = "" if last_attempt is None else self._repair_brief(last_attempt)
             generation = self._client.generate(stable, tail, spec.budget)
             repeats_previous = bool(results) and generation.text == results[-1].text
             results.append(generation)
-            last_run = self._score_attempt(generation, index, spec, worktree, oracle_path)
+            last_attempt = self._score_attempt(generation, index, spec, worktree, oracle_path)
             if self._on_attempt is not None:
                 self._on_attempt(
                     AttemptProgress(
                         attempt=len(results),
                         generation=generation,
-                        score=None if last_run is None else last_run.score,
+                        score=None if last_attempt is None else last_attempt.run.score,
                         repeats_previous=repeats_previous,
                     )
                 )
-            if repeats_previous or last_run is None or last_run.score.is_green:
+            if repeats_previous or last_attempt is None or last_attempt.run.score.is_green:
                 break
 
         self._snapshots.restore_best()
         best = self._snapshots.best()
         best_score = best.score if best is not None else None
         final = results[-1] if results else None
-        status = _terminal_status(final, scored=last_run is not None, best_score=best_score)
+        status = _terminal_status(final, scored=last_attempt is not None, best_score=best_score)
         record = LocalEconomyRecord.from_run(
             model=self._model,
             results=results,
@@ -234,6 +245,10 @@ class Loop:
             fault=final.fault if final is not None else None,
         )
 
+    def _repair_brief(self, attempt: _ScoredAttempt) -> str:
+        """The next attempt's tail: the file the last attempt wrote, and how it failed."""
+        return self._prompt.distill_feedback(attempt.run.score, attempt.run.output, attempt.source)
+
     def _score_attempt(
         self,
         generation: GenerationResult,
@@ -241,7 +256,7 @@ class Loop:
         spec: TaskSpec,
         worktree: Path,
         oracle_path: Path,
-    ) -> OracleRun | None:
+    ) -> _ScoredAttempt | None:
         """Apply one generation and score it; ``None`` when it never reached the oracle.
 
         Every way an attempt can yield nothing to score collapses to ``None`` here: an upstream
@@ -261,4 +276,6 @@ class Loop:
             return None
         run = self._runner.run(oracle_path, worktree, spec.expected_tests)
         self._snapshots.record(index, run.score)
-        return run
+        # The payload validated as UTF-8 on the way in, so decoding returns the applied bytes
+        # exactly — the file the oracle just scored, not what the reply meant to write.
+        return _ScoredAttempt(source=reply.payload.decode("utf-8"), run=run)

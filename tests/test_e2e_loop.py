@@ -177,8 +177,22 @@ def _assert_record_written(record: LocalEconomyRecord, directory: Path, *, statu
 # --- Scenario A: partial -> worse partial -> green reaches DONE ---------------------
 
 
-def test_e2e_retry_carries_pytest_failure_not_prior_implementation(tmp_path: Path) -> None:
-    """Attempt two receives real sandboxed pytest diagnostics and never echoes model source."""
+def test_e2e_retry_carries_the_pytest_failure_and_the_file_that_failed(tmp_path: Path) -> None:
+    """Attempt two receives real sandboxed pytest diagnostics AND the file that produced them.
+
+    Oracle: ``rules_card.md`` tells the model to "return the corrected complete file. Change what
+    the failure points to; keep what already passed." Both clauses name the previous file, so a
+    brief without it asks for a repair of an artifact the model was never handed.
+
+    This overturns an earlier assertion that the prior implementation stays out of the tail. That
+    assertion had no rationale behind it and no decision record; the shipped card is the stronger
+    authority, being the instruction actually sent. The prefix half is unchanged and still asserted
+    below: the source rides in the tail, so KV-cache reuse is untouched (D-PROMPT-001).
+
+    Strongest of the three tests covering this because nothing here is stubbed but the model: the
+    source travels through real SSE decoding, real whole-file extraction, a real containment write,
+    and a real ``python -m pytest``, and is read back off the wire the second call actually sent.
+    """
     worktree = _make_worktree(tmp_path)
     oracle = _read_fixture("oracle_test.txt")
     prior_implementation = _read_fixture("impl_abs.txt").strip()
@@ -195,8 +209,8 @@ def test_e2e_retry_carries_pytest_failure_not_prior_implementation(tmp_path: Pat
     second_prefix, second_tail = backend.calls[1]
     assert first_prefix == second_prefix
     assert first_tail == ""
-    assert "assert 10 == -10" in second_tail
-    assert prior_implementation not in second_tail
+    assert "assert 10 == -10" in second_tail  # how it broke
+    assert prior_implementation in second_tail  # and what broke it
 
 
 def test_e2e_partial_then_green_reaches_done(tmp_path: Path) -> None:

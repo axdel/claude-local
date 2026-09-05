@@ -97,7 +97,7 @@ distilled rules card + tight spec + optional ordered read-only context + FAILING
    loop writes ONLY the permitted impl path (never the context files)
         |
         v
-   run the frontier's test  --red-->  feedback to model   (repeat under token cap + derail guard)
+   run the frontier's test  --red-->  its file + the failure   (repeat under cap + derail guard)
         |
       green
         |
@@ -145,7 +145,10 @@ A weak model is only worth using if it is fast enough to be cheaper than your ow
 - **Non-thinking generation by default, hard thinking cap** — the derail guard bounds decode by
   construction.
 - **Stable-prefix prompting** — card + spec + optional ordered context files + test stay fixed;
-  only the feedback tail changes, so the prefill is KV-cache-reused across iterations.
+  only the tail changes, so the prefill is KV-cache-reused across iterations.
+- **The tail is a repair brief, not a bug report** — it carries the complete file the last attempt
+  wrote alongside the failure that file produced, because the card asks the model to correct its
+  file and keep what already passed, and neither is possible against code it cannot see.
 - **One model resident at a time** — local inference is memory-bandwidth-bound.
 - **Derail guard** — repetition penalty + hard token cap + repetition-loop detector + graceful
   timeout, streaming so a runaway is aborted mid-generation.

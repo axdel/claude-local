@@ -181,6 +181,65 @@ def test_distill_feedback_includes_the_failing_node_id(tmp_path: Path) -> None:
     assert "test_add_specific_case" in out
 
 
+def test_distill_feedback_shows_the_source_that_produced_the_failure(tmp_path: Path) -> None:
+    """The repair brief carries the file under repair, because the card asks for it by name.
+
+    Oracle: the committed rules card instructs the model to "return the corrected complete file"
+    and to "keep what already passed" — an instruction that names an artifact. A brief omitting it
+    asks the model to correct something it has never seen and to preserve passing code it cannot
+    read, so carrying the source is what the card already published, not an addition to it. It also
+    makes the diagnostics already sent legible: a traceback naming a line is only actionable beside
+    the file that line is in.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+
+    out = builder.distill_feedback(
+        _score(0, 1, 0, 1, 1),
+        "FAILED tests/t.py::test_add - AssertionError: assert -1 == 3\n",
+        previous_attempt_source="def add(a, b):\n    return a - b\n",
+    )
+
+    assert "return a - b" in out
+
+
+def test_distill_feedback_without_a_previous_attempt_carries_no_source_section(
+    tmp_path: Path,
+) -> None:
+    """The first attempt has produced nothing, so the brief must not announce a file.
+
+    Oracle: the loop calls this only after a scored attempt, but the default has to hold on its
+    own — an empty source rendered under its header would tell the model its previous attempt was
+    an empty file, which is a false statement about its own work and exactly the kind of thing a
+    model will dutifully try to reconcile.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+
+    out = builder.distill_feedback(_score(0, 1, 0, 1, 1), "FAILED tests/t.py::test_add - boom\n")
+
+    assert "previous attempt" not in out.lower()
+
+
+def test_a_large_previous_attempt_cannot_evict_the_failure_diagnostics(tmp_path: Path) -> None:
+    """Source and failure are capped independently, so neither can starve the other.
+
+    Oracle: the two sections answer different questions — what you wrote, and how it broke — and a
+    repair needs both. Under one shared cap the larger section decides how much of the smaller one
+    survives, so a big implementation would silently buy itself less diagnosis exactly when it
+    needs more. Independent caps make each section's budget a property of that section alone.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+    node_id = "FAILED tests/t.py::test_add - AssertionError: assert -1 == 3"
+
+    out = builder.distill_feedback(
+        _score(0, 1, 0, 1, 1),
+        f"{node_id}\n",
+        previous_attempt_source="# filler\n" * 4000,  # far over any single-section cap
+    )
+
+    assert node_id in out
+    assert "# filler" in out  # the source is still shown, just trimmed
+
+
 def test_distill_feedback_strips_absolute_paths(tmp_path: Path) -> None:
     # The volatile worktree/tmp prefix is stripped; the useful relative tail (file:line) is kept.
     builder = PromptBuilder(_card(tmp_path))

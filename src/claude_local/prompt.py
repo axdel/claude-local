@@ -4,8 +4,9 @@ D-PROMPT-001, amended by D-CONTEXT-001: the loop reuses the server's prefill KV 
 sending a prefix that is byte-identical across a task's iterations — the static rules card,
 the task spec, any ordered read-only context files, and the IMMUTABLE test, in a fixed layout
 with no builder-generated timestamps, run ids, or absolute worktree paths. Pinning the test in
-the prefix also blocks the model from rewriting or importing it away. Only the tail varies:
-distilled feedback, byte-capped and path-stripped so a failure never primes a derail.
+the prefix also blocks the model from rewriting or importing it away. Only the tail varies: the
+repair brief — the file the last attempt wrote, then how it failed — each section byte-capped and
+path-stripped so neither can starve the other or prime a derail.
 
 Assembly is a pure function of (card, spec): ``stable_prefix`` returns identical bytes for the
 same spec, which is what the prefill cache keys on. The card is read once at construction (a
@@ -29,6 +30,13 @@ if TYPE_CHECKING:
 FEEDBACK_BYTE_CAP = 4096
 _FEEDBACK_TAIL_LINES = 40
 _TRUNCATION_MARKER = "\n[...truncated]"
+
+# The previous attempt's own source, capped INDEPENDENTLY of the failure diagnostics above. The
+# two sections answer different questions — what you wrote, and how it broke — and a repair needs
+# both, so a shared cap would let the larger one decide how much of the smaller survived. 8 KiB
+# holds a whole module at the size these tasks produce.
+PREVIOUS_SOURCE_BYTE_CAP = 8192
+_PREVIOUS_SOURCE_HEADER = "## Your previous attempt — the complete file you wrote, scored below."
 
 # Static prefix scaffolding — part of the byte-stable prefix, so these are frozen constants.
 _SPEC_HEADER = "## Implementation task"
@@ -95,27 +103,50 @@ class PromptBuilder:
         parts.extend((_TEST_HEADER, "\n\n", spec.test_text, "\n"))
         return "".join(parts)
 
-    def distill_feedback(self, score: TestScore, raw_output: str) -> str:
-        """Distill a failing run into a compact, path-stripped, byte-capped tail.
+    def distill_feedback(
+        self, score: TestScore, raw_output: str, previous_attempt_source: str = ""
+    ) -> str:
+        """Build the repair brief: the file the model last wrote, then how that file failed.
 
-        Layout: a hand-readable score line, then the failing node ids, then the run's last lines
-        (with lines already shown as node ids removed, so a small output is never printed twice).
-        Node ids sit ahead of the tail, so the byte cap only ever trims the low-signal tail.
+        The card instructs the model to "return the corrected complete file" and to "keep what
+        already passed" — two clauses that both name an artifact. Sending only the failure asks it
+        to correct code it has never seen and to preserve passing lines it cannot read, so it must
+        re-derive the whole implementation from the spec every attempt and guess which part of its
+        own output broke. Carrying the source is also what makes the diagnostics legible: a
+        traceback naming a line is actionable only beside the file that line is in.
 
-        Every fact about the run — as opposed to about the code — is removed first, so one
-        unchanged failure distills to one unchanged tail (INV-004).
+        ``previous_attempt_source`` is empty for the first attempt, which has produced nothing —
+        rendering an empty file under the header would state something false about the model's own
+        work. Each section is capped separately (see ``PREVIOUS_SOURCE_BYTE_CAP``).
+
+        Every fact about the run — as opposed to about the code — is stripped, so one unchanged
+        failure distills to one unchanged brief (INV-004).
         """
-        stripped = _strip_run_facts(raw_output)
-        sections = [_score_header(score)]
-        node_ids = _failing_node_ids(stripped)
-        tail = _last_lines(stripped, _FEEDBACK_TAIL_LINES)
-        if node_ids:
-            sections.append(node_ids)
-            already = set(node_ids.splitlines())
-            tail = "\n".join(line for line in tail.splitlines() if line not in already)
-        if tail.strip():
-            sections.append(tail)
-        return _cap_bytes("\n\n".join(sections), FEEDBACK_BYTE_CAP)
+        brief = _failure_brief(score, raw_output)
+        if not previous_attempt_source:
+            return brief
+        shown = _cap_bytes(previous_attempt_source, PREVIOUS_SOURCE_BYTE_CAP)
+        return f"{_PREVIOUS_SOURCE_HEADER}\n\n{shown}\n\n{brief}"
+
+
+def _failure_brief(score: TestScore, raw_output: str) -> str:
+    """Distill a failing run into a compact, path-stripped, byte-capped failure summary.
+
+    Layout: a hand-readable score line, then the failing node ids, then the run's last lines (with
+    lines already shown as node ids removed, so a small output is never printed twice). Node ids
+    sit ahead of the tail, so the byte cap only ever trims the low-signal tail.
+    """
+    stripped = _strip_run_facts(raw_output)
+    sections = [_score_header(score)]
+    node_ids = _failing_node_ids(stripped)
+    tail = _last_lines(stripped, _FEEDBACK_TAIL_LINES)
+    if node_ids:
+        sections.append(node_ids)
+        already = set(node_ids.splitlines())
+        tail = "\n".join(line for line in tail.splitlines() if line not in already)
+    if tail.strip():
+        sections.append(tail)
+    return _cap_bytes("\n\n".join(sections), FEEDBACK_BYTE_CAP)
 
 
 def _strip_run_facts(raw_output: str) -> str:
