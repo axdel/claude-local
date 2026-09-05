@@ -26,8 +26,6 @@ import sys
 import time
 from pathlib import Path
 
-import httpx
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
@@ -35,16 +33,6 @@ from claude_local.model_registry import ModelRegistry  # noqa: E402
 from claude_local.model_server import ModelServer  # noqa: E402
 
 _EXAMPLE = _REPO_ROOT / "examples/quicksort/run.py"
-
-
-def _served_model_id(base_url: str) -> str:
-    """Ask the running server which model it is serving.
-
-    The server names the model however it chose to, and the chat-completions request must echo
-    that id back. Reading it beats assuming it equals the catalog name or the store path.
-    """
-    payload = httpx.get(f"{base_url}/v1/models", timeout=30.0).json()
-    return str(payload["data"][0]["id"])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -66,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     with server.running(timeout_s=args.startup_timeout) as handle:
         ready_after = time.monotonic() - started
-        served = _served_model_id(handle.base_url)
+        served = handle.served_model_id()
         print(f"[e2e] ready in  : {ready_after:.1f}s (pid {handle.pid})", file=sys.stderr)
         print(f"[e2e] serving   : {served}", file=sys.stderr)
 

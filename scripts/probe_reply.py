@@ -36,12 +36,6 @@ from claude_local.types import Budget, TaskSpec  # noqa: E402
 _RULES_CARD = _REPO_ROOT / "src/claude_local/rules_card.md"
 
 
-def _served_model_id(base_url: str) -> str:
-    """Ask the running server which model it is serving, rather than assuming its id."""
-    payload = httpx.get(f"{base_url}/v1/models", timeout=30.0).json()
-    return str(payload["data"][0]["id"])
-
-
 def _spec_from(task_dir: Path, budget: Budget) -> TaskSpec:
     """Read a task directory's spec and its single oracle into a TaskSpec."""
     oracles = sorted(task_dir.glob("*_oracle.py"))
@@ -81,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     server = ModelServer.for_model(resolved)
 
     with server.running(timeout_s=args.startup_timeout) as handle:
-        served = _served_model_id(handle.base_url)
+        served = handle.served_model_id()
         with httpx.Client(timeout=args.timeout) as http:
             backend = HttpxBackend(base_url=handle.base_url, client=http, model=served)
             # The same prefix implement() sends — read from the builder and the bundled card,

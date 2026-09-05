@@ -49,6 +49,9 @@ DEFAULT_STARTUP_TIMEOUT_S = 480.0
 """Eight minutes: a 27-31B model at 6-bit streams off disk on a cold first load."""
 
 _READINESS_POLL_S = 0.25
+
+_CATALOGUE_TIMEOUT_S = 30.0
+"""One-shot budget for reading the served model id — generous, since it is asked once per run."""
 """Probe interval. A refused connection returns immediately, so polling costs almost nothing."""
 
 _TERMINATE_GRACE_S = 10.0
@@ -77,6 +80,27 @@ class ServerHandle:
     base_url: str
     port: int
     pid: int
+
+    def served_model_id(self) -> str:
+        """Ask the running server which model it is serving.
+
+        The server names the model however it chose to — mlx_vlm advertises the store path it was
+        launched with, which is neither the catalogue name nor the repo id — and every
+        chat-completions request must echo that id back. Asking beats assuming, so the handle that
+        already knows the address owns the question.
+
+        Returns:
+            The id of the first model the server advertises at its catalogue endpoint.
+
+        Raises:
+            httpx.HTTPError: The server did not answer.
+            LookupError: The server answered, but advertises no model to address.
+        """
+        catalogue_url = f"{self.base_url}{_READINESS_PATH}"
+        advertised = httpx.get(catalogue_url, timeout=_CATALOGUE_TIMEOUT_S).json()["data"]
+        if not advertised:
+            raise LookupError(f"the model server at {catalogue_url} advertises no model")
+        return str(advertised[0]["id"])
 
 
 @dataclass(frozen=True, slots=True)

@@ -30,9 +30,12 @@ from claude_local.model_server import (
 )
 
 # A real HTTP server answering the readiness endpoint, and nothing else. Spawned as a genuine
-# subprocess so teardown assertions are about a real process and a real bound port.
+# subprocess so teardown assertions are about a real process and a real bound port. The body it
+# serves is an argument, so a test can choose what the catalogue endpoint advertises.
 _SUBSTITUTE_SERVER = """
 import http.server, sys
+
+body = sys.argv[2].encode()
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -40,13 +43,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b'{"data": []}')
+        self.wfile.write(body)
 
     def log_message(self, *args):
         pass
 
 http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 """
+
+# OpenAI's /v1/models response shape, which mlx_vlm implements: a list envelope whose entries
+# carry the id a chat-completions request must echo back.
+_ONE_MODEL_BODY = (
+    '{"object": "list", "data": [{"id": "substitute/store-path", "object": "model"}]}'
+)
+_NO_MODELS_BODY = '{"object": "list", "data": []}'
 
 
 def _free_port() -> int:
@@ -56,10 +66,10 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
-def _substitute(port: int) -> ModelServer:
+def _substitute(port: int, *, body: str = _ONE_MODEL_BODY) -> ModelServer:
     """A ModelServer whose command is a real HTTP server rather than a 12 GB model."""
     return ModelServer(
-        command=(sys.executable, "-c", _SUBSTITUTE_SERVER, str(port)),
+        command=(sys.executable, "-c", _SUBSTITUTE_SERVER, str(port), body),
         host="127.0.0.1",
         port=port,
     )
@@ -189,6 +199,35 @@ def test_the_base_url_is_the_origin_the_backend_extends(tmp_path: Path) -> None:
 
     assert server.base_url == "http://127.0.0.1:8088"
     assert not server.base_url.endswith("/v1")
+
+
+def test_the_handle_reports_the_model_id_the_server_actually_serves() -> None:
+    """Oracle: OpenAI's `/v1/models` schema — the served id is `data[0].id`.
+
+    The server names the model however it chose to: mlx_vlm reports the store path it was
+    launched with, which is neither the catalogue name nor the repo id, and a chat-completions
+    request must echo that id back. Asking beats assuming, so the handle owns the question.
+    """
+    port = _free_port()
+
+    with _substitute(port).running(timeout_s=30.0) as handle:
+        assert handle.served_model_id() == "substitute/store-path"
+
+
+def test_a_server_advertising_no_models_is_named_rather_than_indexed_into() -> None:
+    """A server that is up but serving nothing fails with the endpoint named, not an IndexError.
+
+    Oracle: the same schema — `data` is a list, and an empty one is well-formed. Reaching for
+    `data[0]` would raise a bare `IndexError` whose message names no server, which is the
+    failure a caller then has to guess at.
+    """
+    port = _free_port()
+
+    with (
+        _substitute(port, body=_NO_MODELS_BODY).running(timeout_s=30.0) as handle,
+        pytest.raises(LookupError, match=r"/v1/models"),
+    ):
+        handle.served_model_id()
 
 
 def test_the_process_is_reaped_and_the_port_freed_after_a_normal_exit() -> None:
