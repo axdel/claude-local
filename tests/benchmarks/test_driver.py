@@ -102,7 +102,11 @@ def test_run_cases_aggregates_a_passing_and_a_failing_case_in_order(tmp_path: Pa
     assert by_id["passing"].outcome.code == passing_source
     assert by_id["failing"].outcome.status is Status.EXHAUSTED
     assert by_id["failing"].outcome.code == failing_source
-    assert by_id["failing"].outcome.record.attempts == failing_case.task.budget.max_attempts
+    # Two, not the budgeted four: the replay serves the identical corrupted file every call, so
+    # attempt 2 comes back byte-identical and the loop stops rather than replay a scored answer
+    # to the end of the budget (D-LOOP-004). One attempt to try it, one to prove it repeats.
+    assert failing_case.task.budget.max_attempts > 2  # the budget really did allow more
+    assert by_id["failing"].outcome.record.attempts == 2
     assert list(scratch_root.iterdir()) == []
 
 
@@ -218,12 +222,12 @@ def test_run_cases_reports_each_case_and_attempt_as_the_run_advances(tmp_path: P
     """A run is watchable only if its events arrive interleaved with the work, in order.
 
     Oracle: the mixed pass/fail ladder above already pins what these two cases do — a golden reply
-    reaches DONE on its first attempt, and the mutated reply spends its whole committed budget and
-    EXHAUSTS. The event sequence is therefore fully determined by fixture data, without running
-    anything: open case 1, resolve one attempt, close it, then open case 2, resolve exactly
-    ``budget.max_attempts`` attempts, close it. A run that reported only after finishing would put
-    both ``start`` events adjacent, which this sequence refuses. The joined deltas pin the other
-    half: text decoded inside the client reached an observer three layers up.
+    reaches DONE on its first attempt, and the mutated reply fails, repeats itself verbatim, and
+    EXHAUSTS on the second (D-LOOP-004). The event sequence is therefore fully determined by
+    fixture data, without running anything: open case 1, resolve one attempt, close it, then open
+    case 2, resolve two, close it. A run that reported only after finishing would put both
+    ``start`` events adjacent, which this sequence refuses. The joined deltas pin the other half:
+    text decoded inside the client reached an observer three layers up.
     """
     cases = _load_all_cases()
     passing_case = cases["03_repositories"]
@@ -238,7 +242,7 @@ def test_run_cases_reports_each_case_and_attempt_as_the_run_advances(tmp_path: P
         failing_case.task.impl_path: failing_source,
     }
     recorder = RecordingProgress()
-    budgeted = failing_case.task.budget.max_attempts
+    assert failing_case.task.budget.max_attempts > 2  # the budget allowed more than it spent
 
     with replay_cases_http_client(replies) as http_client:
         run_cases(
@@ -255,7 +259,8 @@ def test_run_cases_reports_each_case_and_attempt_as_the_run_advances(tmp_path: P
         "attempt 1 green=True",
         "finish passing DONE",
         f"start failing 2/2 of {failing_case.task.impl_path}",
-        *[f"attempt {n} green=False" for n in range(1, budgeted + 1)],
+        "attempt 1 green=False",
+        "attempt 2 green=False",
         "finish failing EXHAUSTED",
     ]
     assert passing_source in "".join(recorder.deltas)

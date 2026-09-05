@@ -107,6 +107,25 @@ def test_network_egress_is_denied(tmp_path: Path) -> None:
     assert outcome.read_text().startswith("blocked")
 
 
+def test_two_spawns_agree_on_a_string_hash(tmp_path: Path) -> None:
+    """The child's hash seed is pinned, so any set or dict it renders orders identically.
+
+    Oracle: CPython randomizes ``hash(str)`` per process from a seed it draws at startup, and
+    ``PYTHONHASHSEED=0`` is the documented way to disable that. Two unpinned interpreters agree on
+    a string's hash only by a 1-in-2**64 coincidence, so equality here is evidence of the pin and
+    of nothing else. The oracle run needs it because pytest renders a failing set comparison in
+    iteration order, and that order is fed back to the model as repair feedback (INV-004).
+    """
+    box = tmp_path / "box"
+    box.mkdir()
+    payload = "print(hash('claude-local'))"
+
+    first, _ = sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box)
+    second, _ = sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box)
+
+    assert first == second
+
+
 def test_write_inside_the_box_is_allowed(tmp_path: Path) -> None:
     box = tmp_path / "box"
     box.mkdir()

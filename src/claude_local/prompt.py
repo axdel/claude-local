@@ -48,6 +48,17 @@ _TEST_HEADER = "## The test — immutable; do not modify or import it away. Make
 # opening delimiter) so relative node ids like ``tests/test_x.py::test_y`` are never touched.
 _ABS_PATH_PREFIX = re.compile(r"(?:^|(?<=\s)|(?<=[(=]))/(?:[^/\s:()]+/)+", re.MULTILINE)
 
+# pytest's footer wall-clock (``=== 1 failed in 0.13s ===``, optionally ``(0:01:05)``). Anchored
+# to the ``=``-padded footer so a duration the TEST asserted, inside a traceback, is left alone —
+# that number is the diagnosis, where this one is only how busy the host was.
+_RUN_DURATION = re.compile(r"(?<= )in \d+(?:\.\d+)?s(?: \(\d+:\d{2}:\d{2}\))?(?= *=)")
+
+# The address inside a CPython default repr — ``<pkg.Klass object at 0x104a2f9d0>``, and the same
+# ``at 0x…>`` tail on a function or bound method. It is an ASLR draw that differs every process.
+# Anchored between ``at `` and the closing ``>`` so a hex literal the TEST asserted is left alone.
+_REPR_ADDRESS = re.compile(r"(?<= at )0x[0-9a-fA-F]+(?=>)")
+_REPR_ADDRESS_PLACEHOLDER = "0x<addr>"
+
 
 class PromptBuilder:
     """Assembles the byte-stable prefix and the bounded feedback tail from a static rules card.
@@ -90,8 +101,11 @@ class PromptBuilder:
         Layout: a hand-readable score line, then the failing node ids, then the run's last lines
         (with lines already shown as node ids removed, so a small output is never printed twice).
         Node ids sit ahead of the tail, so the byte cap only ever trims the low-signal tail.
+
+        Every fact about the run — as opposed to about the code — is removed first, so one
+        unchanged failure distills to one unchanged tail (INV-004).
         """
-        stripped = _ABS_PATH_PREFIX.sub("", raw_output)
+        stripped = _strip_run_facts(raw_output)
         sections = [_score_header(score)]
         node_ids = _failing_node_ids(stripped)
         tail = _last_lines(stripped, _FEEDBACK_TAIL_LINES)
@@ -102,6 +116,21 @@ class PromptBuilder:
         if tail.strip():
             sections.append(tail)
         return _cap_bytes("\n\n".join(sections), FEEDBACK_BYTE_CAP)
+
+
+def _strip_run_facts(raw_output: str) -> str:
+    """Remove what is true of the RUN, keeping what is true of the CODE (INV-004).
+
+    Three volatile fields reach this layer because none of them can be fixed where the oracle runs:
+    the absolute worktree prefix on a traceback location, pytest's own wall-clock, and the ASLR
+    address inside a default object repr. Each describes where or when the oracle ran, never the
+    implementation under repair — and the tail is the only part of the prompt that varies between
+    attempts, so a volatile field left in it makes one unchanged failure ask a different question
+    every time it is fed back (D-PROMPT-002).
+    """
+    without_paths = _ABS_PATH_PREFIX.sub("", raw_output)
+    without_durations = _RUN_DURATION.sub("", without_paths)
+    return _REPR_ADDRESS.sub(_REPR_ADDRESS_PLACEHOLDER, without_durations)
 
 
 def _score_header(score: TestScore) -> str:

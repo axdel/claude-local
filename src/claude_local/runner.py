@@ -144,12 +144,13 @@ class TestRunner:
                 sys.executable,
                 "-m",
                 "pytest",
-                str(test_path),
+                _oracle_argument(test_path, worktree),
                 f"--junit-xml={report}",
                 "-o",
                 "junit_family=xunit2",
                 "-p",
                 "no:cacheprovider",
+                "--no-header",  # the header is pure run metadata: platform, versions, rootdir
             ]
             try:
                 stdout, stderr = self._spawn(cmd, worktree, Path(tmp))
@@ -174,6 +175,25 @@ class TestRunner:
             except ET.ParseError as exc:
                 raise OracleError(f"pytest wrote a malformed JUnit report at {report}") from exc
             return OracleRun(score=score, output=_decode_output(stdout, stderr))
+
+
+def _oracle_argument(test_path: Path, worktree: Path) -> str:
+    """Name the oracle the way the child will print it — relative to its own cwd where it can be.
+
+    pytest renders every node id and traceback location relative to the process cwd, which is the
+    worktree. Handing it an ABSOLUTE path makes that rendering depend on how the two spell one
+    directory: on macOS the worktree arrives as ``/var/folders/...`` while the child's resolved cwd
+    is ``/private/var/folders/...``, so pytest emits a seven-level ``../`` climb that carries the
+    disposable worktree's random name into every node id — a run fact the model then reads as if it
+    were part of the failure. Naming the oracle relative to the cwd removes the spelling question
+    and the name with it. An oracle outside the worktree has no relative spelling, so it stays
+    absolute and the caller keeps a working run.
+    """
+    resolved_test = test_path.resolve()
+    resolved_worktree = worktree.resolve()
+    if not resolved_test.is_relative_to(resolved_worktree):
+        return str(test_path)
+    return str(resolved_test.relative_to(resolved_worktree))
 
 
 def _decode_output(stdout: bytes, stderr: bytes) -> str:

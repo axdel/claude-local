@@ -305,7 +305,11 @@ def test_driver_rejects_behaviorally_wrong_scaffold_reply_and_removes_worktree(
     assert outcome.status is Status.EXHAUSTED
     assert outcome.code == wrong_main
     assert outcome.files_changed == (case.task.impl_path,)
-    assert outcome.record.attempts == case.task.budget.max_attempts
+    # Two, not the budgeted maximum: the replay serves the identical wrong file every call, so
+    # attempt 2 is byte-identical and ends the run there (D-LOOP-004) — one attempt to try it,
+    # one to prove it repeats. The budget assertion keeps this honest if the case ever shrinks.
+    assert case.task.budget.max_attempts > 2
+    assert outcome.record.attempts == 2
     assert list(scratch_root.iterdir()) == []
 
 

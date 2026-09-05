@@ -21,6 +21,7 @@ the production child environment from an external `tmp_path` worktree without am
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -348,3 +349,44 @@ def test_runner_rescores_fresh_source_after_same_size_rewrite(tmp_path: Path) ->
     probe.write_text("VALUE = 2\n", encoding="utf-8")  # same byte length; the correcting attempt
     second = runner.run(oracle, worktree, expected=1)
     assert second.score.is_green  # must compile the NEW source, not reuse stale bytecode
+
+
+# --- Feedback determinism: one unchanged failure asks one unchanged question --------
+
+_ADDRESS = re.compile(r"0x[0-9a-f]{6,}")
+
+
+def test_e2e_one_unchanged_failure_distills_identically_in_two_worktrees(tmp_path: Path) -> None:
+    """One unchanged implementation must ask the model the same question in any worktree.
+
+    The stable prefix is fixed by construction (D-PROMPT-001), so the distilled tail is the ONLY
+    part of a repair prompt that varies — and a tail carrying a fact about the RUN rather than the
+    CODE makes an identical failure a different question every time (INV-004). Measured on the
+    standing benchmark: run 2 scored 0/7 where run 1 scored 1/7 on the same model and the same
+    commit, because four run facts reached the tail — the temp worktree name in every node id, the
+    ``rootdir`` header, an ASLR object address, and a hash-randomized set order.
+
+    Two full loops run here over the same replayed implementation in DIFFERENTLY NAMED worktrees,
+    with an oracle whose verdict is fixed at 1 passed / 2 failed but whose rendering carries an
+    address and a set order. The tails must be byte-equal.
+    """
+    oracle = _read_fixture("oracle_volatile_render.txt")
+    tails: list[str] = []
+    for worktree_name in ("first-run", "a-longer-second-run"):
+        root = tmp_path / worktree_name
+        root.mkdir()
+        worktree = _make_worktree(root)
+        backend = RecordingReplayBackend([_impl_reply("impl_correct.txt")] * 2)
+        loop, _ = _build_loop(worktree, backend)
+
+        loop.run(_spec(oracle, max_attempts=2), worktree)
+
+        tails.append(backend.calls[1][1])
+
+    assert tails[0] == tails[1]
+    # Equal because every run fact is gone — not because the tail was emptied of diagnosis.
+    assert "test_each_sum_is_a_distinct_object" in tails[0]
+    assert "alpha" in tails[0]
+    for run_fact in ("first-run", "a-longer-second-run", "rootdir"):
+        assert run_fact not in tails[0]
+    assert _ADDRESS.search(tails[0]) is None

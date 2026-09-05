@@ -190,6 +190,78 @@ def test_distill_feedback_strips_absolute_paths(tmp_path: Path) -> None:
     assert "test_oracle.py:12" in out
 
 
+def test_distill_feedback_strips_the_run_duration_so_one_failure_distills_identically(
+    tmp_path: Path,
+) -> None:
+    """Two runs of one unchanged failing oracle must distill to one tail, or the loop is noisy.
+
+    Oracle: measured, not supposed — two identical ``pytest`` invocations over one unchanged file
+    produced byte-identical output but for ``1 failed in 0.15s`` against ``1 failed in 0.13s``.
+    That is pytest's LAST line, so it is always inside the 40-line tail, and the tail is the only
+    part of the prompt that changes between attempts. An unstripped duration therefore makes an
+    identical failure ask a different question every run, which both defeats verbatim-repeat
+    detection (D-LOOP-004) and leaves the benchmark unable to tell a better model from noise.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+    summary = (
+        "=== short test summary info ===\n"
+        "FAILED test_oracle.py::test_health - AssertionError: assert 'down' == 'ok'\n"
+    )
+    faster = builder.distill_feedback(
+        _score(0, 1, 0, 1, 1), f"{summary}=== 1 failed in 0.13s ===\n"
+    )
+    slower = builder.distill_feedback(
+        _score(0, 1, 0, 1, 1), f"{summary}=== 1 failed in 0.15s ===\n"
+    )
+
+    assert faster == slower
+    # Equal because the volatile field is gone, not because the whole tail was thrown away.
+    assert "0.13s" not in faster
+    assert "1 failed" in faster
+    assert "test_health" in faster
+
+
+def test_distill_feedback_keeps_a_duration_that_is_the_failure_itself(tmp_path: Path) -> None:
+    """Only pytest's own run-time footer is volatile; a duration the test ASSERTED is evidence.
+
+    Oracle: a timeout or latency assertion prints its measured seconds inside the traceback, and
+    that number is exactly what the model must read to fix the code. Stripping every ``N.NNs`` in
+    the output would delete the diagnosis along with the noise, so the strip is anchored to the
+    footer's ``=== … in N.NNs ===`` shape rather than applied to any number it can find.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+    raw = (
+        "E       assert 2.51 == approx(0.5)\n"
+        "test_oracle.py:9: took 2.51s, budget was 0.50s\n"
+        "=== 1 failed in 2.90s ===\n"
+    )
+
+    out = builder.distill_feedback(_score(0, 1, 0, 1, 1), raw)
+
+    assert "took 2.51s" in out  # the asserted measurement survives
+    assert "in 2.90s" not in out  # the footer's own run time does not
+
+
+def test_distill_feedback_normalizes_the_address_in_a_default_object_repr(tmp_path: Path) -> None:
+    """An identity failure must read the same on two runs, though the objects moved in memory.
+
+    Oracle: ``object.__repr__`` embeds ``id()``, which under ASLR differs every process — measured
+    at ``0x10b19c590`` against ``0x1088d0590`` on two runs of ONE unchanged implementation. Unlike
+    the tmpdir name and pytest's header, this one has no fix at the source: the address IS the
+    default repr. So it is normalized here, keeping the type name — which is the diagnosis — and
+    dropping only the address, which says nothing about the code (D-PROMPT-002).
+    """
+    builder = PromptBuilder(_card(tmp_path))
+    template = "E       assert <app.main.App object at {0}> is not <app.main.App object at {0}>\n"
+
+    first = builder.distill_feedback(_score(0, 1, 0, 1, 1), template.format("0x10b19c590"))
+    second = builder.distill_feedback(_score(0, 1, 0, 1, 1), template.format("0x1088d0590"))
+
+    assert first == second
+    assert "0x10b19c590" not in first
+    assert "app.main.App object at" in first  # the type survives; only the address is dropped
+
+
 def test_distill_feedback_caps_bytes_and_keeps_node_id(tmp_path: Path) -> None:
     # 60 fat lines (300 chars each) make the tail alone far exceed the 4 KiB cap, forcing real
     # truncation — yet the node id (placed ahead of the tail) survives the trim from the end.

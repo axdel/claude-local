@@ -225,6 +225,31 @@ def test_console_progress_names_what_each_attempt_produced(
     assert "attempt 1" in err
 
 
+def test_console_progress_explains_the_repeat_that_ends_a_run_early(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A run that stops short of its budget must say why, on the attempt that caused it.
+
+    Oracle: the loop stops on a byte-identical regeneration, so a watcher otherwise sees "3 of 4
+    attempts" and an unexplained halt — indistinguishable from a crash. The marker rides on the
+    attempt line rather than the case line because the repeat is a fact about that attempt, and
+    it is additive: the oracle verdict it earned is still reported alongside it.
+    """
+    ConsoleProgress().attempt(
+        build_attempt_progress(
+            score=build_test_score(passed=2, failed=6, collected=8, expected=8),
+            repeats_previous=True,
+        )
+    )
+
+    err = capsys.readouterr().err
+    assert "2/8 oracle tests passed" in err  # the verdict survives the marker
+    assert "verbatim repeat" in err
+
+    ConsoleProgress().attempt(build_attempt_progress())
+    assert "verbatim repeat" not in capsys.readouterr().err
+
+
 def test_console_progress_shows_the_decode_rate_it_was_given(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

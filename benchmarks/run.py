@@ -6,8 +6,14 @@ spec, its neighbors, and a hidden correctness oracle. Driving a candidate model 
 ladder and scoring it against the oracles yields one comparable scorecard — the same instrument
 for every model, so "add a model, bench it" is a single command.
 
-A running server is a PREREQUISITE: claude-local neither downloads nor serves a model. Sync the
-reference-app dependencies once (``uv sync --group bench``), point ``--base-url`` (or
+A running server is a prerequisite OF THIS MODULE — it scores a model, it does not serve one.
+That is a division of labour inside claude-local, not a capability claude-local lacks:
+``scripts/benchmark_model.py <name>`` supplies exactly this prerequisite, spawning a catalogued
+model through ``model_server`` and tearing it down on the way out, then invoking the command
+below. Reach for it unless a server is already up. (Downloading is the one thing nothing here
+does: weights are user-initiated, always.)
+
+Sync the reference-app dependencies once (``uv sync --group bench``), point ``--base-url`` (or
 ``CLAUDE_LOCAL_BASE_URL``) at an already-running OpenAI-compatible server, name the resident model
 with ``--model`` (or ``CLAUDE_LOCAL_MODEL``), and run from the repository root::
 
@@ -129,12 +135,19 @@ class ConsoleProgress:
 
     def attempt(self, progress: AttemptProgress) -> None:
         rate = progress.generation.tokens_per_second
+        # A repeat ends the run short of its budget, so the marker is additive to the verdict:
+        # without it a watcher sees an unexplained halt, with it the cause and the score both.
+        repeat = (
+            " (verbatim repeat of the previous attempt — stopping)"
+            if (progress.repeats_previous)
+            else ""
+        )
         self._line(
             f"    attempt {progress.attempt}  "
             f"{progress.generation.completion_tokens:6d} tok  "
             f"{progress.generation.seconds:6.1f}s  "
             f"{'  n/a' if rate is None else f'{rate:5.1f}'} tok/s  ->  "
-            f"{_attempt_verdict(progress)}"
+            f"{_attempt_verdict(progress)}{repeat}"
         )
 
     def case_finished(self, result: CaseResult) -> None:

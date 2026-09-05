@@ -439,6 +439,74 @@ def test_all_partial_reaches_exhausted(tmp_path: Path) -> None:
     assert result.best_score.passed == 2 and not result.best_score.is_green
 
 
+def test_repeated_generation_stops_the_loop_before_the_budget_is_spent(tmp_path: Path) -> None:
+    """A byte-identical regeneration is a replay, not a repair, so the loop stops paying for it.
+
+    Oracle: measured against gpt-oss-20b on the standing benchmark, where two cases regenerated
+    byte-identical output across consecutive attempts and burned 2753 completion tokens proving
+    it. The identical text writes the identical file, so the oracle returns the identical verdict
+    and the next tail is identical — and the repeat is itself the evidence that this model, on
+    this prompt, answers deterministically. Every double here supplies the FULL budget of four,
+    so nothing but the loop's own judgment can stop it: the ledger reading three is the saving.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = ReplayBackend(
+        [_edit_script(_V0), _edit_script(_V1), _edit_script(_V1), _edit_script(_V2)]
+    )
+    spawn = ScriptedSpawn(*([_junit("one_failure.xml")] * 4))
+    loop, client = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=4),
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert backend.served == 3  # the fourth budgeted generation was never spent
+    assert client.total_calls == 3
+    assert result.record.attempts == 3
+    # The repeat is still a real attempt: scored, counted, and left holding the partial best.
+    assert result.status is Status.EXHAUSTED
+    assert result.best_score is not None
+    assert result.best_score.passed == 2 and not result.best_score.is_green
+
+
+def test_a_repeated_generation_reports_itself_as_the_repeat_that_ended_the_run(
+    tmp_path: Path,
+) -> None:
+    """The attempt that ends the run says so live — a scored repeat, never a silent early stop.
+
+    Oracle: two independent facts, and the live view needs both. It reached the oracle and got a
+    verdict, so ``score`` must carry it — reporting ``blocked`` would render "no usable file
+    frame" for a perfectly usable file. And it stopped a run three attempts short of a budget of
+    four, so ``repeats_previous`` must mark WHICH attempt ended it; without that a watcher sees
+    an unexplained early stop, which is precisely the blindness the progress seam exists to end.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    backend = ReplayBackend([_edit_script(_V1), _edit_script(_V1)])
+    spawn = ScriptedSpawn(*([_junit("one_failure.xml")] * 2))
+    loop, _ = _make_loop(worktree, backend, spawn, on_attempt=seen.append)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=4),
+    )
+
+    loop.run(spec, worktree)
+
+    assert [progress.attempt for progress in seen] == [1, 2]
+    # The first attempt has nothing to repeat; the second is the verbatim one that ended the run.
+    assert [progress.repeats_previous for progress in seen] == [False, True]
+    final = seen[-1]
+    assert final.blocked is False
+    assert final.score is not None
+    assert final.score.passed == 2
+
+
 def test_first_attempt_derail_reaches_derailed(tmp_path: Path) -> None:
     worktree = _setup_worktree(tmp_path)
     # A 200-char delta under a 2-token (8-char) cap trips the derail guard on the first attempt.

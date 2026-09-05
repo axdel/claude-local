@@ -33,14 +33,19 @@ frontier tokens than it cost — and **switches itself off where it doesn't**.
 
 ## Quickstart
 
-Claude Local *infers* — it never downloads or serves a model. A running OpenAI-compatible server
-is a prerequisite you provide.
+Claude Local never downloads a model, and the **loop** never serves one: `implement()` takes a
+`base_url` and infers against whatever is already listening. Serving is a separate, optional
+capability that claude-local *does* own — `model_server` spawns a catalogued model and guarantees
+teardown (see [Where It Fits](#where-it-fits)) — so step 2 is a choice, not a prerequisite you
+must satisfy elsewhere.
 
 1. **Put a local model under `models/`.** Weights are git-ignored; downloads are explicit and
    user-initiated (see [`models/README.md`](models/README.md)).
-2. **Serve it over an OpenAI-compatible HTTP API** — e.g. mlx-lm, llama.cpp's server, LM Studio,
-   or vLLM. Note its base URL (the example defaults to `http://localhost:8080`) and the model
-   name it serves.
+2. **Serve it over an OpenAI-compatible HTTP API.** Either bring your own — mlx-lm, llama.cpp's
+   server, LM Studio, vLLM — or let claude-local run one for a catalogued model
+   (`uv sync --group serve`, then `scripts/benchmark_model.py <name>`, which spawns the server,
+   runs the work, and tears it down on success and failure alike). Note the base URL (the example
+   defaults to `http://localhost:8080`) and the model name it serves.
 3. **Run the bundled example** — it drives one bounded red→green loop over a quicksort task with
    an immutable multi-case oracle:
 
@@ -140,6 +145,9 @@ A weak model is only worth using if it is fast enough to be cheaper than your ow
 - **One model resident at a time** — local inference is memory-bandwidth-bound.
 - **Derail guard** — repetition penalty + hard token cap + repetition-loop detector + graceful
   timeout, streaming so a runaway is aborted mid-generation.
+- **Repeat detection across attempts** — an attempt that comes back byte-identical to the one
+  before it is a replay of an answer already scored, not a repair, so the loop stops there
+  instead of spending the rest of the budget re-asking a question it has already had answered.
 
 ## Where It Fits
 

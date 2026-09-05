@@ -279,6 +279,11 @@ def _sandbox_env(write_box: Path) -> dict[str, str]:
     HOME is the disposable box, never the developer's real home, so a credential reader keyed on
     ``$HOME`` (``~/.ssh``, ``~/.aws``, ``~/.netrc``, ``~/.config/gh``) resolves into an empty
     directory rather than the operator's secrets. No parent API tokens are forwarded at all.
+
+    ``PYTHONHASHSEED`` is pinned because the child's diagnostics are read back as model feedback:
+    an unpinned interpreter draws a fresh hash seed per process, so a failing set or dict renders
+    its elements in a different order every run and one unchanged failure asks a different question
+    each time it is fed back (D-ORACLE-005).
     """
     box = str(write_box)
     parent = os.environ
@@ -288,6 +293,7 @@ def _sandbox_env(write_box: Path) -> dict[str, str]:
         "LANG": parent.get("LANG", "en_US.UTF-8"),
         "TMPDIR": box,
         "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONHASHSEED": "0",
     }
 
 

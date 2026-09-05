@@ -55,11 +55,17 @@ class AttemptProgress:
     ``score`` is ``None`` whenever the attempt never reached the oracle. Three different things
     cause that, and a watcher must tell them apart: the server faulted, the guard cut a derail, or
     the model returned nothing usable to write — the last being what ``blocked`` names.
+
+    ``repeats_previous`` marks the attempt whose generation came back byte-identical to the one
+    before it — the attempt that ends a run early (D-LOOP-004). It is carried here rather than
+    inferred by a watcher because only the loop holds the previous attempt's text, and an early
+    stop nobody can explain is the blindness this event exists to end.
     """
 
     attempt: int
     generation: GenerationResult
     score: TestScore | None
+    repeats_previous: bool = False
 
     @property
     def blocked(self) -> bool:
@@ -119,6 +125,22 @@ def _classify_terminal(
     return Status.EXHAUSTED
 
 
+def _terminal_status(
+    final: GenerationResult | None, scored: bool, best_score: TestScore | None
+) -> Status:
+    """Name the cause that ended the run, then rank it — the pair that decides a terminal status.
+
+    This half asks WHAT happened; ``_classify_terminal`` asks WHICH cause wins. The cause is read
+    off the LAST attempt rather than accumulated in loop flags, so no second writer can disagree
+    with the generation that actually ended the run. ``scored`` says that attempt reached the
+    oracle; a block is the residue — no verdict, and neither the server nor the guard stopped it.
+    """
+    derailed = final is not None and final.derail_reason is not None
+    faulted = final is not None and final.fault is not None
+    blocked = final is not None and not scored and not derailed and not faulted
+    return _classify_terminal(best_score, derailed, blocked, faulted)
+
+
 class Loop:
     """The orchestrator spine — composes the engine's modules into one bounded red→green run.
 
@@ -154,9 +176,11 @@ class Loop:
         Builds the KV-cacheable prefix once and writes the immutable oracle test once, then loops
         under the budget: generate → apply the whole-file edit to the permitted path → score →
         snapshot, threading each failure back as distilled feedback. The loop stops on a green
-        oracle, and stops early on any attempt that reached no oracle at all — a server fault, a
-        derail, or a reply with no usable edit — because there is nothing to repair from. On exit
-        the best snapshot is restored and the status follows precedence.
+        oracle, and stops early wherever there is nothing left to repair from: on any attempt that
+        reached no oracle at all (a server fault, a derail, or a reply with no usable edit), and
+        on an attempt whose generation came back byte-identical to the one before it — a replay of
+        an answer already scored, not a repair (D-LOOP-004). On exit the best snapshot is restored
+        and the status follows precedence.
 
         A transport failure (``BackendUnavailable`` from the client — an unreachable server) and a
         broken oracle (``OracleError`` from the runner) are never caught — they propagate, so a
@@ -176,6 +200,7 @@ class Loop:
                 else self._prompt.distill_feedback(last_run.score, last_run.output)
             )
             generation = self._client.generate(stable, tail, spec.budget)
+            repeats_previous = bool(results) and generation.text == results[-1].text
             results.append(generation)
             last_run = self._score_attempt(generation, index, spec, worktree, oracle_path)
             if self._on_attempt is not None:
@@ -184,22 +209,17 @@ class Loop:
                         attempt=len(results),
                         generation=generation,
                         score=None if last_run is None else last_run.score,
+                        repeats_previous=repeats_previous,
                     )
                 )
-            if last_run is None or last_run.score.is_green:
+            if repeats_previous or last_run is None or last_run.score.is_green:
                 break
 
         self._snapshots.restore_best()
         best = self._snapshots.best()
         best_score = best.score if best is not None else None
-        # The terminal cause is a property of the LAST attempt, so it is read off that attempt
-        # rather than tracked in flags that a second writer could disagree with. A block is the
-        # residue: no verdict, and neither the server nor the guard stopped it.
         final = results[-1] if results else None
-        derailed = final is not None and final.derail_reason is not None
-        faulted = final is not None and final.fault is not None
-        blocked = final is not None and last_run is None and not derailed and not faulted
-        status = _classify_terminal(best_score, derailed, blocked, faulted)
+        status = _terminal_status(final, scored=last_run is not None, best_score=best_score)
         record = LocalEconomyRecord.from_run(
             model=self._model,
             results=results,
