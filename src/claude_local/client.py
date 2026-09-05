@@ -11,6 +11,14 @@ The token count is never guessed away: a cleanly finished stream carries the ser
 a derail cut before the trailer) falls back to a char-count proxy flagged ``tokens_estimated``.
 An aborted call still cost decode time, so its tokens are counted, never dropped (D-TELEMETRY-001).
 ``total_calls`` counts logical generations — incremented at entry so it survives a mid-call raise.
+
+An optional ``on_delta`` observer makes a decode watchable: it receives each content delta as it
+arrives, so a caller can render generation live instead of waiting minutes for one result object.
+Deltas are reported RAW — before ``assistant_content`` recovers the reply from a channel
+transcript — because the markup is what a reasoning model spends most of its decode on, and a
+watcher that only saw the recovered reply would see nothing until the very end (D-PROGRESS-002).
+Each delta is reported BEFORE the guard judges it, so the delta that trips a derail is the last
+thing the observer sees rather than the one thing it misses.
 """
 
 from __future__ import annotations
@@ -68,13 +76,25 @@ class GenerationResult:
         """Whether the server stopped this generation at its own token limit."""
         return self.finish_reason == _LENGTH_FINISH_REASON
 
+    @property
+    def tokens_per_second(self) -> float | None:
+        """This generation's decode rate, or ``None`` when no wall-clock time elapsed.
+
+        Both terms are owned here, so the quotient is too — a reader that wants a speed asks
+        rather than dividing someone else's fields. ``None`` for a zero-elapsed generation, the
+        same guard ``LocalEconomyRecord`` applies to the run-wide mean.
+        """
+        return self.completion_tokens / self.seconds if self.seconds > 0 else None
+
 
 class ModelClient:
     """Drives one generation at a time through an injected ``Backend``, metering each call.
 
     Construct once and reuse: the backend holds the warm connection, and this client only owns
     the per-call orchestration and the ``total_calls`` ledger. The clock and the guard factory
-    are injected so timing and derail behavior are deterministic under test.
+    are injected so timing and derail behavior are deterministic under test. ``on_delta`` is the
+    optional live-decode observer; the client neither formats nor throttles what it reports —
+    rendering is the caller's, which is what keeps this module free of I/O.
     """
 
     def __init__(
@@ -82,10 +102,12 @@ class ModelClient:
         backend: Backend,
         derail_factory: Callable[[Budget, Callable[[], float]], DerailGuard] = DerailGuard,
         now: Callable[[], float] = time.monotonic,
+        on_delta: Callable[[str], None] | None = None,
     ) -> None:
         self._backend = backend
         self._derail_factory = derail_factory
         self._now = now
+        self._on_delta = on_delta
         self._total_calls = 0
 
     @property
@@ -113,6 +135,8 @@ class ModelClient:
             if isinstance(event, Delta):
                 parts.append(event.text)
                 chars += len(event.text)
+                if self._on_delta is not None:  # before the verdict, so a derail's cause is seen
+                    self._on_delta(event.text)
                 derail_reason = guard.feed(event.text)
                 if derail_reason is not None:
                     break  # abort early — stop decoding the moment a bound trips

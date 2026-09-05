@@ -11,6 +11,10 @@ terminal ``Status`` by strict precedence, then aggregates the local economy reco
 The spine composes the single-responsibility modules beneath it (client, prompt, edits, runner,
 snapshot, telemetry) and adds no new I/O of its own beyond writing the oracle test and reading
 back the collaborators' results — orchestration only, per the Boundary Map (``loop`` is the root).
+
+An optional ``on_attempt`` observer receives one ``AttemptProgress`` per attempt as it resolves,
+so a caller can render a run while it happens. The loop reports; it never prints — keeping the
+rendering outside preserves the no-I/O rule above (D-PROGRESS-001).
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from claude_local.telemetry import LocalEconomyRecord
 from claude_local.types import Status
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from claude_local.client import GenerationResult, ModelClient
@@ -36,6 +41,38 @@ if TYPE_CHECKING:
 # subtree (so restore_best never clobbers it) and distinct from any impl path (so apply_file never
 # overwrites it). A run-stable name, carrying no timestamp, keeps the worktree predictable.
 ORACLE_TEST_FILENAME = "test_loop_oracle.py"
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptProgress:
+    """One resolved attempt, reported the moment it resolves — the loop's live progress event.
+
+    Frozen, and composed rather than copied: ``generation`` and ``score`` are the value objects
+    that already own the model's cost and the oracle's verdict, so a consumer reads tokens,
+    seconds, the derail reason, the fault, and the test counts through their single owners and
+    nothing here can drift from them. ``attempt`` is 1-based, matching what a reader counts.
+
+    ``score`` is ``None`` whenever the attempt never reached the oracle. Three different things
+    cause that, and a watcher must tell them apart: the server faulted, the guard cut a derail, or
+    the model returned nothing usable to write — the last being what ``blocked`` names.
+    """
+
+    attempt: int
+    generation: GenerationResult
+    score: TestScore | None
+
+    @property
+    def blocked(self) -> bool:
+        """The attempt produced no verdict for a structural reason — no usable edit to score.
+
+        Derived as the residue after the two named causes are ruled out, so the classification
+        cannot disagree with ``generation.fault`` or ``generation.derail_reason``.
+        """
+        return (
+            self.score is None
+            and self.generation.fault is None
+            and self.generation.derail_reason is None
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +126,10 @@ class Loop:
     constant: one warm client, one resident model). ``run`` executes the whole cycle and returns
     a ``LoopResult``; the loop builds the economy record but does not persist it — writing to the
     project's economy directory is the external adapter's job (D-TELEMETRY-001).
+
+    ``on_attempt`` is the optional live-progress observer, invoked once per attempt the moment it
+    resolves. It is what makes a long run watchable rather than merely awaited; the loop reports
+    facts and never renders them, so this module stays free of I/O (D-PROGRESS-001).
     """
 
     def __init__(
@@ -98,22 +139,24 @@ class Loop:
         runner: TestRunner,
         snapshots: SnapshotStore,
         model: str,
+        on_attempt: Callable[[AttemptProgress], None] | None = None,
     ) -> None:
         self._client = client
         self._prompt = prompt_builder
         self._runner = runner
         self._snapshots = snapshots
         self._model = model
+        self._on_attempt = on_attempt
 
     def run(self, spec: TaskSpec, worktree: Path) -> LoopResult:
         """Drive the red→green loop for one task; return status, best score, and economy record.
 
         Builds the KV-cacheable prefix once and writes the immutable oracle test once, then loops
         under the budget: generate → apply the whole-file edit to the permitted path → score →
-        snapshot, threading each failure back as distilled feedback and stopping on green. A
-        short frame is repairable only when no finish arrived or the server ended at its length
-        cap; every other terminal reason requires exact length. A derail or non-usable edit
-        stops the loop early. On exit the best snapshot is restored and status follows precedence.
+        snapshot, threading each failure back as distilled feedback. The loop stops on a green
+        oracle, and stops early on any attempt that reached no oracle at all — a server fault, a
+        derail, or a reply with no usable edit — because there is nothing to repair from. On exit
+        the best snapshot is restored and the status follows precedence.
 
         A transport failure (``BackendUnavailable`` from the client — an unreachable server) and a
         broken oracle (``OracleError`` from the runner) are never caught — they propagate, so a
@@ -125,52 +168,77 @@ class Loop:
 
         results: list[GenerationResult] = []
         last_run: OracleRun | None = None
-        derailed = False
-        blocked = False
-        faulted = False
-        fault_message: str | None = None
-        attempts = 0
 
         for index in range(spec.budget.max_attempts):
-            attempts += 1
             tail = (
                 ""
                 if last_run is None
                 else self._prompt.distill_feedback(last_run.score, last_run.output)
             )
-            gen = self._client.generate(stable, tail, spec.budget)
-            results.append(gen)
-            # an upstream server fault (an SSE error frame) — the host failed, not the model
-            if gen.fault is not None:
-                faulted = True
-                fault_message = gen.fault
-                break
-            if gen.derail_reason is not None:
-                derailed = True
-                break
-            reply = extract_file(gen.text)
-            if reply is None:  # prose with no usable whole-file reply — structurally blocked
-                blocked = True
-                break
-            try:
-                apply_file(reply, worktree, spec.impl_path)
-            except KeepOnlyViolation:  # an edit aimed outside the one permitted path
-                blocked = True
-                break
-            last_run = self._runner.run(oracle_path, worktree, spec.expected_tests)
-            self._snapshots.record(index, last_run.score)
-            if last_run.score.is_green:
+            generation = self._client.generate(stable, tail, spec.budget)
+            results.append(generation)
+            last_run = self._score_attempt(generation, index, spec, worktree, oracle_path)
+            if self._on_attempt is not None:
+                self._on_attempt(
+                    AttemptProgress(
+                        attempt=len(results),
+                        generation=generation,
+                        score=None if last_run is None else last_run.score,
+                    )
+                )
+            if last_run is None or last_run.score.is_green:
                 break
 
         self._snapshots.restore_best()
         best = self._snapshots.best()
         best_score = best.score if best is not None else None
+        # The terminal cause is a property of the LAST attempt, so it is read off that attempt
+        # rather than tracked in flags that a second writer could disagree with. A block is the
+        # residue: no verdict, and neither the server nor the guard stopped it.
+        final = results[-1] if results else None
+        derailed = final is not None and final.derail_reason is not None
+        faulted = final is not None and final.fault is not None
+        blocked = final is not None and last_run is None and not derailed and not faulted
         status = _classify_terminal(best_score, derailed, blocked, faulted)
         record = LocalEconomyRecord.from_run(
             model=self._model,
             results=results,
             total_calls=self._client.total_calls,
-            attempts=attempts,
+            attempts=len(results),
             status=status,
         )
-        return LoopResult(status=status, best_score=best_score, record=record, fault=fault_message)
+        return LoopResult(
+            status=status,
+            best_score=best_score,
+            record=record,
+            fault=final.fault if final is not None else None,
+        )
+
+    def _score_attempt(
+        self,
+        generation: GenerationResult,
+        index: int,
+        spec: TaskSpec,
+        worktree: Path,
+        oracle_path: Path,
+    ) -> OracleRun | None:
+        """Apply one generation and score it; ``None`` when it never reached the oracle.
+
+        Every way an attempt can yield nothing to score collapses to ``None`` here: an upstream
+        server fault (the host failed, not the model), a derail the guard cut, a reply carrying no
+        usable whole-file frame, and an edit aimed outside the one permitted path. Folding them
+        into one return is what lets the caller report and classify every attempt at a single
+        site instead of at five scattered breaks.
+        """
+        if generation.fault is not None or generation.derail_reason is not None:
+            return None
+        reply = extract_file(generation.text)
+        if reply is None:  # prose with no usable whole-file reply
+            return None
+        try:
+            apply_file(reply, worktree, spec.impl_path)
+        except KeepOnlyViolation:  # an edit aimed outside the one permitted path
+            return None
+        run = self._runner.run(oracle_path, worktree, spec.expected_tests)
+        self._snapshots.record(index, run.score)
+        return run

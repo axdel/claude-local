@@ -22,7 +22,7 @@ from benchmarks.harness import (
     replay_cases_http_client,
     run_cases,
 )
-from claude_local import TARGET_FILE_LABEL, Status
+from claude_local import TARGET_FILE_LABEL, AttemptProgress, Status
 
 _ROOT = Path(__file__).parents[2]
 _BENCHMARK = _ROOT / "benchmarks" / "schedule_manager"
@@ -184,3 +184,99 @@ def test_replay_cases_client_rejects_a_request_without_a_target_file() -> None:
         pytest.raises(ValueError, match="declared no target file"),
     ):
         client.post(_COMPLETIONS, json={"messages": [{"role": "system", "content": "none"}]})
+
+
+# --- Live progress: events interleaved with the work, in order ---------------------
+
+
+class RecordingProgress:
+    """A ``BenchmarkProgress`` that records the event SEQUENCE, not merely the totals.
+
+    Order is the property under test: a run that collected events and replayed them at the end
+    would produce the same multiset and a different sequence.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.deltas: list[str] = []
+
+    def case_started(self, case_id: str, case: BenchmarkCase, index: int, total: int) -> None:
+        self.events.append(f"start {case_id} {index}/{total} of {case.task.impl_path}")
+
+    def delta(self, text: str) -> None:
+        self.deltas.append(text)
+
+    def attempt(self, progress: AttemptProgress) -> None:
+        green = progress.score is not None and progress.score.is_green
+        self.events.append(f"attempt {progress.attempt} green={green}")
+
+    def case_finished(self, result: CaseResult) -> None:
+        self.events.append(f"finish {result.case_id} {result.outcome.status.name}")
+
+
+def test_run_cases_reports_each_case_and_attempt_as_the_run_advances(tmp_path: Path) -> None:
+    """A run is watchable only if its events arrive interleaved with the work, in order.
+
+    Oracle: the mixed pass/fail ladder above already pins what these two cases do — a golden reply
+    reaches DONE on its first attempt, and the mutated reply spends its whole committed budget and
+    EXHAUSTS. The event sequence is therefore fully determined by fixture data, without running
+    anything: open case 1, resolve one attempt, close it, then open case 2, resolve exactly
+    ``budget.max_attempts`` attempts, close it. A run that reported only after finishing would put
+    both ``start`` events adjacent, which this sequence refuses. The joined deltas pin the other
+    half: text decoded inside the client reached an observer three layers up.
+    """
+    cases = _load_all_cases()
+    passing_case = cases["03_repositories"]
+    failing_case = cases["01_scaffold"]
+    passing_source = golden_impl(passing_case)
+    failing_source = golden_impl(failing_case).replace(
+        'HealthResponse(status="ok")', 'HealthResponse(status="down")'
+    )
+    benchmark = {"passing": passing_case, "failing": failing_case}
+    replies = {
+        passing_case.task.impl_path: passing_source,
+        failing_case.task.impl_path: failing_source,
+    }
+    recorder = RecordingProgress()
+    budgeted = failing_case.task.budget.max_attempts
+
+    with replay_cases_http_client(replies) as http_client:
+        run_cases(
+            benchmark,
+            base_url="http://benchmark.local",
+            model="replay/mixed",
+            scratch_root=tmp_path / "cases-worktrees",
+            http_client=http_client,
+            progress=recorder,
+        )
+
+    assert recorder.events == [
+        f"start passing 1/2 of {passing_case.task.impl_path}",
+        "attempt 1 green=True",
+        "finish passing DONE",
+        f"start failing 2/2 of {failing_case.task.impl_path}",
+        *[f"attempt {n} green=False" for n in range(1, budgeted + 1)],
+        "finish failing EXHAUSTED",
+    ]
+    assert passing_source in "".join(recorder.deltas)
+
+
+def test_run_cases_without_an_observer_still_runs_every_case(tmp_path: Path) -> None:
+    """Observation is optional: the same ladder must aggregate identically unobserved.
+
+    Oracle: a golden reply reproduces the complete golden app, so its immutable oracle passes —
+    the same expectation the observed run above asserts, here with nothing watching.
+    """
+    cases = _load_all_cases()
+    case = cases["03_repositories"]
+
+    with replay_cases_http_client({case.task.impl_path: golden_impl(case)}) as http_client:
+        results = run_cases(
+            {"solo": case},
+            base_url="http://benchmark.local",
+            model="replay/golden",
+            scratch_root=tmp_path / "cases-worktrees",
+            http_client=http_client,
+        )
+
+    assert [result.outcome.status for result in results] == [Status.DONE]

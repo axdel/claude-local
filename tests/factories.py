@@ -8,6 +8,7 @@ a test specifies only the field it exercises and takes sensible defaults for the
 from __future__ import annotations
 
 from claude_local.client import GenerationResult
+from claude_local.loop import AttemptProgress
 from claude_local.runner import TestScore
 from claude_local.telemetry import LocalEconomyRecord
 from claude_local.types import Budget, ContextFile, Status, TaskSpec
@@ -81,6 +82,21 @@ def build_test_score(**overrides: object) -> TestScore:
     }
     fields.update(overrides)
     return TestScore(**fields)  # type: ignore[arg-type]
+
+
+def build_attempt_progress(**overrides: object) -> AttemptProgress:
+    """Canonical valid AttemptProgress; a test overrides only the field it exercises.
+
+    Defaults describe one green scored attempt whose generation ran at 100 tokens in 2.0s — a
+    50.0 tok/s rate a renderer test can assert against without doing the division itself.
+    """
+    fields: dict[str, object] = {
+        "attempt": 1,
+        "generation": build_generation_result(),
+        "score": build_test_score(),
+    }
+    fields.update(overrides)
+    return AttemptProgress(**fields)  # type: ignore[arg-type]
 
 
 def build_local_economy_record(**overrides: object) -> LocalEconomyRecord:

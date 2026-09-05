@@ -5,6 +5,7 @@
 | Module | Target | Rule | Notes | Status | Superseded By |
 |-|-|-|-|-|-|
 | __init__ | entrypoint | may-import | Public front door re-exports implement and Outcome. | active |  |
+| __init__ | loop | may-import | Public front door re-exports AttemptProgress, the live event implement's on_attempt observer receives. | active |  |
 | __init__ | types | may-import | Public front door re-exports task value objects. | active |  |
 | __main__ | cli | may-import | The python -m shim resolves the same front door as the installed console script. | active |  |
 | backend | httpx | may-import | Only external transport dependency. | active |  |

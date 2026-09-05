@@ -25,6 +25,7 @@ from factories import (
     build_whole_file_reply,
 )
 
+from claude_local import AttemptProgress
 from claude_local.backend import BackendUnavailable
 from claude_local.entrypoint import Outcome, _writable_subtree, implement
 from claude_local.sandbox import sandbox_available
@@ -447,3 +448,37 @@ def test_implement_e2e_binds_budget_timeout_to_the_sandbox() -> None:
 
     assert outcome.status is Status.EXHAUSTED  # the hang scored zero; the single attempt is spent
     assert elapsed < 30.0  # the 2s budget bound the sandbox, far below the 120s default
+
+
+# --- Live progress: each observer reaches the module that owns its event ------------
+
+
+def test_implement_routes_each_progress_observer_to_the_module_that_owns_it() -> None:
+    """Deltas come from the client's decode; attempts come from the loop's cycle.
+
+    Oracle: this prose-only reply carries exactly one content delta, "No file edit.", and produces
+    exactly one attempt that reaches no oracle — a structural block. The two signals originate in
+    two different modules, so a wiring that handed both observers to one of them would silently
+    drop the other: a client knows nothing of attempts, and a loop never sees a delta. Importing
+    ``AttemptProgress`` from the top-level package also pins the re-export the benchmark needs,
+    since the Boundary Map lets a downstream consumer reach only the public API.
+    """
+    deltas: list[str] = []
+    attempts: list[AttemptProgress] = []
+    spec = build_task_spec(impl_path="src/adder.py", expected_tests=2, test_text=_ADDER_ORACLE)
+
+    with _mock_client(_unusable_reply()) as client:
+        outcome = implement(
+            spec,
+            base_url="http://local",
+            model=_MODEL,
+            http_client=client,
+            on_delta=deltas.append,
+            on_attempt=attempts.append,
+        )
+
+    assert outcome.status is Status.BLOCKED
+    assert deltas == ["No file edit."]
+    assert len(attempts) == 1
+    assert attempts[0].attempt == 1
+    assert attempts[0].blocked is True

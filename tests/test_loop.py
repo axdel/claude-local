@@ -31,14 +31,20 @@ from sse_wire import sse_frame_json
 
 from claude_local.backend import BackendUnavailable, ReplayBackend
 from claude_local.client import ModelClient
-from claude_local.loop import ORACLE_TEST_FILENAME, Loop, LoopResult, _classify_terminal
+from claude_local.loop import (
+    ORACLE_TEST_FILENAME,
+    AttemptProgress,
+    Loop,
+    LoopResult,
+    _classify_terminal,
+)
 from claude_local.prompt import PromptBuilder
 from claude_local.runner import OracleError, TestRunner
 from claude_local.snapshot import SnapshotStore
 from claude_local.types import Status
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from claude_local.runner import TestScore
     from claude_local.types import Budget
@@ -166,13 +172,14 @@ def _make_loop(
     *,
     prompt_builder: PromptBuilder | None = None,
     model: str = "mlx-community/test-coder",
+    on_attempt: Callable[[AttemptProgress], None] | None = None,
 ) -> tuple[Loop, ModelClient]:
     """Assemble a Loop over real collaborators, the two seams doubled; return it and the client."""
     client = ModelClient(backend)  # type: ignore[arg-type]
     prompt = prompt_builder if prompt_builder is not None else PromptBuilder(RULES_CARD)
     runner = TestRunner(spawn=spawn)  # type: ignore[arg-type]
     snapshots = SnapshotStore(worktree, "src")
-    return Loop(client, prompt, runner, snapshots, model), client
+    return Loop(client, prompt, runner, snapshots, model, on_attempt=on_attempt), client
 
 
 def _widget(worktree: Path) -> str:
@@ -640,3 +647,166 @@ def test_backend_unavailable_propagates_and_is_not_masked(tmp_path: Path) -> Non
     # *reachable* server's error frame; a server that never answered is a missing prerequisite.
     with pytest.raises(BackendUnavailable):
         loop.run(spec, worktree)
+
+
+# --- Live attempt progress: each attempt is reported as it resolves ----------------
+
+
+def test_each_attempt_is_reported_while_the_run_is_still_in_flight(tmp_path: Path) -> None:
+    """A progress report must arrive DURING the run, not be replayed after it.
+
+    Oracle: the impl file's on-disk text is loop-external state that changes between attempts —
+    attempt 1 writes _V1 and attempt 2 writes _V2. Reading it inside each report therefore
+    distinguishes live reporting (_V1 then _V2) from a run that collected events and announced
+    them at the end, which would read the restored best (_V2) both times. Attempt numbering is
+    1-based because that is what a reader counts; the JUnit fixtures pin 2-of-3 then 3-of-3.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = ReplayBackend([_edit_script(_V1), _edit_script(_V2)])
+    spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("all_pass.xml"))
+    seen: list[tuple[int, int, str]] = []
+
+    def observe(progress: AttemptProgress) -> None:
+        assert progress.score is not None  # both attempts reached the oracle
+        seen.append((progress.attempt, progress.score.passed, _widget(worktree)))
+
+    loop, _ = _make_loop(worktree, backend, spawn, on_attempt=observe)
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DONE
+    assert seen == [(1, 2, _V1), (2, 3, _V2)]
+
+
+def test_a_reported_attempt_carries_the_generation_that_produced_it(tmp_path: Path) -> None:
+    """The report composes the existing owners rather than restating their fields.
+
+    Oracle: the generation's own text is the framed whole-file reply the script carried, and the
+    score's counts are the captured all_pass report's 3 of 3. Both are read through the value
+    objects that already own them, so neither can drift from a copy.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_edit_script(_V1)]),
+        ScriptedSpawn(_junit("all_pass.xml")),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    loop.run(spec, worktree)
+
+    assert len(seen) == 1
+    assert seen[0].generation.text == build_whole_file_reply("src/widget.py", _V1)
+    assert seen[0].score == build_test_score(passed=3, collected=3, expected=3)
+    assert seen[0].blocked is False
+
+
+def test_an_attempt_that_never_reached_the_oracle_is_reported_as_blocked(tmp_path: Path) -> None:
+    """Prose with no usable frame still gets a report — that silence is the thing to watch.
+
+    Oracle: BLOCKED means the attempt produced no verdict for a STRUCTURAL reason, which is
+    exactly "no score, and neither the guard nor the server stopped it". An unreported blocked
+    attempt would leave a watcher staring at a run that had already given up.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_sse_script("Here is an explanation, but no valid file frame.")]),
+        ScriptedSpawn(),  # spawn is never called: nothing was applied to score
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.BLOCKED
+    assert len(seen) == 1
+    assert seen[0].score is None
+    assert seen[0].blocked is True
+
+
+def test_a_derailed_attempt_is_reported_as_derailed_rather_than_blocked(tmp_path: Path) -> None:
+    """A derail and a structural block both score nothing; a watcher must still tell them apart.
+
+    Oracle: the derail's cause has a single owner — ``GenerationResult.derail_reason`` — so
+    ``blocked`` is the residue after the guard and the server have both been ruled out. Collapsing
+    the two would report the bounded-decode kill as the model failing to answer.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_sse_script("x" * 200)]),  # 200 chars under an 8-char cap
+        ScriptedSpawn(),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_tokens=2),
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DERAILED
+    assert len(seen) == 1
+    assert seen[0].generation.derail_reason is not None
+    assert seen[0].blocked is False
+
+
+def test_a_server_fault_is_reported_as_faulted_rather_than_blocked(tmp_path: Path) -> None:
+    """An upstream error frame is the host failing, and the report must say so.
+
+    Oracle: the fault message has a single owner — ``GenerationResult.fault`` — and D-FAULT-001
+    keeps a reachable server's error frame distinct from the model producing nothing usable.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_error_script("overloaded")]),
+        ScriptedSpawn(),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.FAULTED
+    assert len(seen) == 1
+    assert seen[0].generation.fault == "overloaded"
+    assert seen[0].blocked is False
+
+
+def test_an_unobserved_run_reaches_the_same_terminal_result(tmp_path: Path) -> None:
+    """Observation is optional and must not alter the loop's outcome.
+
+    Oracle: the two-attempt REPAIR path already pinned above — one_failure then all_pass reaches
+    DONE with _V1 restored — asserted here with no observer attached.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = ReplayBackend([_edit_script(_V0), _edit_script(_V1)])
+    spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("all_pass.xml"))
+    loop, client = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DONE
+    assert client.total_calls == 2
+    assert _widget(worktree) == _V1

@@ -13,10 +13,12 @@ from pathlib import Path
 import httpx
 import pytest
 from casehelpers import golden_impl
+from factories import build_attempt_progress, build_generation_result, build_test_score
 
 from benchmarks.harness import CaseScore, Scorecard, load_cases, replay_cases_http_client
-from benchmarks.run import _print_scorecard, main
-from claude_local import Status
+from benchmarks.run import ConsoleProgress, _print_scorecard, main
+from claude_local import AttemptProgress, Status
+from claude_local.derail import DerailReason
 
 _ROOT = Path(__file__).parents[2]
 _BENCHMARK = _ROOT / "benchmarks" / "schedule_manager"
@@ -155,3 +157,138 @@ def test_print_scorecard_surfaces_a_faulted_case_and_a_capped_case(
     err = capsys.readouterr().err
     assert "1 length-capped" in err
     assert "fault: upstream 503" in err
+
+
+# --- The live scoreboard: what a watcher sees while the ladder runs -----------------
+
+
+def test_console_progress_opens_a_case_with_its_target_and_its_budget(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Oracle: the committed case manifest — 01_scaffold targets app/main.py under its own budget.
+
+    The attempt budget belongs on the case line rather than repeated on every attempt line, which
+    is what lets the renderer hold no memory of the case it is inside: a reader gets the
+    denominator once, immediately above the attempts it applies to.
+    """
+    case = load_cases(_CASES, golden_app_root=_GOLDEN_APP)["01_scaffold"]
+
+    ConsoleProgress().case_started("01_scaffold", case, 1, 7)
+
+    err = capsys.readouterr().err
+    assert "[1/7]" in err
+    assert "01_scaffold" in err
+    assert case.task.impl_path in err
+    assert str(case.task.budget.max_attempts) in err
+
+
+@pytest.mark.parametrize(
+    ("progress", "expected"),
+    [
+        (
+            build_attempt_progress(
+                score=build_test_score(passed=3, failed=6, collected=9, expected=9)
+            ),
+            "3/9 oracle tests passed",
+        ),
+        (
+            build_attempt_progress(
+                score=None,
+                generation=build_generation_result(derail_reason=DerailReason.REPETITION),
+            ),
+            "derailed (repetition)",
+        ),
+        (
+            build_attempt_progress(
+                score=None, generation=build_generation_result(fault="upstream 503")
+            ),
+            "server fault: upstream 503",
+        ),
+        (build_attempt_progress(score=None), "no usable file frame"),
+    ],
+)
+def test_console_progress_names_what_each_attempt_produced(
+    progress: AttemptProgress, expected: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every attempt ends one of four ways, and a watcher must be able to tell which.
+
+    Oracle: the four are the loop's own terminal shapes — an oracle verdict, a guard-cut derail,
+    an upstream fault, and the structural block that is left when neither of those stopped it.
+    Collapsing any pair would show the same phrase for two different failures, which is precisely
+    the ambiguity a live view exists to remove. ``DerailReason`` is named here only to build the
+    fixture; the renderer reads its stable value rather than matching on the enum.
+    """
+    ConsoleProgress().attempt(progress)
+
+    err = capsys.readouterr().err
+    assert expected in err
+    assert "attempt 1" in err
+
+
+def test_console_progress_shows_the_decode_rate_it_was_given(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Oracle: 100 completion tokens in 2.0 seconds is 50.0 tok/s — the factory's own defaults.
+
+    Speed is the number a local-model watcher is actually judging, so it is rendered from the
+    generation's owned rate rather than recomputed here.
+    """
+    ConsoleProgress().attempt(build_attempt_progress())
+
+    assert "50.0 tok/s" in capsys.readouterr().err
+
+
+def test_console_progress_streams_raw_model_text_only_when_asked(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The firehose is opt-in: seven cases of multi-thousand-token decodes drown the scoreboard.
+
+    Oracle: a delta is the only thing written by this call, so its presence or absence in the
+    captured stream is decisive either way.
+    """
+    ConsoleProgress().delta("def add(a, b):")
+    assert "def add" not in capsys.readouterr().err
+
+    ConsoleProgress(stream_text=True).delta("def add(a, b):")
+    assert "def add" in capsys.readouterr().err
+
+
+def test_console_progress_closes_a_half_written_stream_before_its_next_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Streamed model text ends mid-line, so a structured line must first break out of it.
+
+    Oracle: model output stops on whatever token it stopped on, with no trailing newline. Without
+    the break the attempt line is glued onto that last token — the scoreboard becomes unreadable
+    exactly when the model is most interesting to watch.
+    """
+    renderer = ConsoleProgress(stream_text=True)
+    renderer.delta("return a + b")
+    renderer.attempt(build_attempt_progress())
+
+    assert capsys.readouterr().err.startswith("return a + b\n")
+
+
+def test_main_reports_the_ladder_live_and_streams_text_on_request(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The script wires the live renderer in, so a real run is watchable, not merely awaited.
+
+    Oracle: the scorecard printed at the end already contains every case id, so case ids prove
+    nothing here. The live markers do: a bracketed ladder position and a per-attempt line exist
+    only while cases are running, and ``--stream`` additionally puts the golden reply's own text
+    on the stream — text that is never part of the final scorecard.
+    """
+    sources = _golden_sources()
+
+    with replay_cases_http_client(sources) as http_client:
+        exit_code = main(
+            ["--base-url", "http://benchmark.local", "--model", "replay/golden", "--stream"],
+            http_client=http_client,
+        )
+
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert "[1/" in err
+    assert "attempt 1" in err
+    assert 'HealthResponse(status="ok")' in err

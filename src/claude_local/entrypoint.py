@@ -34,7 +34,7 @@ import httpx
 
 from claude_local.backend import HttpxBackend
 from claude_local.client import ModelClient
-from claude_local.loop import Loop
+from claude_local.loop import AttemptProgress, Loop
 from claude_local.prompt import PromptBuilder
 from claude_local.runner import TestRunner
 from claude_local.sandbox import sandboxed_spawn
@@ -43,7 +43,7 @@ from claude_local.telemetry import LocalEconomyRecord
 from claude_local.types import Status
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Callable, Iterator, Mapping
 
     from claude_local.types import TaskSpec
 
@@ -119,6 +119,8 @@ def implement(
     rules_card_path: Path | None = None,
     worktree: Path | None = None,
     http_client: httpx.Client | None = None,
+    on_delta: Callable[[str], None] | None = None,
+    on_attempt: Callable[[AttemptProgress], None] | None = None,
 ) -> Outcome:
     """Drive one implementation task through the loop and return what it produced and burned.
 
@@ -140,6 +142,11 @@ def implement(
             created and removed around the run (the produced code is read back before removal).
         http_client: An HTTP client to reuse. When omitted, one is created for the call and closed
             on exit; an injected client is the caller's and is never closed here.
+        on_delta: Optional live-decode observer, called with each raw content delta as it arrives.
+            Raw means pre-normalisation: a reasoning model's channel markup streams verbatim
+            (D-PROGRESS-002).
+        on_attempt: Optional live-progress observer, called with one ``AttemptProgress`` per
+            attempt the moment it resolves.
 
     Returns:
         An ``Outcome`` with the terminal status, produced code (or ``None``), changed files, and
@@ -163,13 +170,18 @@ def implement(
         with _scratch_worktree(worktree) as wt:
             (wt / Path(spec.impl_path).parent).mkdir(parents=True, exist_ok=True)
             loop = Loop(
-                client=ModelClient(HttpxBackend(base_url, client, model, generation_params)),
+                # Each observer goes to the module that owns its event — deltas to the decode,
+                # attempts to the cycle — so neither module carries a callback it never calls.
+                client=ModelClient(
+                    HttpxBackend(base_url, client, model, generation_params), on_delta=on_delta
+                ),
                 prompt_builder=PromptBuilder(card),
                 runner=TestRunner(
                     spawn=functools.partial(sandboxed_spawn, timeout_s=spec.budget.timeout_s)
                 ),
                 snapshots=SnapshotStore(wt, subtree),
                 model=model,
+                on_attempt=on_attempt,
             )
             result = loop.run(spec, wt)
             code = (

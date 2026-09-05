@@ -238,6 +238,108 @@ def test_char_proxy_is_exact_at_a_token_multiple() -> None:
     )
 
 
+# --- Per-generation decode rate ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("completion_tokens", "seconds", "expected"),
+    [(100, 4.0, 25.0), (3, 0.5, 6.0), (0, 2.0, 0.0), (7, 0.0, None)],
+)
+def test_a_generation_reports_its_own_decode_rate(
+    completion_tokens: int, seconds: float, expected: float | None
+) -> None:
+    """Oracle: a rate is tokens over seconds — 100 in 4.0s is 25.0/s, 3 in 0.5s is 6.0/s.
+
+    The result already owns both terms, so the quotient belongs here rather than in every reader
+    that wants to show a speed. Zero elapsed seconds has no rate to report, and is guarded to
+    ``None`` rather than raising — the same guard the aggregate record applies to its own mean.
+    """
+    generation = build_generation_result(completion_tokens=completion_tokens, seconds=seconds)
+
+    assert generation.tokens_per_second == expected
+
+
+# --- Live decode observation: deltas as they arrive -------------------------------
+
+
+def test_every_content_delta_reaches_the_observer_in_stream_order() -> None:
+    """Oracle: the captured stream's own content fields — "Artificial", then " intelligence".
+
+    Each arrives as its own call, which is what makes a decode watchable: a client that buffered
+    the reply and announced it once at the end would report a single joined chunk and pass any
+    assertion written against the concatenation.
+    """
+    seen: list[str] = []
+    client = ModelClient(
+        ReplayBackend([load_bytes("complete_stream.bytes")]),
+        now=ScriptedClock(0.0),
+        on_delta=seen.append,
+    )
+
+    client.generate("prefix", "tail", build_budget())
+
+    assert seen == ["Artificial", " intelligence"]
+
+
+def test_the_delta_that_trips_the_guard_is_reported_before_the_stream_aborts() -> None:
+    """A watcher must see the text that caused a derail — that text is the whole diagnostic.
+
+    Oracle: the cap is max_tokens(2) x CHARS_PER_TOKEN(4) = 8 chars and the first delta
+    "Artificial" is 10, so the guard trips on it. Reporting only after the guard's verdict would
+    withhold exactly the delta a reader needs; the second delta is never decoded, so it must not
+    appear either.
+    """
+    seen: list[str] = []
+    client = ModelClient(
+        ReplayBackend([load_bytes("complete_stream.bytes")]),
+        now=ScriptedClock(0.0),
+        on_delta=seen.append,
+    )
+
+    result = client.generate("prefix", "tail", build_budget(max_tokens=2))
+
+    assert result.derail_reason is DerailReason.TOKEN_CAP
+    assert seen == ["Artificial"]
+
+
+def test_deltas_are_reported_raw_rather_than_channel_normalised() -> None:
+    """The live view shows what the model emits, not the reply recovered from it afterwards.
+
+    Oracle: this captured gpt-oss session opens its channel transcript with the literal
+    ``<|channel|>`` marker and carries ``OK`` as its final channel's message. ``assistant_content``
+    collapses the whole transcript to that reply, so deltas taken from the normalised text could
+    not begin with the marker — and a watcher would lose the analysis channel, which is most of
+    what there is to watch on a reasoning model.
+    """
+    seen: list[str] = []
+    client = ModelClient(
+        ReplayBackend([load_bytes("harmony_channel_stream.bytes")]),
+        now=ScriptedClock(0.0),
+        on_delta=seen.append,
+    )
+
+    result = client.generate("prefix", "tail", build_budget(max_tokens=4096))
+
+    assert seen[0] == "<|channel|>"
+    assert result.text == "OK"
+
+
+def test_an_unobserved_generation_is_unchanged() -> None:
+    """The observer is optional: omitting it must leave the metered result byte-identical.
+
+    Oracle: the clean-path expectations already pinned above — the server's own usage count of 2
+    and the two deltas' concatenation — neither of which involves an observer.
+    """
+    client = ModelClient(
+        ReplayBackend([load_bytes("complete_stream.bytes")]), now=ScriptedClock(0.0)
+    )
+
+    result = client.generate("prefix", "tail", build_budget())
+
+    assert result.text == "Artificial intelligence"
+    assert result.completion_tokens == 2
+
+
 # --- Derail aborts: stop the stream, estimate the count ---------------------------
 
 

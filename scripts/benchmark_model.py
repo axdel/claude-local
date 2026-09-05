@@ -56,6 +56,11 @@ def main(argv: list[str] | None = None) -> int:
         default=600.0,
         help="Seconds to wait for the model to load; a cold first read streams 11+ GB off disk.",
     )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Also print the model's raw text as it decodes; the ladder is live either way.",
+    )
     args = parser.parse_args(argv)
 
     resolved = ModelRegistry.default().resolve(args.model)
@@ -72,23 +77,22 @@ def main(argv: list[str] | None = None) -> int:
 
         # The documented consumer path, invoked as the benchmark README prints it — not an
         # in-process call to run_cases(), which would skip the surface a user actually drives.
-        # Output is inherited rather than captured: the ladder runs for many minutes, and a
-        # captured pipe would withhold every case's progress until the last one finished.
-        done = subprocess.run(  # noqa: S603
-            [
-                sys.executable,
-                "-m",
-                _BENCHMARK_MODULE,
-                "--base-url",
-                handle.base_url,
-                "--model",
-                served,
-                "--out",
-                str(args.out),
-            ],
-            cwd=_REPO_ROOT,
-            check=False,
-        )
+        # Output is INHERITED, never captured: the benchmark reports each case and attempt live,
+        # and a captured pipe would hold every one of those lines until the run was already over.
+        command = [
+            sys.executable,
+            "-m",
+            _BENCHMARK_MODULE,
+            "--base-url",
+            handle.base_url,
+            "--model",
+            served,
+            "--out",
+            str(args.out),
+        ]
+        if args.stream:
+            command.append("--stream")
+        done = subprocess.run(command, cwd=_REPO_ROOT, check=False)  # noqa: S603
 
     print(f"[bench] server torn down after {time.monotonic() - started:.1f}s", file=sys.stderr)
     return done.returncode
