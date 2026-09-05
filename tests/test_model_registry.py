@@ -165,6 +165,23 @@ def test_a_row_with_the_wrong_column_count_is_refused(tmp_path: Path) -> None:
     assert "models.tsv:2" in str(refusal.value)
 
 
+def test_the_shipped_catalog_parses_without_a_store() -> None:
+    """The committed catalog is well-formed — checked where no store is needed to check it.
+
+    Oracle: the catalog is repo-relative, so it exists in every worktree, while the store does not
+    (see ``ModelRegistry.default``). Reconciling the two must therefore skip when no weights are
+    present — but the catalog's SHAPE never needs weights, and folding both checks into one
+    skippable test left the shape unguarded exactly where the suite normally runs. A NOTE that
+    grew a stray pipe split its row into eight fields and reached a passing commit gate; the same
+    catalog raised MalformedRegistry the moment anything resolved a name against it. This test is
+    that resolution, run unconditionally, so the refusal happens at the gate instead of in front
+    of a user.
+    """
+    names = ModelRegistry.default().names()
+
+    assert names, "the committed catalog names no models"
+
+
 def test_the_shipped_registry_catalogues_every_model_the_store_holds() -> None:
     """The committed catalog and the real store agree — no directory the catalog fails to name.
 
