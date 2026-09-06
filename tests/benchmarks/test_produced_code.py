@@ -16,6 +16,10 @@ from benchmarks.harness import CaseResult, write_produced_code
 from claude_local import Outcome, Status
 
 _MODEL = "local/candidate-7b"
+# The run stamp the caller supplies. A fixed value rather than a clock read: the stamp is an
+# argument now precisely so a run's two artifacts share one, which a test can only pin if it
+# knows the value.
+_STAMP_MS = 1_700_000_000_000
 
 
 def _case_result(case_id: str, status: Status, code: str | None, impl_path: str) -> CaseResult:
@@ -44,7 +48,7 @@ def test_a_cases_code_lands_at_its_own_impl_path_under_its_case_id(tmp_path: Pat
     source = "def health() -> dict[str, str]:\n    return {'status': 'ok'}\n"
     results = [_case_result("01_scaffold", Status.DONE, source, "app/main.py")]
 
-    written = write_produced_code(results, _MODEL, tmp_path)
+    written = write_produced_code(results, _MODEL, tmp_path, _STAMP_MS)
 
     assert (written / "01_scaffold" / "app" / "main.py").read_text(encoding="utf-8") == source
 
@@ -60,7 +64,7 @@ def test_a_failed_cases_code_is_saved_too(tmp_path: Path) -> None:
     attempted = "class ScheduleRepository:\n    pass\n"
     results = [_case_result("03_repositories", Status.EXHAUSTED, attempted, "app/repositories.py")]
 
-    written = write_produced_code(results, _MODEL, tmp_path)
+    written = write_produced_code(results, _MODEL, tmp_path, _STAMP_MS)
 
     saved = written / "03_repositories" / "app" / "repositories.py"
     assert saved.read_text(encoding="utf-8") == attempted
@@ -76,22 +80,27 @@ def test_a_case_that_produced_nothing_writes_no_file(tmp_path: Path) -> None:
     """
     results = [_case_result("07_routers", Status.BLOCKED, None, "app/routers.py")]
 
-    written = write_produced_code(results, _MODEL, tmp_path)
+    written = write_produced_code(results, _MODEL, tmp_path, _STAMP_MS)
 
     assert written.is_dir()  # the run directory still exists, so "nothing scored" is legible
     assert list(written.iterdir()) == []
 
 
 def test_the_code_directory_is_named_to_pair_with_the_scorecard(tmp_path: Path) -> None:
-    """The directory carries the same model slug the scorecard's filename does.
+    """The directory carries the same model slug AND the same stamp the scorecard's filename does.
 
-    Oracle: ``Scorecard.write`` names its file ``scorecard-<slug>-<ms>.json`` using the same
-    ``slug_model_id``. Sharing the slug is what lets a reader pair a verdict with the code behind
-    it by name; without it the only correlation left is comparing modification times, which two
-    runs of the same model minutes apart destroy.
+    Oracle: ``Scorecard.write`` names its file ``scorecard-<slug>-<ms>.json`` from the same
+    ``slug_model_id`` and the same supplied stamp, so the paired name is fully determined — every
+    character of it is asserted here rather than a prefix.
+
+    Asserting only the prefix is what let the pairing break: the slug half was pinned, the stamp
+    half was left to whatever each writer's own clock read returned, and two reads a millisecond
+    apart produced names that no longer paired while this test stayed green. Pairing by name is the
+    point — without it the only correlation left is modification times, which two runs of the same
+    model minutes apart destroy.
     """
     results = [_case_result("01_scaffold", Status.DONE, "x = 1\n", "app/main.py")]
 
-    written = write_produced_code(results, _MODEL, tmp_path)
+    written = write_produced_code(results, _MODEL, tmp_path, _STAMP_MS)
 
-    assert written.name.startswith("code-local-candidate-7b-")
+    assert written.name == f"code-local-candidate-7b-{_STAMP_MS}"

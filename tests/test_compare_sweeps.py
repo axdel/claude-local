@@ -121,10 +121,12 @@ def test_short_model_strips_the_weights_path_a_local_model_id_carries() -> None:
 def test_code_directory_pairs_with_the_scorecard_written_milliseconds_apart(
     tmp_path: Path,
 ) -> None:
-    """A run's two artifacts do not share a stamp, so the join must tolerate a small gap.
+    """Historical runs did not share a stamp between their two artifacts, so the join tolerates it.
 
-    Oracle: ``run.py`` calls ``time.time()`` separately for each, five lines apart, which is why
-    the observed pair is ``…723.json`` beside ``…724``. An exact-match join finds nothing at all.
+    Oracle: every scorecard written before ``run.py`` was changed to read the clock once came from
+    two separate reads, which is why the pair observed on disk is ``…723.json`` beside ``…724``.
+    Those runs are most of the corpus, so an exact-match join would silently drop their style
+    column. Runs written since do match exactly, and the same nearest-match join accepts them.
     """
     module = _script()
     scorecard = tmp_path / "scorecard-local-candidate-1788709222723.json"
@@ -135,6 +137,23 @@ def test_code_directory_pairs_with_the_scorecard_written_milliseconds_apart(
     paired = module._paired_code_directory(scorecard, 1788709222723, [code])
 
     assert paired == code
+
+
+def test_code_directory_pairs_when_the_two_stamps_are_identical(tmp_path: Path) -> None:
+    """The nearest-match join accepts a zero gap, which is what every run now produces.
+
+    Oracle: ``run.py`` reads the clock once and hands the same stamp to both writers, so a current
+    run's two names differ only by their prefix. A join written purely around the historical
+    millisecond gap — one that required a nonzero difference — would pair every old run and no new
+    one, which is the regression this pins.
+    """
+    module = _script()
+    scorecard = tmp_path / "scorecard-local-candidate-1788709222723.json"
+    scorecard.write_text("{}", encoding="utf-8")
+    code = tmp_path / "code-local-candidate-1788709222723"
+    code.mkdir()
+
+    assert module._paired_code_directory(scorecard, 1788709222723, [code]) == code
 
 
 def test_a_code_directory_from_a_different_run_is_not_paired(tmp_path: Path) -> None:

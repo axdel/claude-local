@@ -43,6 +43,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -312,12 +313,16 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     scorecard = score_cases(results)
     _print_scorecard(scorecard)
     if args.out is not None:
-        written = scorecard.write(args.out)
+        # One clock read for both artifacts. Their names are how a verdict is matched to the code
+        # behind it, so reading the clock separately in each writer would leave the two stamps a
+        # millisecond or two apart and quietly demote that pairing to an mtime correlation.
+        stamp_ms = int(time.time() * 1000)
+        written = scorecard.write(args.out, stamp_ms)
         print(f"scorecard written to {written}", file=sys.stderr)
         # The scorecard says how many oracle tests passed; only the code says whether what passed
         # them is worth keeping. Both are written, because a run that discards the implementation
         # leaves no way to judge naming, structure, or how narrowly a case missed.
-        code_directory = write_produced_code(results, scorecard.model, args.out)
+        code_directory = write_produced_code(results, scorecard.model, args.out, stamp_ms)
         print(f"produced code written to {code_directory}", file=sys.stderr)
     return 0 if scorecard.cases_passed == scorecard.cases_total else 1
 

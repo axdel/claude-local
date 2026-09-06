@@ -21,7 +21,6 @@ Cold path: this runs once, after the whole ladder, off the inference hot path (E
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 from claude_local import slug_model_id
@@ -33,25 +32,29 @@ if TYPE_CHECKING:
     from .driver import CaseResult
 
 
-def write_produced_code(results: Sequence[CaseResult], model: str, directory: Path) -> Path:
+def write_produced_code(
+    results: Sequence[CaseResult], model: str, directory: Path, stamp_ms: int
+) -> Path:
     """Save each case's produced file under one run-stamped directory. Returns that directory.
 
     Each file lands at ``<case_id>/<impl_path>``, mirroring the path the model was told to write,
     so a reader browses the answers in the same shape as the golden app they are compared against.
 
-    The directory name pairs with the scorecard's — same model slug, same millisecond clock — so a
-    verdict and the code behind it are matched by name rather than by having to correlate mtimes.
+    The directory name pairs with the scorecard's — same model slug, same stamp — so a verdict and
+    the code behind it are matched by name rather than by having to correlate mtimes.
 
     Args:
         results: One ``CaseResult`` per case, in benchmark order, as ``run_cases`` returns them.
         model: The model id the run scored, used for the directory name.
         directory: Where the run-stamped directory is created.
+        stamp_ms: The run's stamp, the same one its scorecard was written under. Supplied rather
+            than read here because a second clock read is what breaks the pairing above.
 
     Returns:
         The run-stamped directory the files were written into, created even when every case
         produced nothing — an empty directory is itself the finding that no case scored an edit.
     """
-    run_directory = directory / f"code-{slug_model_id(model)}-{int(time.time() * 1000)}"
+    run_directory = directory / f"code-{slug_model_id(model)}-{stamp_ms}"
     run_directory.mkdir(parents=True, exist_ok=True)
     for result in results:
         if result.outcome.code is None:

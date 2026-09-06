@@ -7,7 +7,9 @@ model transport replayed. Feeding every hole its golden file proves the document
 exit code to 1; and the no-model guard is asserted from the process's own exit code.
 """
 
+import itertools
 import json
+import time
 from pathlib import Path
 
 import httpx
@@ -126,6 +128,45 @@ def test_main_runs_only_the_named_cases_in_ladder_order(
     assert [case["case_id"] for case in card["cases"]] == ["01_scaffold", "05_rbac"]
     assert card["cases_total"] == 2  # the other five never ran
     assert "02_schemas" not in capsys.readouterr().err
+
+
+def test_a_run_stamps_its_scorecard_and_its_code_directory_identically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run's two artifacts pair by name, which takes one clock read for both — not one each.
+
+    Oracle: ``write_produced_code`` documents that the code directory's name matches the
+    scorecard's, so a verdict and the code behind it are found by name instead of by correlating
+    mtimes. Nothing else in the run reads the wall clock — every duration uses ``time.monotonic``
+    — so advancing ``time.time`` a full second per call isolates exactly the stamping.
+
+    That advancing clock is what makes the assertion bite. Left real, both reads land in the same
+    millisecond on a replay run and two independent reads pass by luck, so the test would be green
+    against the very bug it exists to catch.
+    """
+    ticks = itertools.count(1_700_000_000.0)
+    monkeypatch.setattr(time, "time", lambda: next(ticks))
+    sources = _golden_sources()
+
+    with replay_cases_http_client(sources) as http_client:
+        exit_code = main(
+            [
+                "--base-url",
+                "http://benchmark.local",
+                "--model",
+                "replay/golden",
+                "--only",
+                "01_scaffold",
+                "--out",
+                str(tmp_path),
+            ],
+            http_client=http_client,
+        )
+
+    assert exit_code == 0
+    (scorecard_path,) = tmp_path.glob("scorecard-*.json")
+    (code_directory,) = (path for path in tmp_path.glob("code-*") if path.is_dir())
+    assert scorecard_path.stem.rsplit("-", 1)[1] == code_directory.name.rsplit("-", 1)[1]
 
 
 def test_main_exits_2_when_only_names_an_unknown_case(

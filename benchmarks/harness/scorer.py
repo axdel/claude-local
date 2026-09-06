@@ -14,7 +14,6 @@ for speed (E6).
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -74,15 +73,22 @@ class Scorecard:
         """How many cases the benchmark ran."""
         return len(self.cases)
 
-    def write(self, directory: Path) -> Path:
+    def write(self, directory: Path, stamp_ms: int) -> Path:
         """Serialize the scorecard as JSON into ``directory`` (created if absent); return the path.
 
         The filename is ``scorecard-<slugged model>-<ms timestamp>.json``: the ``scorecard-``
         prefix keeps it distinct from an economy record sharing the directory, and the timestamp
         keeps concurrent runs from clobbering one another. Returns where it wrote.
+
+        Args:
+            directory: Where to write; created if absent.
+            stamp_ms: The run's stamp, supplied rather than read here so this and the run's
+                produced code carry the same one — which is the whole of what makes them pair by
+                name. Read independently at each writer they differ by however far the clock moved
+                between the two calls, and the pairing silently becomes an mtime correlation.
         """
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"scorecard-{slug_model_id(self.model)}-{int(time.time() * 1000)}.json"
+        path = directory / f"scorecard-{slug_model_id(self.model)}-{stamp_ms}.json"
         path.write_text(json.dumps(self._as_dict(), indent=2), encoding="utf-8")
         return path
 

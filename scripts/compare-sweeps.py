@@ -43,10 +43,10 @@ from benchmarks.harness.style import collect_style_findings  # noqa: E402
 _SCORECARDS = _REPO_ROOT / "benchmarks" / "scorecards"
 _USAGE_ERROR = 2
 
-# A run writes its scorecard and its code directory with two independent clock reads, so the pair
-# differs by a millisecond or two rather than matching exactly (see TASK-040 — the naming promises
-# an exact match it does not deliver). One second is far wider than that gap and far narrower than
-# the minutes between runs, so the nearest candidate inside it is unambiguous.
+# A run now stamps both its artifacts from one clock read, so their names match exactly. Every
+# scorecard written before that fix landed came from two independent reads and pairs a millisecond
+# or two off, and those runs are most of the comparison — so the join stays a nearest-match. One
+# second is far wider than that historical gap and far narrower than the minutes between runs.
 _PAIRING_TOLERANCE_MS = 1000
 
 # What a scorecard written before the rules card became a benchmark variable reports as its card.

@@ -17,6 +17,11 @@ from factories import build_local_economy_record
 from benchmarks.harness import CaseResult, CaseScore, score_cases
 from claude_local import Outcome, Status
 
+# The run stamp the caller supplies. Fixed rather than read from the clock: the stamp became an
+# argument so a run's scorecard and its produced code share one, and a test can only pin a shared
+# value it knows.
+_STAMP_MS = 1_700_000_000_000
+
 
 def _case_result(
     case_id: str,
@@ -127,7 +132,7 @@ def test_score_cases_surfaces_each_case_fault_and_length_capped(tmp_path: Path) 
     assert by_id["02_schemas"].length_capped == 0
 
     # length_capped is always emitted (a stable numeric field); fault only on the faulted case.
-    card = json.loads(scorecard.write(tmp_path).read_text(encoding="utf-8"))
+    card = json.loads(scorecard.write(tmp_path, _STAMP_MS).read_text(encoding="utf-8"))
     assert card["cases"] == [
         {"case_id": "01_scaffold", "status": "done", "attempts": 2, "length_capped": 1},
         {
@@ -226,7 +231,7 @@ def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
     """The written JSON reloads to the hand-derived mapping, under a scorecard-prefixed name."""
     scorecard = score_cases(_mixed_cases())
 
-    path = scorecard.write(tmp_path)
+    path = scorecard.write(tmp_path, _STAMP_MS)
 
     assert path.parent == tmp_path
     assert path.name.startswith("scorecard-local-candidate-7b-")
@@ -257,7 +262,7 @@ def test_scorecard_write_creates_the_directory_when_absent(tmp_path: Path) -> No
     scorecard = score_cases(_mixed_cases())
     destination = tmp_path / "nested" / "scorecards"
 
-    path = scorecard.write(destination)
+    path = scorecard.write(destination, _STAMP_MS)
 
     assert path.parent == destination
     assert path.is_file()
