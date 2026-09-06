@@ -17,7 +17,9 @@ Only the LATEST run of each (model, card) pair is reported. A re-run supersedes:
 measurement of the same configuration is a strictly worse estimate of it, and averaging the two
 would blend a fixed loop against itself. Partial runs — anything that did not attempt the full
 case ladder — are excluded rather than compared, because a model that ran two cases is not
-2/7 at the thing a 7-case run measures.
+2/7 at the thing a 7-case run measures. A run predating the digest field is labelled ``unstamped``
+and dropped only when a stamped run of the same model reports its exact totals — the loop is
+deterministic, so that is one measurement listed twice, not two data points.
 
 Run from the repository root, like every other command here — the shebang resolves the project's
 environment from the working directory. Under a bare ``python3`` it dies on the first import.
@@ -157,6 +159,46 @@ def _style_count(code_directory: Path | None) -> int | None:
     return len(collect_style_findings(code_directory))
 
 
+def _output_fingerprint(result: SweepResult) -> tuple[str, int, int, int, int]:
+    """What a deterministic loop reproduces exactly: the model, its score, and what it burned.
+
+    Wall-clock is deliberately absent — it is the one number that moves between identical runs,
+    measured at 42.4 and 43.5 minutes for byte-identical output. Style findings are absent too:
+    they come from the produced-code directory, which an old run may no longer have, so including
+    them would make a fingerprint depend on whether an artifact was cleaned up.
+    """
+    return (
+        result.model,
+        result.cases_passed,
+        result.cases_total,
+        result.completion_tokens,
+        result.attempts,
+    )
+
+
+def _drop_duplicated_unstamped(results: list[SweepResult]) -> list[SweepResult]:
+    """Drop an unstamped row whose measurement a stamped row of the same model already reports.
+
+    The loop is output-deterministic, so a run's totals are its fingerprint: an unstamped row that
+    matches a stamped one exactly is that same configuration, measured once before the card was
+    recorded and once after. Listing both shows one result twice under two labels, which reads as
+    two independent data points.
+
+    An unstamped row with no such twin stays, because it may be the only surviving record of a
+    model whose weights are gone. Note what this does and does not claim — that the measurement is
+    *already reported*, never that it *must have used* some particular card. The card stays
+    unknown, which is why these rows are still excluded from the verdicts below.
+    """
+    reported = {
+        _output_fingerprint(result) for result in results if result.rules_card_digest != _UNSTAMPED
+    }
+    return [
+        result
+        for result in results
+        if result.rules_card_digest != _UNSTAMPED or _output_fingerprint(result) not in reported
+    ]
+
+
 def _latest_per_configuration(results: list[SweepResult]) -> list[SweepResult]:
     """One row per (model, card): the most recent run of each configuration."""
     latest: dict[tuple[str, str], SweepResult] = {}
@@ -228,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: no complete scorecard found under {_SCORECARDS}", file=sys.stderr)
         return _USAGE_ERROR
 
-    rows = _latest_per_configuration(results)
+    rows = _drop_duplicated_unstamped(_latest_per_configuration(results))
     _print_table(rows)
     _print_card_verdicts(rows)
     return 0

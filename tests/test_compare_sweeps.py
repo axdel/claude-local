@@ -110,6 +110,75 @@ def test_rows_are_ordered_by_cases_passed_then_by_fewest_tokens() -> None:
     assert [row.model for row in rows] == ["c/frugal", "b/dear", "a/cheap"]
 
 
+def test_an_unstamped_run_a_stamped_one_already_reports_is_dropped() -> None:
+    """One measurement must appear once, not twice under two labels.
+
+    Oracle: the loop is output-deterministic — two runs 100 minutes apart produced the same 7,619
+    tokens and the same per-case attempts — so identical totals for one model are the same
+    configuration, measured once before the card was recorded and once after. Showing both invites
+    reading a single result as two independent data points.
+    """
+    module = _script()
+    before_the_card_was_recorded = _result(
+        module, rules_card_digest=module._UNSTAMPED, stamp_ms=1_000
+    )
+    stamped = _result(module, rules_card_digest="aaaaaaaaaaaa", stamp_ms=2_000)
+
+    rows = module._latest_per_configuration([before_the_card_was_recorded, stamped])
+    rows = module._drop_duplicated_unstamped(rows)
+
+    assert [row.rules_card_digest for row in rows] == ["aaaaaaaaaaaa"]
+
+
+def test_an_unstamped_run_with_no_stamped_twin_survives() -> None:
+    """A model whose weights are gone can never be re-measured, so its one row must stay.
+
+    Oracle: five models in the corpus were deleted after being benchmarked, and their scorecards
+    are the only record that survives. Dropping every unstamped row would discard them, and no card
+    can be inferred for one — which is why the rule is "already reported", never "must have been
+    card X".
+    """
+    module = _script()
+    only_record = _result(module, rules_card_digest=module._UNSTAMPED, completion_tokens=32_813)
+    unrelated = _result(module, model="other/model", rules_card_digest="aaaaaaaaaaaa")
+
+    rows = module._drop_duplicated_unstamped([only_record, unrelated])
+
+    assert only_record in rows
+
+
+def test_an_unstamped_run_matching_a_different_models_totals_survives() -> None:
+    """The fingerprint is per model: two models hitting the same totals are not one measurement.
+
+    Oracle: the totals are a fingerprint only because one model's decode is reproducible. Across
+    models they are just numbers, and two models can land on the same token count — so a rule that
+    ignored the model would delete a real result belonging to another one.
+    """
+    module = _script()
+    unstamped = _result(module, model="a/first", rules_card_digest=module._UNSTAMPED)
+    same_totals_other_model = _result(module, model="b/second", rules_card_digest="aaaaaaaaaaaa")
+
+    rows = module._drop_duplicated_unstamped([unstamped, same_totals_other_model])
+
+    assert unstamped in rows
+
+
+def test_two_stamped_cards_with_identical_totals_both_survive() -> None:
+    """Only an unstamped row can be a duplicate; two named cards are two configurations.
+
+    Oracle: a card that changed nothing about a model's output is itself the finding — the two rows
+    are what shows the card made no difference. Collapsing them would erase that result, and the
+    heretic model measured 6/7 under both cards for exactly this reason.
+    """
+    module = _script()
+    compact = _result(module, rules_card_digest="aaaaaaaaaaaa")
+    doctrine = _result(module, rules_card_digest="bbbbbbbbbbbb")
+
+    rows = module._drop_duplicated_unstamped([compact, doctrine])
+
+    assert len(rows) == 2
+
+
 def test_short_model_strips_the_weights_path_a_local_model_id_carries() -> None:
     """Oracle: a local model's id is its absolute weights path; a table needs the last segment."""
     module = _script()
