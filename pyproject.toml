@@ -158,7 +158,9 @@ layers = [
     # `entrypoint` wires. Nothing below may reach up into either.
     "__main__",
     "cli",
-    "entrypoint",
+    # Two composition roots, siblings because neither reaches into the other: `entrypoint` wires
+    # the red→green loop for a machine caller, `session` serves a model for an interactive one.
+    "entrypoint | session",
     "loop",
     "telemetry",
     "client | prompt | snapshot",

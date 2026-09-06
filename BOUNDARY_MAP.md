@@ -6,6 +6,7 @@
 |-|-|-|-|-|-|
 | __init__ | entrypoint | may-import | Public front door re-exports implement and Outcome. | active |  |
 | __init__ | loop | may-import | Public front door re-exports AttemptProgress, the live event implement's on_attempt observer receives. | active |  |
+| __init__ | session | may-import | Public front door re-exports model_session, the interactive surface. | active |  |
 | __init__ | types | may-import | Public front door re-exports task value objects. | active |  |
 | __main__ | cli | may-import | The python -m shim resolves the same front door as the installed console script. | active |  |
 | backend | httpx | may-import | Only external transport dependency. | active |  |
@@ -48,6 +49,12 @@
 | prompt | runner | may-import | Distills feedback over the oracle TestScore. | active |  |
 | prompt | types | may-import | Assembles the stable prefix from TaskSpec. | active |  |
 | runner | sandbox | may-import | Runs the oracle under kernel confinement. | active |  |
+| session | backend | may-import | Constructs HttpxBackend against the id the running server advertises. | active |  |
+| session | client | may-import | Wraps the backend in ModelClient, kept warm for the session's whole lifetime. | active |  |
+| session | httpx | may-import | Constructs the one keep-alive httpx.Client the session reuses across turns. | active |  |
+| session | model_registry | may-import | Resolves a catalogued name to its store path before anything is spawned. | active |  |
+| session | model_server | may-import | Composes ModelServer.for_model and .running; never spawns a process directly. | active |  |
+| session | sandbox | may-import | Reads DEFAULT_ORACLE_TIMEOUT_S for the Budget field a chat turn never spends. | active |  |
 | snapshot | paths | may-import | Restore constrained by keep_only containment. | active |  |
 | snapshot | runner | may-import | Ranks attempts by the oracle score. | active |  |
 | telemetry | client | may-import | Aggregates GenerationResult token usage into the record. | active |  |

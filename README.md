@@ -60,6 +60,27 @@ must satisfy elsewhere.
    uv run python examples/quicksort/run.py --model <model-name> > quicksort.py
    ```
 
+### Talking to a model interactively
+
+To try prompts against a catalogued model — tuning a rules card, checking how one answers before
+spending a benchmark on it — `model_session` collapses steps 1 and 2 into a `with` block. It
+resolves the name in the store, spawns the server, waits for it to answer, and guarantees the
+model is gone when the block ends, including when it ends by exception:
+
+```python
+from claude_local import model_session
+
+with model_session("gpt-oss-20b") as chat:
+    print(chat("write a haiku about static types"))
+    print(chat.last.tokens_per_second)  # the turn's metering, not just its text
+```
+
+One keep-alive client serves the whole session, and holding the `system=` prefix identical across
+turns keeps the server's prefill cache warm. This needs `uv sync --group serve`; the loop itself
+does not.
+
+### Driving your own task
+
 Driving your own task hands one contract to the entry point: an impl path, a spec, an immutable
 oracle test, its expected test count, and a budget. When the implementation must integrate with
 existing code, add any neighbor files as optional, ordered, read-only context:
