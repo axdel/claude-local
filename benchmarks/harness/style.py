@@ -12,10 +12,12 @@ for two different reasons. The repository excludes the produced tree because a w
 is not this repository's findings; this pass ignores the repository's rule selection because that
 selection was chosen for source we write, not for a measurement of code we did not.
 
-What it measures is bounded and stated: missing docstrings, missing annotations, and the unused
-imports, variables and arguments a linter can see. It makes no claim beyond them — notably, a
-guard against a state the code itself just made impossible has no rule in any linter, so that
-defect class is visible to a reader and invisible here.
+What it measures is bounded and stated: missing docstrings, missing annotations, the unused
+imports, variables and arguments a linter can see, and errors caught blindly or re-raised without
+their cause. Each selected rule names a rule the rules card already states, so the pass measures
+whether stating it worked rather than some general notion of quality. It makes no claim beyond
+them — notably, a guard against a state the code itself just made impossible has no rule in any
+linter, so that defect class is visible to a reader and invisible here.
 """
 
 from __future__ import annotations
@@ -45,6 +47,8 @@ _SELECTED_RULES = (
     "F401",  # unused-import
     "F841",  # unused-variable
     "ARG",  # unused function, method, class-method and lambda arguments
+    "BLE001",  # blind-except
+    "B904",  # raise-without-from-inside-except
 )
 
 # Ruff exits 1 to report findings and 0 when clean; both carry a parseable document. Any other code

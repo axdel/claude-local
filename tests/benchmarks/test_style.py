@@ -19,6 +19,8 @@ _MISSING_MODULE_DOCSTRING = "D100"
 _MISSING_FUNCTION_DOCSTRING = "D103"
 _MISSING_RETURN_ANNOTATION = "ANN201"
 _UNUSED_IMPORT = "F401"
+_BLIND_EXCEPT = "BLE001"
+_RAISE_WITHOUT_FROM = "B904"
 
 # Written line by line rather than as one escaped string: these fixtures ARE the inputs under
 # test, so a reader must be able to see the docstring and annotation each rule is looking for.
@@ -138,6 +140,33 @@ def test_an_unused_import_is_reported(tmp_path: Path) -> None:
     findings = collect_style_findings(tmp_path)
 
     assert _UNUSED_IMPORT in _rules(findings)
+
+
+def test_swallowing_an_error_is_reported(tmp_path: Path) -> None:
+    """The card tells the model not to catch broadly or drop a cause; the pass must see both.
+
+    Oracle: ruff documents BLE001 as `blind-except` and B904 as
+    `raise-without-from-inside-except`. The fixture is the shape a real model produced in an auth
+    service — a bare `except Exception` that swallows the exception the same block raised, and a
+    re-raise with no `from`. Both codes come from ruff's rule table, not from running this pass.
+    """
+    source = (
+        '"""Documented."""\n'
+        "\n"
+        "\n"
+        "def verify(token: str) -> int:\n"
+        '    """Return the identifier a token carries."""\n'
+        "    try:\n"
+        "        return int(token)\n"
+        "    except Exception:\n"
+        "        raise ValueError(token)\n"
+    )
+    _produced(tmp_path, "04_auth_service", "app/services/auth_service.py", source)
+
+    findings = collect_style_findings(tmp_path)
+
+    assert _BLIND_EXCEPT in _rules(findings)
+    assert _RAISE_WITHOUT_FROM in _rules(findings)
 
 
 def test_a_finding_carries_the_line_it_was_found_on(tmp_path: Path) -> None:
