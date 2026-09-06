@@ -72,7 +72,12 @@ spec = TaskSpec(
     spec_text="<the ticket>",
     test_text="<a failing oracle test the model never sees as writable>",
     expected_tests=5,  # collected-node count the oracle must expose
-    budget=Budget(max_attempts=5, max_tokens=4096, timeout_s=120.0),
+    budget=Budget(
+        max_attempts=5,
+        max_tokens=4096,
+        generation_timeout_s=1200.0,  # generous: a slow model producing steadily is healthy
+        oracle_timeout_s=120.0,  # tight: nothing legitimate makes a test suite slow
+    ),
     context_files=(ContextFile(path="src/protocol.py", content="<existing neighbor source>"),),
 )
 outcome = implement(spec, base_url="http://localhost:8080", model="<model-name>")

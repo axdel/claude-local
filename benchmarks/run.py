@@ -170,7 +170,7 @@ class ConsoleProgress:
         self._line(
             f"[{index}/{total}] {case_id}  ->  {case.task.impl_path}  "
             f"(up to {budget.max_attempts} attempts x {budget.max_tokens} tokens, "
-            f"{budget.timeout_s:.0f}s oracle)"
+            f"{budget.generation_timeout_s:.0f}s decode, {budget.oracle_timeout_s:.0f}s oracle)"
         )
 
     def delta(self, text: str) -> None:

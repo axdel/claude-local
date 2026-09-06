@@ -131,10 +131,11 @@ def implement(
     """Drive one implementation task through the loop and return what it produced and burned.
 
     Wires and runs the full red→green loop against an already-running server at ``base_url``, in a
-    scratch worktree (a managed tempdir unless ``worktree`` is supplied). The oracle budget's
-    wall-clock (``spec.budget.timeout_s``) is bound into the kernel sandbox that runs the oracle,
-    so a non-terminating implementation is killed at the task's budget rather than the sandbox's
-    default backstop.
+    scratch worktree (a managed tempdir unless ``worktree`` is supplied). The budget's oracle
+    deadline (``spec.budget.oracle_timeout_s``) is bound into the kernel sandbox that runs the
+    oracle, so a non-terminating implementation is killed at the task's own tight bound rather than
+    the sandbox's default backstop — and never at the generous generation deadline, which bounds a
+    decode and has no bearing on how long a test suite may run.
 
     Args:
         spec: The task — impl path (must be nested under a directory), spec text, optional
@@ -183,7 +184,9 @@ def implement(
                 ),
                 prompt_builder=PromptBuilder(card),
                 runner=TestRunner(
-                    spawn=functools.partial(sandboxed_spawn, timeout_s=spec.budget.timeout_s)
+                    spawn=functools.partial(
+                        sandboxed_spawn, timeout_s=spec.budget.oracle_timeout_s
+                    )
                 ),
                 snapshots=SnapshotStore(wt, subtree),
                 model=model,

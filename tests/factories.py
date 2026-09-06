@@ -38,7 +38,12 @@ def build_generation_result(**overrides: object) -> GenerationResult:
 
 def build_budget(**overrides: object) -> Budget:
     """Canonical valid Budget; a test overrides only the field it exercises."""
-    fields: dict[str, object] = {"max_attempts": 3, "max_tokens": 2048, "timeout_s": 30.0}
+    fields: dict[str, object] = {
+        "max_attempts": 3,
+        "max_tokens": 2048,
+        "generation_timeout_s": 30.0,
+        "oracle_timeout_s": 30.0,
+    }
     fields.update(overrides)
     return Budget(**fields)  # type: ignore[arg-type]
 

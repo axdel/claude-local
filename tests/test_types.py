@@ -44,8 +44,15 @@ def test_status_values_are_stable_lowercase(member: Status, value: str) -> None:
 
 
 def test_budget_exposes_its_bounds() -> None:
-    budget = build_budget(max_attempts=5, max_tokens=1000, timeout_s=12.5)
-    assert (budget.max_attempts, budget.max_tokens, budget.timeout_s) == (5, 1000, 12.5)
+    budget = build_budget(
+        max_attempts=5, max_tokens=1000, generation_timeout_s=12.5, oracle_timeout_s=7.5
+    )
+    assert (
+        budget.max_attempts,
+        budget.max_tokens,
+        budget.generation_timeout_s,
+        budget.oracle_timeout_s,
+    ) == (5, 1000, 12.5, 7.5)
 
 
 def test_budget_is_frozen() -> None:
@@ -54,7 +61,9 @@ def test_budget_is_frozen() -> None:
         budget.max_attempts = 9  # type: ignore[misc]
 
 
-@pytest.mark.parametrize("field", ["max_attempts", "max_tokens", "timeout_s"])
+@pytest.mark.parametrize(
+    "field", ["max_attempts", "max_tokens", "generation_timeout_s", "oracle_timeout_s"]
+)
 @pytest.mark.parametrize("bad", [0, -1])
 def test_budget_rejects_non_positive_bounds(field: str, bad: int) -> None:
     # Oracle: hard caps must be strictly positive; zero or negative is invalid.
@@ -64,7 +73,9 @@ def test_budget_rejects_non_positive_bounds(field: str, bad: int) -> None:
 
 def test_budget_accepts_minimal_positive_bounds() -> None:
     # Boundary: 1 and a small positive float are valid (kills always-raise mutants).
-    budget = build_budget(max_attempts=1, max_tokens=1, timeout_s=0.001)
+    budget = build_budget(
+        max_attempts=1, max_tokens=1, generation_timeout_s=0.001, oracle_timeout_s=0.001
+    )
     assert budget.max_attempts == 1
 
 

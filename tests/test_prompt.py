@@ -39,7 +39,7 @@ def _spec(
         impl_path="src/pkg/impl.py",
         spec_text=spec_text,
         test_text=test_text,
-        budget=build_budget(max_attempts=4, timeout_s=60.0),
+        budget=build_budget(max_attempts=4, generation_timeout_s=60.0),
         context_files=context_files,
     )
 

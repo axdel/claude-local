@@ -25,7 +25,9 @@ _HERE = Path(__file__).parent
 _IMPL_PATH = "src/quicksort.py"
 _EXPECTED_TESTS = 7
 _DEFAULT_BASE_URL = "http://localhost:8080"
-_BUDGET = Budget(max_attempts=5, max_tokens=4096, timeout_s=120.0)
+_BUDGET = Budget(
+    max_attempts=5, max_tokens=4096, generation_timeout_s=300.0, oracle_timeout_s=120.0
+)
 
 
 def _build_spec() -> TaskSpec:

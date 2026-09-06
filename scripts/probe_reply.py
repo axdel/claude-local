@@ -40,6 +40,7 @@ from claude_local.edits import extract_file  # noqa: E402
 from claude_local.model_registry import ModelRegistry  # noqa: E402
 from claude_local.model_server import ModelServer  # noqa: E402
 from claude_local.prompt import PromptBuilder  # noqa: E402
+from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S  # noqa: E402
 from claude_local.sse import Delta, decode_sse  # noqa: E402
 from claude_local.types import Budget, TaskSpec  # noqa: E402
 
@@ -75,18 +76,25 @@ def main(argv: list[str] | None = None) -> int:
         help="Print the server's whole reply, reasoning channels included, before normalization.",
     )
     parser.add_argument("--max-tokens", type=int, default=4096)
-    parser.add_argument("--timeout", type=float, default=300.0)
+    parser.add_argument("--generation-timeout", type=float, default=300.0)
     parser.add_argument("--startup-timeout", type=float, default=600.0)
     args = parser.parse_args(argv)
 
-    budget = Budget(max_attempts=1, max_tokens=args.max_tokens, timeout_s=args.timeout)
+    # This probe only decodes — it never runs the oracle — so the oracle deadline stays at the
+    # sandbox default and only the generation deadline is worth a flag.
+    budget = Budget(
+        max_attempts=1,
+        max_tokens=args.max_tokens,
+        generation_timeout_s=args.generation_timeout,
+        oracle_timeout_s=DEFAULT_ORACLE_TIMEOUT_S,
+    )
     spec = _spec_from(args.task_dir, budget)
     resolved = ModelRegistry.default().resolve(args.model)
     server = ModelServer.for_model(resolved)
 
     with server.running(timeout_s=args.startup_timeout) as handle:
         served = handle.served_model_id()
-        with httpx.Client(timeout=args.timeout) as http:
+        with httpx.Client(timeout=args.generation_timeout) as http:
             backend = HttpxBackend(base_url=handle.base_url, client=http, model=served)
             # The same prefix implement() sends — read from the builder and the bundled card,
             # never restated here, so a probe cannot answer a question about a prompt the loop

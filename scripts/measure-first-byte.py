@@ -46,6 +46,7 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 from claude_local.backend import HttpxBackend  # noqa: E402
 from claude_local.model_registry import ModelRegistry  # noqa: E402
 from claude_local.model_server import ModelServer  # noqa: E402
+from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S  # noqa: E402
 from claude_local.types import Budget  # noqa: E402
 
 _RULES_CARD = _REPO_ROOT / "src" / "claude_local" / "rules_card.md"
@@ -127,7 +128,10 @@ def main(argv: list[str] | None = None) -> int:
         with httpx.Client(timeout=_GENERATION_TIMEOUT_S) as client:
             backend = HttpxBackend(base_url=handle.base_url, client=client, model=served)
             budget = Budget(
-                max_attempts=1, max_tokens=arguments.max_tokens, timeout_s=_GENERATION_TIMEOUT_S
+                max_attempts=1,
+                max_tokens=arguments.max_tokens,
+                generation_timeout_s=_GENERATION_TIMEOUT_S,
+                oracle_timeout_s=DEFAULT_ORACLE_TIMEOUT_S,
             )
             first_byte_s, raw = _time_to_first_byte(backend, prefix, budget)
 

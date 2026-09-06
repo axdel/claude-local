@@ -182,7 +182,7 @@ def test_a_model_streaming_only_reasoning_is_not_judged_silent() -> None:
         now=AdvancingClock(step=10.0),
     )
 
-    result = client.generate("prefix", "tail", build_budget(timeout_s=100_000.0))
+    result = client.generate("prefix", "tail", build_budget(generation_timeout_s=100_000.0))
 
     assert result.derail_reason is None
     assert result.text == "\n\nOK"
@@ -464,7 +464,7 @@ def test_a_stream_of_content_free_bytes_is_cut_at_the_stall_bound() -> None:
         now=ScriptedClock(0.0, 0.0, 0.0, 200.0),
     )
 
-    result = client.generate("prefix", "tail", build_budget(timeout_s=100_000.0))
+    result = client.generate("prefix", "tail", build_budget(generation_timeout_s=100_000.0))
 
     assert result.derail_reason is DerailReason.STALLED
     assert result.text == ""
@@ -478,7 +478,7 @@ def test_timeout_derail_uses_the_clients_injected_clock() -> None:
         ReplayBackend([load_bytes("complete_stream.bytes")]),
         now=AdvancingClock(step=1_000_000.0),
     )
-    result = client.generate("prefix", "tail", build_budget(timeout_s=1.0))
+    result = client.generate("prefix", "tail", build_budget(generation_timeout_s=1.0))
     assert result.derail_reason is DerailReason.TIMEOUT
     assert result.tokens_estimated is True
 

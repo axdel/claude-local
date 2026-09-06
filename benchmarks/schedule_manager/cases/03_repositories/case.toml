@@ -9,4 +9,5 @@ context_paths = [
 [budget]
 max_attempts = 4
 max_tokens = 32768
-timeout_s = 600.0
+generation_timeout_s = 1200.0
+oracle_timeout_s = 120.0

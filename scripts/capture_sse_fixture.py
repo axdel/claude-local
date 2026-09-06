@@ -32,6 +32,7 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 from claude_local.backend import HttpxBackend  # noqa: E402
 from claude_local.model_registry import ModelRegistry  # noqa: E402
 from claude_local.model_server import ModelServer  # noqa: E402
+from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S  # noqa: E402
 from claude_local.types import Budget  # noqa: E402
 
 
@@ -60,7 +61,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[capture] serving {served} (pid {handle.pid})", file=sys.stderr)
         # A capture is one generation, so the attempt and wall-clock bounds are formalities;
         # only max_tokens shapes the recorded bytes.
-        budget = Budget(max_attempts=1, max_tokens=args.max_tokens, timeout_s=args.timeout)
+        budget = Budget(
+            max_attempts=1,
+            max_tokens=args.max_tokens,
+            generation_timeout_s=args.timeout,
+            oracle_timeout_s=DEFAULT_ORACLE_TIMEOUT_S,
+        )
         with httpx.Client(timeout=args.timeout) as client:
             backend = HttpxBackend(base_url=handle.base_url, client=client, model=served)
             raw = b"".join(backend.generate(args.system, args.user, budget))

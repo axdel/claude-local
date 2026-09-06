@@ -33,22 +33,32 @@ class Status(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Budget:
-    """Hard per-task bounds: generation attempts, decode tokens, wall-clock seconds.
+    """Hard per-task bounds: generation attempts, decode tokens, and two wall-clock deadlines.
 
-    All three are strictly positive; the token cap is the real decode bound.
+    The two deadlines are separate because they answer opposite questions. The generation
+    deadline bounds one producing decode, where a slow model streaming steadily is healthy and a
+    hang is caught by silence instead (the derail guard's STALLED bound), so it is set generously.
+    The oracle deadline bounds one sandboxed test run, where nothing legitimate takes long and a
+    non-terminating implementation is the failure being caught, so it stays tight. All four
+    values are strictly positive; the token cap is the real decode bound.
     """
 
     max_attempts: int
     max_tokens: int
-    timeout_s: float
+    generation_timeout_s: float
+    oracle_timeout_s: float
 
     def __post_init__(self) -> None:
         if self.max_attempts <= 0:
             raise ValueError(f"max_attempts must be positive, got {self.max_attempts}")
         if self.max_tokens <= 0:
             raise ValueError(f"max_tokens must be positive, got {self.max_tokens}")
-        if self.timeout_s <= 0:
-            raise ValueError(f"timeout_s must be positive, got {self.timeout_s}")
+        if self.generation_timeout_s <= 0:
+            raise ValueError(
+                f"generation_timeout_s must be positive, got {self.generation_timeout_s}"
+            )
+        if self.oracle_timeout_s <= 0:
+            raise ValueError(f"oracle_timeout_s must be positive, got {self.oracle_timeout_s}")
 
 
 @dataclass(frozen=True, slots=True)

@@ -82,7 +82,7 @@ class DerailGuard:
 
     def __init__(self, budget: Budget, now: Callable[[], float] = time.monotonic) -> None:
         self._now = now
-        self._deadline = now() + budget.timeout_s
+        self._deadline = now() + budget.generation_timeout_s
         # None until the first bytes arrive: the wait before them is a lazy weight load the
         # transport bounds, not silence this guard may attribute to the model. Armed on first
         # ARRIVAL rather than first content, so a stream delivering keepalives and no tokens is

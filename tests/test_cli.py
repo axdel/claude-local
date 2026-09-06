@@ -47,7 +47,12 @@ def build_envelope(**overrides: object) -> dict[str, object]:
         "spec_text": "Sort a list of integers ascending.",
         "test_text": "def test_sorts():\n    assert True\n",
         "expected_tests": 1,
-        "budget": {"max_attempts": 3, "max_tokens": 2048, "timeout_s": 30.0},
+        "budget": {
+            "max_attempts": 3,
+            "max_tokens": 2048,
+            "generation_timeout_s": 30.0,
+            "oracle_timeout_s": 30.0,
+        },
     }
     envelope.update(overrides)
     return envelope
@@ -210,7 +215,15 @@ def test_a_whitespace_only_oracle_is_refused_too(
         ("spec_text", None),
         ("expected_tests", 0),
         ("expected_tests", True),
-        ("budget", {"max_attempts": 0, "max_tokens": 2048, "timeout_s": 30.0}),
+        (
+            "budget",
+            {
+                "max_attempts": 0,
+                "max_tokens": 2048,
+                "generation_timeout_s": 30.0,
+                "oracle_timeout_s": 30.0,
+            },
+        ),
         ("budget", "3 attempts"),
         ("context_files", "src/neighbor.py"),
     ],
@@ -330,7 +343,12 @@ def test_the_envelope_becomes_the_task_the_loop_runs(
         spec_text="Sort ascending.",
         test_text="def test_x():\n    assert True\n",
         expected_tests=4,
-        budget={"max_attempts": 2, "max_tokens": 512, "timeout_s": 90},
+        budget={
+            "max_attempts": 2,
+            "max_tokens": 512,
+            "generation_timeout_s": 90,
+            "oracle_timeout_s": 45,
+        },
         context_files=[
             {"path": "app/first.py", "content": "FIRST = 1\n"},
             {"path": "app/second.py", "content": "SECOND = 2\n"},
@@ -347,7 +365,8 @@ def test_the_envelope_becomes_the_task_the_loop_runs(
     assert spec.budget.max_attempts == 2
     assert spec.budget.max_tokens == 512
     # A JSON integer is a valid number: the wire type draws no float/int distinction.
-    assert spec.budget.timeout_s == 90.0
+    assert spec.budget.generation_timeout_s == 90.0
+    assert spec.budget.oracle_timeout_s == 45.0
     assert [(f.path, f.content) for f in spec.context_files] == [
         ("app/first.py", "FIRST = 1\n"),
         ("app/second.py", "SECOND = 2\n"),

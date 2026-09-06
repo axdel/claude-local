@@ -439,7 +439,7 @@ def test_implement_e2e_reaches_done_through_the_real_sandbox() -> None:
         spec_text="Implement add(a, b) returning the integer sum of a and b.",
         test_text=_ADDER_ORACLE,
         expected_tests=2,
-        budget=build_budget(max_attempts=3, max_tokens=4096, timeout_s=120.0),
+        budget=build_budget(max_attempts=3, max_tokens=4096, oracle_timeout_s=120.0),
     )
     client = _mock_client(_clean_impl_reply(_ADDER_IMPL, "src/adder.py"))
 
@@ -469,7 +469,7 @@ def test_implement_exhausted_returns_the_restored_best_model_edit(tmp_path: Path
         impl_path="src/adder.py",
         test_text=_ADDER_ORACLE,
         expected_tests=2,
-        budget=build_budget(max_attempts=2, max_tokens=4096, timeout_s=120.0),
+        budget=build_budget(max_attempts=2, max_tokens=4096, oracle_timeout_s=120.0),
     )
     client = _mock_client(
         _clean_impl_reply(_PARTIAL_ADDER_IMPL, "src/adder.py"),
@@ -494,17 +494,17 @@ def test_implement_exhausted_returns_the_restored_best_model_edit(tmp_path: Path
     not sandbox_available(), reason="the oracle runs under the macOS kernel sandbox"
 )
 def test_implement_e2e_binds_budget_timeout_to_the_sandbox() -> None:
-    """A hanging impl with a 2s budget is killed at ~2s, not the sandbox's 120s default.
+    """A hanging impl with a 2s oracle deadline is killed at ~2s, not the sandbox's 120s default.
 
-    Proves ``spec.budget.timeout_s`` is bound into the oracle sandbox (the composition-root timeout
-    wiring): a mutant that dropped the binding and fell back to the 120s default would blow this
-    wall-clock bound. The hang → SandboxTimeout → zero verdict → budget spent → EXHAUSTED.
+    Proves ``spec.budget.oracle_timeout_s`` is bound into the oracle sandbox (the composition-root
+    timeout wiring): a mutant that dropped the binding and fell back to the 120s default would blow
+    this wall-clock bound. The hang → SandboxTimeout → zero verdict → budget spent → EXHAUSTED.
     """
     spec = build_task_spec(
         impl_path="src/adder.py",
         test_text=_ADDER_ORACLE,
         expected_tests=2,
-        budget=build_budget(max_attempts=1, max_tokens=4096, timeout_s=2.0),
+        budget=build_budget(max_attempts=1, max_tokens=4096, oracle_timeout_s=2.0),
     )
     client = _mock_client(_clean_impl_reply(_HANGING_IMPL, "src/adder.py"))
 
@@ -514,6 +514,35 @@ def test_implement_e2e_binds_budget_timeout_to_the_sandbox() -> None:
 
     assert outcome.status is Status.EXHAUSTED  # the hang scored zero; the single attempt is spent
     assert elapsed < 30.0  # the 2s budget bound the sandbox, far below the 120s default
+
+
+@pytest.mark.skipif(
+    not sandbox_available(), reason="the oracle runs under the macOS kernel sandbox"
+)
+def test_implement_e2e_bounds_the_oracle_by_its_own_deadline_not_the_generation_one() -> None:
+    """A generous generation deadline does not relax the oracle sandbox: the hang still dies at 2s.
+
+    The two deadlines answer opposite questions. A slow model producing steadily is healthy, so the
+    generation deadline is generous; a non-terminating test never is, so the oracle deadline stays
+    tight. A mutant binding ``generation_timeout_s`` into the sandbox would let this hang run the
+    full 60s and blow the bound below.
+    """
+    spec = build_task_spec(
+        impl_path="src/adder.py",
+        test_text=_ADDER_ORACLE,
+        expected_tests=2,
+        budget=build_budget(
+            max_attempts=1, max_tokens=4096, generation_timeout_s=60.0, oracle_timeout_s=2.0
+        ),
+    )
+    client = _mock_client(_clean_impl_reply(_HANGING_IMPL, "src/adder.py"))
+
+    started = time.monotonic()
+    outcome = implement(spec, base_url="http://local", model=_MODEL, http_client=client)
+    elapsed = time.monotonic() - started
+
+    assert outcome.status is Status.EXHAUSTED
+    assert elapsed < 30.0  # the 2s ORACLE deadline bound the sandbox, not the 60s generation one
 
 
 # --- Live progress: each observer reaches the module that owns its event ------------

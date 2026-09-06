@@ -144,7 +144,8 @@ _MODEL_ENV = "CLAUDE_LOCAL_MODEL"
 
 _ENVELOPE_HELP = (
     "JSON task envelope: impl_path, spec_text, test_text, expected_tests, "
-    "budget {max_attempts, max_tokens, timeout_s}, optional context_files [{path, content}]."
+    "budget {max_attempts, max_tokens, generation_timeout_s, oracle_timeout_s}, "
+    "optional context_files [{path, content}]."
 )
 
 
@@ -283,7 +284,8 @@ def _budget(envelope: Mapping[str, object]) -> Budget:
     return Budget(
         max_attempts=_integer(nested, "max_attempts"),
         max_tokens=_integer(nested, "max_tokens"),
-        timeout_s=_number(nested, "timeout_s"),
+        generation_timeout_s=_number(nested, "generation_timeout_s"),
+        oracle_timeout_s=_number(nested, "oracle_timeout_s"),
     )
 
 

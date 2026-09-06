@@ -38,9 +38,14 @@ class FakeClock:
         return self.value
 
 
-def _guard(*, max_tokens: int = 1_000_000, timeout_s: float = 1_000_000.0) -> DerailGuard:
+def _guard(
+    *, max_tokens: int = 1_000_000, generation_timeout_s: float = 1_000_000.0
+) -> DerailGuard:
     """A guard with a frozen clock and generous caps, so only REPETITION can trip by default."""
-    return DerailGuard(build_budget(max_tokens=max_tokens, timeout_s=timeout_s), now=FakeClock())
+    return DerailGuard(
+        build_budget(max_tokens=max_tokens, generation_timeout_s=generation_timeout_s),
+        now=FakeClock(),
+    )
 
 
 def _repeat(line: str, count: int) -> str:
@@ -154,21 +159,21 @@ def test_no_newline_runaway_is_caught_by_token_cap_not_repetition() -> None:
 
 def test_timeout_fires_when_the_clock_passes_the_deadline() -> None:
     clock = FakeClock(0.0)
-    guard = DerailGuard(build_budget(timeout_s=30.0, max_tokens=1_000_000), now=clock)
-    clock.value = 30.001  # deadline = start(0) + timeout_s(30)
+    guard = DerailGuard(build_budget(generation_timeout_s=30.0, max_tokens=1_000_000), now=clock)
+    clock.value = 30.001  # deadline = start(0) + generation_timeout_s(30)
     assert guard.feed("x") is DerailReason.TIMEOUT
 
 
 def test_timeout_not_reached_at_exactly_the_deadline() -> None:
     clock = FakeClock(0.0)
-    guard = DerailGuard(build_budget(timeout_s=30.0, max_tokens=1_000_000), now=clock)
+    guard = DerailGuard(build_budget(generation_timeout_s=30.0, max_tokens=1_000_000), now=clock)
     clock.value = 30.0  # exactly at the deadline; the bound is exclusive
     assert guard.feed("x") is None
 
 
 def test_timeout_is_checked_before_content() -> None:
     clock = FakeClock(0.0)
-    guard = DerailGuard(build_budget(timeout_s=5.0, max_tokens=1_000_000), now=clock)
+    guard = DerailGuard(build_budget(generation_timeout_s=5.0, max_tokens=1_000_000), now=clock)
     clock.value = 5.001
     # Even the first tiny delta trips TIMEOUT — the clock bound needs no warmup or content.
     assert guard.feed("a") is DerailReason.TIMEOUT
@@ -186,7 +191,9 @@ def test_silence_past_the_stall_bound_is_cut_even_while_the_socket_stays_warm() 
     only bound that could have cut it was checked solely on content that never came.
     """
     clock = FakeClock(0.0)
-    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+    guard = DerailGuard(
+        build_budget(generation_timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock
+    )
     guard.feed("def main():\n")  # last content — silence is measured from here
 
     clock.value = STALL_TIMEOUT_S + 0.01
@@ -202,7 +209,9 @@ def test_silence_is_not_yet_a_stall_at_exactly_the_bound() -> None:
     than by whatever the comparison happens to be.
     """
     clock = FakeClock(0.0)
-    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+    guard = DerailGuard(
+        build_budget(generation_timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock
+    )
     guard.feed("def main():\n")
 
     clock.value = STALL_TIMEOUT_S
@@ -224,7 +233,9 @@ def test_the_wait_for_the_first_byte_is_not_judged_as_silence() -> None:
     decoder.
     """
     clock = FakeClock(0.0)
-    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+    guard = DerailGuard(
+        build_budget(generation_timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock
+    )
 
     clock.value = STALL_TIMEOUT_S * 2  # the whole load, twice over — still nothing has arrived
 
@@ -239,7 +250,9 @@ def test_silence_is_measured_from_the_first_byte_once_the_stream_has_started() -
     contract — a guard that armed and then never judged would let the 447.2s pathology through.
     """
     clock = FakeClock(0.0)
-    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+    guard = DerailGuard(
+        build_budget(generation_timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock
+    )
 
     clock.value = STALL_TIMEOUT_S * 2
     assert guard.tick() is None, "arrival arms the clock"
@@ -257,7 +270,9 @@ def test_a_stream_that_keeps_producing_survives_far_past_the_stall_bound() -> No
     last content fails here — which is precisely the confusion the bound exists to remove.
     """
     clock = FakeClock(0.0)
-    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+    guard = DerailGuard(
+        build_budget(generation_timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock
+    )
 
     for _ in range(10):
         clock.value += STALL_TIMEOUT_S * 0.9
@@ -271,12 +286,13 @@ def test_a_stream_that_keeps_producing_survives_far_past_the_stall_bound() -> No
 def test_a_tick_enforces_the_total_deadline_during_silence() -> None:
     """The total deadline binds even when no content ever arrives.
 
-    Oracle: ``Budget.timeout_s`` is documented as a wall-clock bound on the generation, so a
+    Oracle: ``Budget.generation_timeout_s`` is documented as a wall-clock bound on the generation,
+    so a
     generation that produces nothing must still end at it. Checked only on content, the bound is
     unenforceable exactly when it matters most — against a stream that produces no content.
     """
     clock = FakeClock(0.0)
-    guard = DerailGuard(build_budget(timeout_s=30.0, max_tokens=1_000_000), now=clock)
+    guard = DerailGuard(build_budget(generation_timeout_s=30.0, max_tokens=1_000_000), now=clock)
 
     clock.value = 30.001
 
@@ -292,7 +308,9 @@ def test_a_tripped_tick_is_latched_and_readable_without_another_delta() -> None:
     unreadable in exactly the situation the stall bound exists to report.
     """
     clock = FakeClock(0.0)
-    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+    guard = DerailGuard(
+        build_budget(generation_timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock
+    )
     guard.feed("def main():\n")
     clock.value = STALL_TIMEOUT_S + 0.01
 
