@@ -64,6 +64,34 @@ _NUDGE_LADDER = (
     "a different shape, not the same one restated.",
 )
 
+# The correction for an attempt that produced no file to score — a reply carrying no frame, or one
+# framed at a path outside the single writable one. Measured, not imagined: driven through the
+# benchmark's auth-service case, an agentic coding model answers "Let me read the existing files"
+# and four tool_call blocks naming files it was already given, then stops. It finished normally and
+# was not truncated; it simply answered a question nobody asked.
+#
+# So the rung leads with what is now true and unarguable — no file exists — before denying the
+# premise the reply was built on. The denial is stated twice over, as a fact about the world (there
+# is nothing to explore) and about the interface (there is no tool to call), because a model in
+# this state has misread which of the two it is in.
+#
+# It POINTS AT the frame rules rather than restating them, for the same reason the repeat rungs
+# point at their counterevidence: the rules card owns that shape, and a second copy here would be a
+# second writer free to drift from it on the next edit.
+_REFRAME = (
+    "That reply produced no file. Nothing was written and nothing was run, so the task stands "
+    "exactly where it did before you answered. There is nothing here to explore and no tool for "
+    "you to call: every file you are permitted to read is already above, and that is all of them. "
+    "Answer with the implementation file itself, framed exactly as the rules above require, and "
+    "with nothing else around it."
+)
+
+# The unscorable reply, hoisted above the rung that answers it — the same counterevidence-then-
+# imperative shape the repeat ladder uses. The cap matches that one: enough to show the model the
+# opening it actually sent, never enough to push the imperative out of reach.
+UNSCORABLE_REPLY_BYTE_CAP = 512
+_UNSCORABLE_REPLY_HEADER = "## What you sent back — verbatim, and it is not a file."
+
 # The first failure's executed counterevidence, hoisted to sit directly above the rung it leads. It
 # is one statement and its result, so a small cap is generous; bounding it keeps a long assertion
 # diff from displacing the imperative that follows it.
@@ -156,6 +184,22 @@ class PromptBuilder:
         if repeat_count < 1 or repeat_count > len(_NUDGE_LADDER):
             return None
         return _NUDGE_LADDER[repeat_count - 1]
+
+    def reframe_for(self, raw_output: str) -> str:
+        """The correction for a reply that produced no file: its own words, then what to send.
+
+        A sibling of ``nudge_for`` and the same kind of thing — counterevidence, then a single
+        imperative about what to do differently. It differs only in what earned it: that one
+        answers a model that repeated a scored file, this one a model that never produced one, so
+        the evidence is the raw reply rather than an executed failure.
+
+        Quoting the reply back is the load-bearing half. A model that sends tool calls into a loop
+        with no tools believes it is somewhere else, and an instruction alone leaves that belief
+        untouched — it has already read the rules once and answered this way regardless. Its own
+        text beside the statement that no file exists is the part it cannot argue with.
+        """
+        shown = _cap_bytes(raw_output, UNSCORABLE_REPLY_BYTE_CAP)
+        return f"{_UNSCORABLE_REPLY_HEADER}\n\n{shown}\n\n{_REFRAME}"
 
     def distill_feedback(
         self,

@@ -103,7 +103,7 @@ def _runaway_reply(size: int = 256) -> bytes:
     return (_data(role) + _data(delta)).encode()
 
 
-def _unusable_reply() -> bytes:
+def _unscorable_reply() -> bytes:
     """A complete prose-only reply with no whole-file frame — structurally blocked."""
     return _sse(
         {**_CHUNK, "choices": [{"index": 0, "delta": {"content": "No file edit."}}]},
@@ -260,7 +260,7 @@ def test_faulted_summary_surfaces_the_upstream_error_message() -> None:
     ("reply", "budget", "expected_status"),
     [
         (_runaway_reply(size=256), build_budget(max_attempts=1, max_tokens=2), Status.DERAILED),
-        (_unusable_reply(), build_budget(max_attempts=1), Status.BLOCKED),
+        (_unscorable_reply(), build_budget(max_attempts=1), Status.BLOCKED),
         (_fault_reply("model overloaded"), build_budget(max_attempts=1), Status.FAULTED),
     ],
 )
@@ -522,18 +522,20 @@ def test_implement_e2e_binds_budget_timeout_to_the_sandbox() -> None:
 def test_implement_routes_each_progress_observer_to_the_module_that_owns_it() -> None:
     """Deltas come from the client's decode; attempts come from the loop's cycle.
 
-    Oracle: this prose-only reply carries exactly one content delta, "No file edit.", and produces
-    exactly one attempt that reaches no oracle — a structural block. The two signals originate in
-    two different modules, so a wiring that handed both observers to one of them would silently
-    drop the other: a client knows nothing of attempts, and a loop never sees a delta. Importing
-    ``AttemptProgress`` from the top-level package also pins the re-export the benchmark needs,
-    since the Boundary Map lets a downstream consumer reach only the public API.
+    Oracle: each prose-only reply carries exactly one content delta, "No file edit.", and produces
+    exactly one attempt that reaches no oracle — a structural block. Answering that way twice is
+    what the run costs, because an unscorable reply earns one corrective re-ask and no more, so
+    both observers see two. The two signals originate in two different modules, so a wiring that
+    handed both observers to one of them would silently drop the other: a client knows nothing of
+    attempts, and a loop never sees a delta. Importing ``AttemptProgress`` from the top-level
+    package also pins the re-export the benchmark needs, since the Boundary Map lets a downstream
+    consumer reach only the public API.
     """
     deltas: list[str] = []
     attempts: list[AttemptProgress] = []
     spec = build_task_spec(impl_path="src/adder.py", expected_tests=2, test_text=_ADDER_ORACLE)
 
-    with _mock_client(_unusable_reply()) as client:
+    with _mock_client(_unscorable_reply(), _unscorable_reply()) as client:
         outcome = implement(
             spec,
             base_url="http://local",
@@ -544,7 +546,6 @@ def test_implement_routes_each_progress_observer_to_the_module_that_owns_it() ->
         )
 
     assert outcome.status is Status.BLOCKED
-    assert deltas == ["No file edit."]
-    assert len(attempts) == 1
-    assert attempts[0].attempt == 1
-    assert attempts[0].blocked is True
+    assert deltas == ["No file edit.", "No file edit."]
+    assert [attempt.attempt for attempt in attempts] == [1, 2]
+    assert all(attempt.blocked for attempt in attempts)

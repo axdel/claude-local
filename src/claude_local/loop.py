@@ -211,10 +211,11 @@ class Loop:
         results: list[GenerationResult] = []
         last_attempt: _ScoredAttempt | None = None
         nudge = ""
+        reframe = ""
         verbatim_repeats = 0
 
         for index in range(spec.budget.max_attempts):
-            tail = "" if last_attempt is None else self._repair_brief(last_attempt, nudge)
+            tail = reframe if last_attempt is None else self._repair_brief(last_attempt, nudge)
             generation = self._client.generate(stable, tail, spec.budget)
             repeats_previous = bool(results) and generation.text == results[-1].text
             results.append(generation)
@@ -229,7 +230,13 @@ class Loop:
                         nudged=bool(nudge),
                     )
                 )
-            if last_attempt is None or last_attempt.run.score.is_green:
+            if last_attempt is None:
+                correction = self._correction(generation, corrected=bool(reframe))
+                if correction is None:
+                    break
+                reframe = correction
+                continue
+            if last_attempt.run.score.is_green:
                 break
             verbatim_repeats += int(repeats_previous)
             escalation = self._escalation(repeats_previous, verbatim_repeats)
@@ -261,6 +268,27 @@ class Loop:
         return self._prompt.distill_feedback(
             attempt.run.score, attempt.run.output, attempt.source, nudge
         )
+
+    def _correction(self, generation: GenerationResult, *, corrected: bool) -> str | None:
+        """The re-ask owed to an attempt that scored nothing, or ``None`` to end the run.
+
+        Four different failures reach this point as one ``None`` score, and only two of them are
+        the model's own shape: a reply carrying no frame, and one framed at a path outside the
+        single writable one. The other two are the host and the guard — a server fault and a
+        derail — where there is no answer the model chose, so there is nothing to quote back and a
+        re-ask would buy the same failure under the same conditions. That is why this cannot key
+        on "no score".
+
+        ``corrected`` spends the correction at most once per run, which is what makes termination
+        a property of the construction rather than of the model's cooperation — the same guarantee
+        the nudge ladder gets from being walked once. A model told plainly what to send and
+        answering the same way again has given its answer; the rest of the budget only re-buys it.
+        """
+        if generation.fault is not None or generation.derail_reason is not None:
+            return None
+        if corrected:
+            return None
+        return self._prompt.reframe_for(generation.text)
 
     def _escalation(self, repeats_previous: bool, verbatim_repeats: int) -> str | None:
         """The next attempt's nudge: empty while the model still moves, ``None`` to stop.

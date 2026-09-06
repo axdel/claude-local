@@ -560,7 +560,10 @@ def test_first_attempt_derail_reaches_derailed(tmp_path: Path) -> None:
 
     assert result.status is Status.DERAILED
     assert result.best_score is None  # nothing was ever scored
-    assert client.total_calls == 1  # stopped on the derail, did not exhaust the attempt budget
+    # Stopped on the derail, did not exhaust the attempt budget — and was not re-asked either: an
+    # unscorable reply earns one correction, but a guard kill is not a reply the model chose, so
+    # there is nothing to quote back and re-asking would buy the same derail under the same bounds.
+    assert client.total_calls == 1
     assert result.record.status is Status.DERAILED
     # The aborted call still cost decode time — its tokens are counted, never dropped.
     assert result.record.tokens_estimated is True
@@ -568,8 +571,20 @@ def test_first_attempt_derail_reaches_derailed(tmp_path: Path) -> None:
 
 
 def test_reply_without_a_frame_reaches_blocked(tmp_path: Path) -> None:
+    """Prose reaches BLOCKED — after one correction, and after exactly one.
+
+    The two scripted replies are also the bound: the budget allows four attempts, so an unbounded
+    correction would ask for a third stream and the replay would raise rather than pass. The run
+    ends on the second unscorable answer because a model told plainly what to return and answering
+    the same way again has given its answer.
+    """
     worktree = _setup_worktree(tmp_path)
-    backend = ReplayBackend([_sse_script("Here is an explanation, but no valid file frame.")])
+    backend = ReplayBackend(
+        [
+            _sse_script("Here is an explanation, but no valid file frame."),
+            _sse_script("Still explaining, still no frame."),
+        ]
+    )
     loop, client = _make_loop(worktree, backend, ScriptedSpawn())
     spec = build_task_spec(
         impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
@@ -580,14 +595,95 @@ def test_reply_without_a_frame_reaches_blocked(tmp_path: Path) -> None:
     # Prose with no valid frame is structurally BLOCKED, with nothing written or scored.
     assert result.status is Status.BLOCKED
     assert result.best_score is None
-    assert client.total_calls == 1
+    # Two calls, not one: the first reply earned a correction, and the replay had nothing further
+    # to give it, so the run ended on a second unscorable answer rather than on the first.
+    assert client.total_calls == 2
     assert result.record.status is Status.BLOCKED
+
+
+_TOOL_CALL_REPLY = (
+    "Let me read the existing files.\n"
+    "<tool_call><function=Read><parameter=file_path>app/schemas.py</parameter></function>"
+    "</tool_call>"
+)
+"""A real blocked reply, shortened: the model asked to read files instead of writing one.
+
+Captured from Qwen3.8-27B driven through the standing benchmark's ``04_auth_service`` case, not
+composed here — an agentic coding model mistaking the loop for a tool-using harness is the reply
+shape this correction exists for, and a hand-invented one would only test the parser's own idea of
+prose.
+"""
+
+
+def test_an_unscorable_reply_earns_one_corrective_re_ask(tmp_path: Path) -> None:
+    """A reply that wrote no file is re-asked once, so the case is not lost to a protocol slip.
+
+    Oracle: the budget declares how many attempts a task may spend, and a reply that produced no
+    file consumed a generation without consuming an oracle verdict — nothing has been learned that
+    rules out the next attempt succeeding. Terminating there spends 1 of 4 and discards a case over
+    a correctable answer, which is what the measured ``04_auth_service`` block actually was.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = ReplayBackend([_sse_script(_TOOL_CALL_REPLY), _edit_script(_V1)])
+    loop, client = _make_loop(worktree, backend, ScriptedSpawn(_junit("all_pass.xml")))
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert client.total_calls == 2  # the block was corrected, not accepted as the verdict
+    assert result.status is Status.DONE
+
+
+def test_the_correction_carries_the_reply_that_earned_it(tmp_path: Path) -> None:
+    """The re-ask shows the model its own reply, then states what to do instead.
+
+    Oracle: the nudge contract is counterevidence followed by the imperative it leads — the same
+    shape the repeat ladder uses (``_repeat_escalation``). Without the evidence the model is told
+    it did something wrong and cannot see what, so the correction reads as a repetition of the
+    instructions it has already failed to follow once.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = RecordingReplayBackend([_sse_script(_TOOL_CALL_REPLY), _edit_script(_V1)])
+    loop, _ = _make_loop(worktree, backend, ScriptedSpawn(_junit("all_pass.xml")))
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    loop.run(spec, worktree)
+
+    first_tail, second_tail = (tail for _prefix, tail in backend.calls)
+    assert first_tail == ""  # the opening attempt carries no tail; only the prefix is sent
+    assert "<tool_call>" in second_tail  # its own words, quoted back to it
+
+
+def test_the_prefix_is_unchanged_by_a_correction(tmp_path: Path) -> None:
+    """The correction rides in the tail, so the cached prefill survives it.
+
+    Oracle: the prefix is byte-identical across a task's iterations by design (D-PROMPT-001) — a
+    server reuses its prefill cache only while that holds. A correction written into the prefix
+    would discard the cache on the attempt that most needs to be cheap.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = RecordingReplayBackend([_sse_script(_TOOL_CALL_REPLY), _edit_script(_V1)])
+    loop, _ = _make_loop(worktree, backend, ScriptedSpawn(_junit("all_pass.xml")))
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    loop.run(spec, worktree)
+
+    first_prefix, second_prefix = (prefix for prefix, _tail in backend.calls)
+    assert first_prefix == second_prefix
 
 
 def test_forbidden_target_reaches_blocked(tmp_path: Path) -> None:
     worktree = _setup_worktree(tmp_path)
-    # The model names a path other than the permitted impl -> apply_file refuses the edit.
-    backend = ReplayBackend([_edit_script(_V1, "src/other.py")])
+    # The model names a path other than the permitted impl -> apply_file refuses the edit. Twice,
+    # because a refused edit wrote no file and so earns the same one correction prose does — the
+    # path IS part of the frame, and a reply aimed outside it is misframed rather than unframed.
+    backend = ReplayBackend([_edit_script(_V1, "src/other.py")] * 2)
     loop, _ = _make_loop(worktree, backend, ScriptedSpawn())
     spec = build_task_spec(
         impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
@@ -838,7 +934,7 @@ def test_an_attempt_that_never_reached_the_oracle_is_reported_as_blocked(tmp_pat
     seen: list[AttemptProgress] = []
     loop, _ = _make_loop(
         worktree,
-        ReplayBackend([_sse_script("Here is an explanation, but no valid file frame.")]),
+        ReplayBackend([_sse_script("Here is an explanation, but no valid file frame.")] * 2),
         ScriptedSpawn(),  # spawn is never called: nothing was applied to score
         on_attempt=seen.append,
     )
@@ -849,9 +945,11 @@ def test_an_attempt_that_never_reached_the_oracle_is_reported_as_blocked(tmp_pat
     result = loop.run(spec, worktree)
 
     assert result.status is Status.BLOCKED
-    assert len(seen) == 1
-    assert seen[0].score is None
-    assert seen[0].blocked is True
+    # Both attempts are reported, not just the one that ended the run. The correction spends a
+    # real generation, so a watcher shown only the last reads a two-call run as a one-call one.
+    assert len(seen) == 2
+    assert all(attempt.score is None for attempt in seen)
+    assert all(attempt.blocked for attempt in seen)
 
 
 def test_a_derailed_attempt_is_reported_as_derailed_rather_than_blocked(tmp_path: Path) -> None:

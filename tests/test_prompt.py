@@ -16,7 +16,11 @@ from factories import build_budget, build_context_file, build_task_spec
 from hypothesis import given
 from hypothesis import strategies as st
 
-from claude_local.prompt import FEEDBACK_BYTE_CAP, PromptBuilder
+from claude_local.prompt import (
+    FEEDBACK_BYTE_CAP,
+    UNSCORABLE_REPLY_BYTE_CAP,
+    PromptBuilder,
+)
 from claude_local.runner import TestScore
 from claude_local.types import ContextFile, TaskSpec
 
@@ -238,6 +242,42 @@ def test_a_large_previous_attempt_cannot_evict_the_failure_diagnostics(tmp_path:
 
     assert node_id in out
     assert "# filler" in out  # the source is still shown, just trimmed
+
+
+def test_the_reframe_quotes_the_reply_before_it_corrects_it(tmp_path: Path) -> None:
+    """The correction leads with the model's own words, then says no file exists.
+
+    Oracle: this is the nudge contract — counterevidence first, imperative last — applied to a
+    reply that produced nothing to score. The evidence has to be the raw reply because that is the
+    only artifact there is: no file was written, so there is no source and no run output to show.
+    An instruction alone leaves the model where it already was, having read the rules once and
+    answered this way regardless.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+    reply = (
+        "Let me read the files.\n<tool_call><function=Read>app/schemas.py</function></tool_call>"
+    )
+
+    reframe = builder.reframe_for(reply)
+
+    assert reply in reframe
+    assert reframe.index(reply) < reframe.index("no file")  # evidence leads, imperative follows
+
+
+def test_a_long_unscorable_reply_cannot_push_the_correction_out_of_reach(tmp_path: Path) -> None:
+    """The quoted reply is capped, so the imperative survives however much the model wrote.
+
+    Oracle: the reply is unbounded — a model can answer with a page of reasoning — while the
+    correction is the one part that has to be read. An uncapped quote would let the evidence
+    displace the instruction that gives it a point, which is the same reason every other section
+    of a brief is capped separately.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+
+    reframe = builder.reframe_for("x" * (UNSCORABLE_REPLY_BYTE_CAP * 4))
+
+    assert len(reframe.encode()) < UNSCORABLE_REPLY_BYTE_CAP * 4
+    assert reframe.rstrip().endswith("around it.")  # the imperative is still the last thing read
 
 
 def test_the_nudge_ladder_escalates_and_is_finite(tmp_path: Path) -> None:
