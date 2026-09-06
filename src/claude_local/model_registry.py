@@ -44,6 +44,14 @@ not the same as false — so the only lever is the request. One column cannot ex
 _DRAFT_SUFFIX = "-MTP"
 """A draft model is stored beside the model it accelerates, under this suffixed name."""
 
+_THINKING_BUDGET = "thinking_budget"
+"""The request field capping tokens inside a thinking block — the hard half of non-thinking.
+
+Named here because it is the one generation parameter this layer must recognise rather than
+merely forward: it is the only one the server refuses to run in some configurations, so a
+resolved row carrying it needs checking against the rest of the row.
+"""
+
 
 def _generation_params(declared: str, model: str) -> Mapping[str, object]:
     """Parse a PARAMS cell into the typed request-body fields it declares.
@@ -86,6 +94,16 @@ class MalformedRegistry(Exception):
     """A catalog row does not match the declared column format."""
 
 
+class UnservableCombination(Exception):
+    """The row parses, but the configuration it asks for is one the server refuses to run.
+
+    Distinct from ``MalformedRegistry``, which is a row this package cannot read. This row is
+    perfectly well-formed and every cell is individually valid — it is the *pairing* that no
+    server will honour, so the fault is only ever visible to something holding all the columns
+    at once.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedModel:
     """One catalog row, resolved to a concrete location on this machine.
@@ -117,6 +135,22 @@ class ResolvedModel:
     serve from this, never from the repo id — a server handed an id it cannot find locally
     downloads it, so the two being distinct is what keeps that path unreachable.
     """
+
+    def __post_init__(self) -> None:
+        """Refuse a resolved configuration the server would raise on.
+
+        Raises:
+            UnservableCombination: the row asks for a thinking budget while a draft model is on
+                disk. mlx_vlm rejects that pair outright rather than degrading — "thinking_budget
+                is not supported with speculative decoding in the server" — so a row carrying
+                both cannot serve a single request.
+        """
+        if _THINKING_BUDGET in self.generation_params and self.draft_path is not None:
+            raise UnservableCombination(
+                f"{self.name}: {_THINKING_BUDGET} cannot be sent to a server running "
+                f"speculative decoding, and the draft weights at {self.draft_path} are present. "
+                f"Drop one — the budget bounds a runaway reasoner, the draft buys decode speed."
+            )
 
 
 @dataclass(frozen=True, slots=True)

@@ -19,6 +19,7 @@ from claude_local.model_registry import (
     ModelNotPresent,
     ModelRegistry,
     UnknownModel,
+    UnservableCombination,
 )
 
 _REGISTRY_FIXTURE = "\n".join(
@@ -257,3 +258,57 @@ def test_the_shipped_registry_catalogues_every_model_the_store_holds() -> None:
         pytest.skip("no models pulled here — the reconciliation would be vacuous")
 
     assert on_disk <= set(registry.names()), "store holds directories the registry does not name"
+
+
+_BUDGETED_DRAFT_ROW = "\n".join(
+    (
+        "NAME|REPO|DRAFT|PORT|SIZE|FLAGS|PARAMS|NOTE",
+        "Qwen3.8-27B|lmstudio/Qwen3.8-27B-6bit|lukaskremla/Qwen3.8-MTP|8080|22.8G"
+        "|--enable-thinking|enable_thinking=false thinking_budget=256|Dense.",
+        "",
+    )
+)
+
+
+def _budgeted_draft_registry(tmp_path: Path, *, present: tuple[str, ...]) -> ModelRegistry:
+    """A registry whose one row asks for a thinking budget and names a draft model."""
+    registry_path = tmp_path / "models.tsv"
+    registry_path.write_text(_BUDGETED_DRAFT_ROW)
+    store_root = tmp_path / "store"
+    store_root.mkdir()
+    for name in present:
+        (store_root / name).mkdir()
+    return ModelRegistry(registry_path=registry_path, store_root=store_root)
+
+
+def test_a_thinking_budget_beside_a_pulled_draft_is_refused_at_resolution(
+    tmp_path: Path,
+) -> None:
+    """Oracle: the installed server raises on exactly this pair, so the row can never serve.
+
+        raise ValueError(
+            "thinking_budget is not supported with speculative decoding in the server."
+        )
+
+    Refusing here rather than at the first generation is the whole point. The two columns are
+    edited independently and by different motivations — one to bound a runaway reasoner, the
+    other to buy decode speed — so nothing about either edit hints at the other. Left to the
+    server, the fault surfaces as a failed generation on a row that was valid yesterday.
+    """
+    registry = _budgeted_draft_registry(tmp_path, present=("Qwen3.8-27B", "Qwen3.8-27B-MTP"))
+
+    with pytest.raises(UnservableCombination, match="thinking_budget"):
+        registry.resolve("Qwen3.8-27B")
+
+
+def test_a_thinking_budget_resolves_while_the_draft_weights_are_absent(tmp_path: Path) -> None:
+    """The same row serves fine until someone pulls the draft — the DRAFT column alone is inert.
+
+    Oracle: the server's constraint is on speculative decoding actually running, and it runs off
+    ``draft_path`` (weights on disk), never off ``draft_repo`` (a name that may be pulled). A
+    guard keyed on the declaration instead would refuse a configuration that demonstrably works.
+    """
+    resolved = _budgeted_draft_registry(tmp_path, present=("Qwen3.8-27B",)).resolve("Qwen3.8-27B")
+
+    assert resolved.draft_path is None
+    assert resolved.generation_params["thinking_budget"] == 256
