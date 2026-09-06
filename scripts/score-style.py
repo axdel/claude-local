@@ -8,6 +8,11 @@ missing annotations and unused imports, variables and arguments each case's prod
 
     scripts/score-style.py benchmarks/scorecards/code-gpt-oss-20b-1788655677482
 
+A sweep writes one directory per model and the comparison is the point, so it takes as many as
+you name and reports each in turn:
+
+    scripts/score-style.py benchmarks/scorecards/code-*
+
 With no argument it reports the most recently written code directory:
 
     scripts/score-style.py
@@ -25,7 +30,9 @@ Run from the repository root, like every other command here — the shebang reso
 environment from the working directory. Under a bare `python3` it dies on the first import.
 
 Exit codes: 0 when the report was produced (findings or not — a defect count is the output, not a
-failure), and 2 for a usage error such as a directory that holds no produced code.
+failure), and 2 for a usage error such as a directory that holds no produced code. Across several
+directories the WORST code wins, and every directory is reported either way — a model that
+produced nothing must not be masked by the healthy report that follows it.
 """
 
 from __future__ import annotations
@@ -68,24 +75,8 @@ def _report(findings: tuple[StyleFinding, ...], cases: list[str]) -> None:
     print(f"\n  {'TOTAL':<{width}}  {len(findings):>3} findings across {len(cases)} case(s)")
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Parse arguments, lint the produced tree, and print the per-case report."""
-    parser = argparse.ArgumentParser(
-        prog="score-style.py",
-        description="Report style findings in the code a benchmarked model produced.",
-    )
-    parser.add_argument(
-        "code_directory",
-        nargs="?",
-        type=Path,
-        help="a saved produced-code directory; defaults to the most recent one",
-    )
-    arguments = parser.parse_args(argv)
-
-    directory = arguments.code_directory or _latest_code_directory()
-    if directory is None:
-        print(f"no produced-code directory found under {_SCORECARDS}", file=sys.stderr)
-        return _USAGE_ERROR
+def _report_directory(directory: Path) -> int:
+    """Print one run directory's per-case report; return that directory's exit code."""
     if not directory.is_dir():
         print(f"not a directory: {directory}", file=sys.stderr)
         return _USAGE_ERROR
@@ -98,6 +89,33 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\nstyle findings for {directory.name}\n")
     _report(collect_style_findings(directory), cases)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Parse arguments, lint each produced tree, and print the per-case reports."""
+    parser = argparse.ArgumentParser(
+        prog="score-style.py",
+        description="Report style findings in the code benchmarked models produced.",
+    )
+    parser.add_argument(
+        "code_directories",
+        nargs="*",
+        type=Path,
+        help="saved produced-code directories; defaults to the most recent one",
+    )
+    arguments = parser.parse_args(argv)
+
+    directories: list[Path] = arguments.code_directories
+    if not directories:
+        latest = _latest_code_directory()
+        if latest is None:
+            print(f"no produced-code directory found under {_SCORECARDS}", file=sys.stderr)
+            return _USAGE_ERROR
+        directories = [latest]
+
+    # max() over a generator consumes it, so every directory is reported before the worst code is
+    # returned. Short-circuiting here would hide either the error or the reports that follow it.
+    return max(_report_directory(directory) for directory in directories)
 
 
 if __name__ == "__main__":
