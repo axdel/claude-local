@@ -178,14 +178,18 @@ A weak model is only worth using if it is fast enough to be cheaper than your ow
 - **One model resident at a time** — local inference is memory-bandwidth-bound.
 - **Derail guard** — repetition penalty + hard token cap + repetition-loop detector + graceful
   timeout, streaming so a runaway is aborted mid-generation.
-- **Repeat detection across attempts, answered by a nudge ladder** — an attempt that comes back
-  byte-identical to the one before it proves the prompt is an absorbing state: under greedy
-  decoding the same prompt yields the same file forever, so re-asking is arithmetic, not patience.
-  The loop escalates instead of stopping — each repeat takes the next rung of a fixed ladder,
-  appended last in the tail and led by the first failure's own executed counterevidence (the
-  statement pytest marked and the result beneath it). The run ends when the ladder is spent. This
-  is the only lever the runtime has: the server ignores temperature, top-p and seed, and emptying
-  the tail just replays the first attempt.
+- **Stall detection across attempts, answered by a nudge ladder** — an attempt that buys nothing
+  proves the prompt is an absorbing state, and it has two shapes. The loud one is a *repeat*:
+  byte-identical text, so under greedy decoding re-asking is arithmetic, not patience. The quiet
+  one — and the common one — is a *plateau*: genuinely different code, twice running, that still
+  never clears the best score. A loop watching only for identical text spends its whole budget
+  re-deriving one wrong answer in fresh words. Both take the next rung of a fixed ladder, appended
+  last in the tail and led by the first failure's own executed counterevidence (the statement
+  pytest marked and the result beneath it); the run ends when the ladder is spent. Because one
+  ladder answers both, no rung claims the file came back identical — that is false of a plateau,
+  and a model handed a false premise about its own output argues with it instead of fixing the
+  code. This is the only lever the runtime has: the server ignores temperature, top-p and seed,
+  and emptying the tail just replays the first attempt.
 
 ## Where It Fits
 

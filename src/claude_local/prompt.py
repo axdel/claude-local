@@ -39,10 +39,17 @@ _TRUNCATION_MARKER = "\n[...truncated]"
 PREVIOUS_SOURCE_BYTE_CAP = 8192
 _PREVIOUS_SOURCE_HEADER = "## Your previous attempt — the complete file you wrote, scored below."
 
-# Escalating questions for a model that has replayed an answer. A replay proves the prompt is an
-# absorbing state — same file, same score, same brief, same file again — so the only way out is to
+# Escalating questions for a model that has stalled — an attempt that bought nothing. A stall
+# proves the prompt is an absorbing state: same brief in, no further out. The only way out is to
 # ask something else, and under a deterministic decoder that is the ONLY lever there is: sampling
 # knobs are ignored by the server, and an emptied tail just reproduces the first attempt.
+#
+# A rung must be true of BOTH stall shapes, because the loop escalates on both and the model can
+# check which one it sent. So no rung claims the file was identical: that is true of a verbatim
+# repeat and false of a plateau, where the model wrote something genuinely new that got no further.
+# What holds either way is the consequence — the score did not move — so that is what each rung
+# asserts. Telling a model it repeated itself when it did not is a false premise about its own
+# work, and a weak model given one argues with it instead of fixing the code.
 #
 # The rungs escalate in what they license the model to discard. The first keeps work that already
 # passes, which matters: a case sitting at six of seven oracle tests must not be told to start
@@ -54,11 +61,11 @@ _PREVIOUS_SOURCE_HEADER = "## Your previous attempt — the complete file you wr
 # generic retry instructions have minimal independent effect, so the rung's job is to say what to
 # do with a concrete failure the loop has already extracted — never to request the extraction.
 _NUDGE_LADDER = (
-    "You returned a file byte-identical to your previous attempt, so the oracle ran the same code "
-    "and reached the same result. Sending it again cannot change that. Fix the failure shown "
-    "directly above: make that path produce the value the test expects, and change nothing that "
-    "already passes.",
-    "You have repeated yourself again, so narrowing has now failed twice and what is wrong is the "
+    "Your last attempt scored no better than the best you have already reached, so whatever you "
+    "changed did not reach the failure. Writing it that way again cannot change that. Fix the "
+    "failure shown directly above: make that path produce the value the test expects, and change "
+    "nothing that already passes.",
+    "You have now failed to improve twice, so narrowing has failed and what is wrong is the "
     "approach, not a detail inside it. Abandon the structure you have been writing. Read the "
     "test's failing assertions in order and build the implementation up from what they require — "
     "a different shape, not the same one restated.",

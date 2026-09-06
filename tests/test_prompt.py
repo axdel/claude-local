@@ -299,6 +299,42 @@ def test_the_nudge_ladder_escalates_and_is_finite(tmp_path: Path) -> None:
     assert builder.nudge_for(99) is None
 
 
+def test_no_rung_tells_the_model_it_sent_an_identical_file(tmp_path: Path) -> None:
+    """A rung answers either shape of stall, so it may not assert the shape it did not see.
+
+    Oracle: the loop escalates on a verbatim repeat AND on a plateau — different code that scored
+    no better. A rung claiming the file came back identical is therefore false half the time, and
+    it is false about the model's own last output, which the model can check. A weak model handed
+    a false premise argues with it instead of repairing the code, so this is a correctness bound on
+    the prompt, not a wording preference.
+
+    Universally quantified over the closed rung set rather than the two rungs that exist today: the
+    ladder is expected to grow, and a third rung reintroducing the claim is exactly the regression
+    worth catching. The forbidden terms come from the two shapes' definitions, never from reading
+    the current text — each names sameness of the FILE, which only a repeat guarantees.
+    """
+    builder = PromptBuilder(_card(tmp_path))
+    forbidden = (
+        "identical",
+        "the same code",
+        "same file",
+        "repeated yourself",
+        "sending it again",
+    )
+
+    rungs = []
+    rung = builder.nudge_for(len(rungs) + 1)
+    while rung is not None:
+        rungs.append(rung)
+        rung = builder.nudge_for(len(rungs) + 1)
+
+    assert rungs  # a vacuous pass over an empty ladder would prove nothing
+    for index, text in enumerate(rungs, start=1):
+        lowered = text.lower()
+        for claim in forbidden:
+            assert claim not in lowered, f"rung {index} asserts a repeat-only fact: {claim!r}"
+
+
 def test_a_nudge_reaches_the_end_of_the_repair_brief(tmp_path: Path) -> None:
     """The nudge is the instruction for the next attempt, so it sits closest to generation.
 

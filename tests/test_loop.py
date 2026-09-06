@@ -514,6 +514,71 @@ def test_a_repeat_and_the_nudge_that_answers_it_are_both_reported_live(tmp_path:
     assert final.score.passed == 2
 
 
+def test_a_score_plateau_escalates_through_the_same_ladder_as_a_repeat(tmp_path: Path) -> None:
+    """Different words that never score better are a stall too — and the commoner one.
+
+    Oracle: verbatim repetition is the rare shape. The measured common one is a plateau — on
+    Qwen3-Coder-Next-4bit case 07, four attempts of 558/711/649/589 tokens, every one a different
+    implementation and every one scoring 3 of 13. Nothing detected that, so the loop spent its
+    whole budget re-deriving the same wrong answer in new words and never reached the ladder.
+
+    Four distinct files here, none improving on the first. The escalation must therefore arrive
+    without a single byte-identical reply to trigger it.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    backend = ReplayBackend([_edit_script(v) for v in (_V0, _V1, _V2, _V0 + "\n# again\n")])
+    spawn = ScriptedSpawn(*([_junit("one_failure.xml")] * 4))
+    loop, _ = _make_loop(worktree, backend, spawn, on_attempt=seen.append)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=4),
+    )
+
+    loop.run(spec, worktree)
+
+    # No reply repeats another, so the old detector sees nothing at all.
+    assert [progress.repeats_previous for progress in seen] == [False, False, False, False]
+    # Attempt 1 sets the bar. Attempt 2 fails to clear it, which alone is noise — one bad sample
+    # between two good ones must not nudge a model that was about to succeed. Attempt 3 is the
+    # second consecutive miss, which is the plateau, so attempt 4 is the one asked differently.
+    assert [progress.plateaued for progress in seen] == [False, False, True, True]
+    assert [progress.nudged for progress in seen] == [False, False, False, True]
+
+
+def test_one_bad_sample_between_two_good_ones_is_not_a_plateau(tmp_path: Path) -> None:
+    """A dip that recovers is noise, not a stall — the detector must not fire on it.
+
+    Oracle: the plateau bar is *consecutive* non-improvement. An attempt that scores worse and is
+    followed by one that improves describes a model still searching, which is exactly the model a
+    nudge would interrupt. Scores here run 2 → 0 → 3, so the middle attempt is a miss and the
+    third clears the bar; nothing may escalate.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    backend = ReplayBackend([_edit_script(v) for v in (_V0, _V1, _V2)])
+    spawn = ScriptedSpawn(
+        _junit("one_failure.xml"),  # 2 passed
+        _junit("import_error.xml"),  # a dip
+        _junit("one_failure.xml"),  # back to 2 — but never above the bar
+    )
+    loop, _ = _make_loop(worktree, backend, spawn, on_attempt=seen.append)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=3),
+    )
+
+    loop.run(spec, worktree)
+
+    # The dip is one miss; the recovery does not clear the bar either, so it is the second
+    # consecutive miss and the plateau is real by attempt 3 — but never on attempt 2 alone.
+    assert [progress.plateaued for progress in seen] == [False, False, True]
+
+
 def test_the_run_ends_when_the_nudge_ladder_is_spent_not_when_the_budget_is(
     tmp_path: Path,
 ) -> None:

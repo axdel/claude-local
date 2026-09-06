@@ -42,6 +42,45 @@ if TYPE_CHECKING:
 # overwrites it). A run-stable name, carrying no timestamp, keeps the worktree predictable.
 ORACLE_TEST_FILENAME = "test_loop_oracle.py"
 
+_PLATEAU_ATTEMPTS = 2
+"""Consecutive attempts that fail to clear the best score before the loop calls it a plateau.
+
+Two, not one: a single miss between two clearing attempts is a model still searching, and a
+detector that escalated on it would interrupt one that was about to succeed. Two consecutive is
+the point where "different words, no further" stops being a sample and starts being the shape —
+measured on a benchmark case whose four attempts wrote 558, 711, 649, and 589 tokens of entirely
+different implementation and scored 3 of 13 every time.
+"""
+
+
+@dataclass(slots=True)
+class _Plateau:
+    """Watches a run for the quieter shape of standing still: new words that get no further.
+
+    Mutable and loop-owned, holding the two facts the judgment needs — the best score any attempt
+    has reached, and how many attempts since have failed to beat it. Both are hidden: a caller
+    folds in each verdict and asks one question, so the watermark can never be read as a score in
+    its own right or written by a second party.
+
+    An attempt that reached no oracle carries no verdict about progress — the model may well have
+    been improving — so it neither breaks the streak nor extends it.
+    """
+
+    _best_passed: int = -1
+    _misses: int = 0
+
+    def record(self, score: TestScore | None) -> None:
+        """Fold one attempt's verdict in, extending the miss streak unless it cleared the best."""
+        if score is None:
+            return
+        self._misses = 0 if score.passed > self._best_passed else self._misses + 1
+        self._best_passed = max(self._best_passed, score.passed)
+
+    @property
+    def reached(self) -> bool:
+        """Whether enough consecutive attempts have failed to clear the best score to call it."""
+        return self._misses >= _PLATEAU_ATTEMPTS
+
 
 @dataclass(frozen=True, slots=True)
 class AttemptProgress:
@@ -56,18 +95,21 @@ class AttemptProgress:
     cause that, and a watcher must tell them apart: the server faulted, the guard cut a derail, or
     the model returned nothing usable to write — the last being what ``blocked`` names.
 
-    ``repeats_previous`` marks a generation that came back byte-identical to the one before it, and
-    ``nudged`` marks one generated under an escalation because an earlier attempt did (D-LOOP-005).
-    Both are carried here rather than inferred, because only the loop holds the previous attempt's
-    text, and each answers a question the other cannot: the first says why the model produced
-    nothing new, the second says why the loop kept paying anyway. A watcher given only one of them
-    sees either a loop re-buying a known answer or an escalation with no trigger.
+    ``repeats_previous`` marks a generation that came back byte-identical to the one before it,
+    ``plateaued`` marks one whose score failed to clear the best so far for a second consecutive
+    attempt, and ``nudged`` marks one generated under an escalation because an earlier attempt did
+    (D-LOOP-005). All three are carried here rather than inferred, because only the loop holds the
+    previous attempts, and each answers a question the others cannot: the first two are the two
+    shapes of "the model made no progress" — identical words, and different words that get no
+    further — while the third says why the loop kept paying anyway. A watcher given only some of
+    them sees either a loop re-buying a known answer or an escalation with no trigger.
     """
 
     attempt: int
     generation: GenerationResult
     score: TestScore | None
     repeats_previous: bool = False
+    plateaued: bool = False
     nudged: bool = False
 
     @property
@@ -196,9 +238,14 @@ class Loop:
         snapshot, threading each failure back as distilled feedback. The loop stops on a green
         oracle, and stops early wherever there is nothing left to repair from: on any attempt that
         reached no oracle at all (a server fault, a derail, or a reply with no usable edit), and
-        on an attempt whose generation came back byte-identical to the one before it — a replay of
-        an answer already scored, not a repair (D-LOOP-004). On exit the best snapshot is restored
-        and the status follows precedence.
+        once the nudge ladder is spent on a model that has stopped making progress (D-LOOP-004).
+
+        Progress has two failure shapes and both feed that one ladder. A generation that comes
+        back byte-identical is a replay of an answer already scored, not a repair. A *plateau* is
+        the same failure in different words — consecutive attempts that never clear the best score
+        — and it is the commoner one, so a loop watching only for identical text spends its whole
+        budget re-deriving one wrong answer. On exit the best snapshot is restored and the status
+        follows precedence.
 
         A transport failure (``BackendUnavailable`` from the client — an unreachable server) and a
         broken oracle (``OracleError`` from the runner) are never caught — they propagate, so a
@@ -212,7 +259,8 @@ class Loop:
         last_attempt: _ScoredAttempt | None = None
         nudge = ""
         reframe = ""
-        verbatim_repeats = 0
+        stalls = 0
+        plateau = _Plateau()
 
         for index in range(spec.budget.max_attempts):
             tail = reframe if last_attempt is None else self._repair_brief(last_attempt, nudge)
@@ -220,13 +268,16 @@ class Loop:
             repeats_previous = bool(results) and generation.text == results[-1].text
             results.append(generation)
             last_attempt = self._score_attempt(generation, index, spec, worktree, oracle_path)
+            score = None if last_attempt is None else last_attempt.run.score
+            plateau.record(score)
             if self._on_attempt is not None:
                 self._on_attempt(
                     AttemptProgress(
                         attempt=len(results),
                         generation=generation,
-                        score=None if last_attempt is None else last_attempt.run.score,
+                        score=score,
                         repeats_previous=repeats_previous,
+                        plateaued=plateau.reached,
                         nudged=bool(nudge),
                     )
                 )
@@ -238,8 +289,9 @@ class Loop:
                 continue
             if last_attempt.run.score.is_green:
                 break
-            verbatim_repeats += int(repeats_previous)
-            escalation = self._escalation(repeats_previous, verbatim_repeats)
+            stalled = repeats_previous or plateau.reached
+            stalls += int(stalled)
+            escalation = self._escalation(stalled, stalls)
             if escalation is None:
                 break
             nudge = escalation
@@ -290,21 +342,21 @@ class Loop:
             return None
         return self._prompt.reframe_for(generation.text)
 
-    def _escalation(self, repeats_previous: bool, verbatim_repeats: int) -> str | None:
+    def _escalation(self, stalled: bool, stalls: int) -> str | None:
         """The next attempt's nudge: empty while the model still moves, ``None`` to stop.
 
-        A model that produced something new needs no escalation — the failure speaks for itself, so
-        an earlier nudge clears. One that replayed gets the next rung, and ``None`` past the last
-        rung is where the run genuinely ends: every question this card knows how to ask has been
-        asked, and the rest of the budget would only re-buy an answer already given.
+        A model that made progress needs no escalation — the failure speaks for itself, so an
+        earlier nudge clears. One that stalled gets the next rung, and ``None`` past the last rung
+        is where the run genuinely ends: every question this card knows how to ask has been asked,
+        and the rest of the budget would only re-buy an answer already given.
 
-        ``verbatim_repeats`` counts every replay in the run rather than the current consecutive
+        ``stalls`` counts every stalling attempt in the run rather than the current consecutive
         streak, so the ladder is walked at most once and termination is guaranteed by construction.
         A count that reset on progress could re-offer the first rung indefinitely.
         """
-        if not repeats_previous:
+        if not stalled:
             return ""
-        return self._prompt.nudge_for(verbatim_repeats)
+        return self._prompt.nudge_for(stalls)
 
     def _score_attempt(
         self,
