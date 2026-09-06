@@ -40,6 +40,7 @@ to read what the model actually wrote for that case::
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -61,6 +62,28 @@ _BENCHMARK = _HERE / "schedule_manager"
 _CASES = _BENCHMARK / "cases"
 _GOLDEN_APP = _BENCHMARK / "golden" / "app"
 _DEFAULT_BASE_URL = "http://localhost:8080"
+
+
+def _generation_params(declared: str) -> dict[str, object]:
+    """Read the ``--generation-params`` value as the request-body fields it declares.
+
+    JSON rather than repeated ``key=value`` flags, deliberately: the model registry already owns
+    that syntax, and a second parser for it here would be one format with two readers, free to
+    disagree on the next quoting question. This layer only has to carry an already-parsed mapping
+    across a process boundary, which is what JSON is for.
+
+    Raises:
+        argparse.ArgumentTypeError: the value is not a JSON object. A body is an object, so a list
+            or a scalar names no fields — and it has to fail here, because a server drops an
+            unrecognised body field silently and would report a whole run as normally configured.
+    """
+    try:
+        params = json.loads(declared)
+    except ValueError as malformed:
+        raise argparse.ArgumentTypeError(f"not a JSON object: {malformed}") from malformed
+    if not isinstance(params, dict):
+        raise argparse.ArgumentTypeError(f"not a JSON object but a {type(params).__name__}")
+    return params
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -93,6 +116,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="append",
         metavar="CASE_ID",
         help="Run just this case; repeatable. Ladder order is kept whatever order they are given.",
+    )
+    parser.add_argument(
+        "--generation-params",
+        type=_generation_params,
+        default={},
+        metavar="JSON",
+        help=(
+            "JSON object of request-body fields sent with every generation, e.g. "
+            "'{\"enable_thinking\": false}'. The only lever that reaches a chat template whose "
+            "own default a server flag cannot countermand."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -245,6 +279,7 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
             model=args.model,
             http_client=http_client,
             progress=ConsoleProgress(stream_text=args.stream),
+            generation_params=args.generation_params,
         )
     except (BackendUnavailable, SandboxUnavailable, OracleError) as fault:
         print(f"error: benchmark harness fault: {fault}", file=sys.stderr)

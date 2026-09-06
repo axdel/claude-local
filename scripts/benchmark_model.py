@@ -35,9 +35,11 @@ one would put a host problem on the model's scorecard.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess  # nosec B404 (argv is built here from catalog data, never shell-interpreted)
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -48,6 +50,59 @@ from claude_local.model_server import ModelServer  # noqa: E402
 
 _BENCHMARK_MODULE = "benchmarks.run"
 _DEFAULT_SCORECARD_DIR = _REPO_ROOT / "benchmarks" / "scorecards"
+
+
+def benchmark_command(
+    *,
+    base_url: str,
+    served: str,
+    out: Path,
+    generation_params: Mapping[str, object],
+    stream: bool,
+    only: Sequence[str],
+) -> list[str]:
+    """Build the documented benchmark invocation for a server that is already up.
+
+    Separate from the serving block that runs it because deciding what the command SAYS is pure,
+    while running it needs 20 GB of resident weights. Kept apart, the forwarding is checkable
+    without them — and a dropped argument is exactly the failure a subprocess cannot report, since
+    the benchmark would run perfectly well in whatever configuration it was left in.
+
+    Args:
+        base_url: Where the just-started server is listening.
+        served: The model id the server REPORTS, not the catalog name — the scorecard is labelled
+            with it, and a name the server never served would attribute the run to other weights.
+        out: Directory the scorecard and produced code are written into.
+        generation_params: The row's request-body fields; an empty mapping forwards no flag.
+        stream: Whether to also print the model's raw text as it decodes.
+        only: Case ids to run, forwarded one flag each because the benchmark appends them.
+
+    Returns:
+        The argv, ready for ``subprocess.run``. Never shell-interpreted.
+    """
+    command = [
+        sys.executable,
+        "-m",
+        _BENCHMARK_MODULE,
+        "--base-url",
+        base_url,
+        "--model",
+        served,
+        "--out",
+        str(out),
+    ]
+    if generation_params:
+        # JSON because that is what the flag declares. The registry already owns the key=value
+        # syntax these came from, so re-serializing to it here would give one format two writers.
+        # dict() because a resolved row hands over a read-only mapping and json.dumps takes dicts.
+        command.extend(("--generation-params", json.dumps(dict(generation_params))))
+    if stream:
+        command.append("--stream")
+    for case_id in only:
+        # Forwarded, never checked here: the benchmark loads the ladder, so it is the only thing
+        # that knows which ids exist, and a second validator would drift from it.
+        command.extend(("--only", case_id))
+    return command
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -82,6 +137,10 @@ def main(argv: list[str] | None = None) -> int:
     server = ModelServer.for_model(resolved)
     print(f"[bench] weights  : {resolved.path}", file=sys.stderr)
     print(f"[bench] command  : {' '.join(server.command)}", file=sys.stderr)
+    # Echoed because the failure this configuration prevents is a SILENT one: a model left in the
+    # wrong mode still answers, still scores, and reports nothing unusual. Seeing the row's
+    # parameters in the run's own header is what makes a misconfigured sweep visible while it runs.
+    print(f"[bench] params   : {json.dumps(dict(resolved.generation_params))}", file=sys.stderr)
 
     started = time.monotonic()
     with server.running(timeout_s=args.startup_timeout) as handle:
@@ -94,23 +153,14 @@ def main(argv: list[str] | None = None) -> int:
         # in-process call to run_cases(), which would skip the surface a user actually drives.
         # Output is INHERITED, never captured: the benchmark reports each case and attempt live,
         # and a captured pipe would hold every one of those lines until the run was already over.
-        command = [
-            sys.executable,
-            "-m",
-            _BENCHMARK_MODULE,
-            "--base-url",
-            handle.base_url,
-            "--model",
-            served,
-            "--out",
-            str(args.out),
-        ]
-        if args.stream:
-            command.append("--stream")
-        for case_id in args.only or ():
-            # Forwarded, never checked here: the benchmark loads the ladder, so it is the only
-            # thing that knows which ids exist, and a second validator would drift from it.
-            command.extend(("--only", case_id))
+        command = benchmark_command(
+            base_url=handle.base_url,
+            served=served,
+            out=args.out,
+            generation_params=resolved.generation_params,
+            stream=args.stream,
+            only=args.only or (),
+        )
         done = subprocess.run(command, cwd=_REPO_ROOT, check=False)  # noqa: S603
 
     print(f"[bench] server torn down after {time.monotonic() - started:.1f}s", file=sys.stderr)

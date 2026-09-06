@@ -93,6 +93,9 @@ def _resolved(
         draft_repo="lukaskremla/Qwen3.8-MTP" if draft_present else None,
         port=8088,
         flags=flags,
+        # Empty because the server command is built from FLAGS alone: generation parameters ride
+        # in each request body, so a row declaring them must not change one argv element here.
+        generation_params={},
         path=store,
         draft_path=draft_path,
     )

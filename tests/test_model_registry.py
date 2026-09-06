@@ -21,14 +21,21 @@ from claude_local.model_registry import (
     UnknownModel,
 )
 
-_REGISTRY_FIXTURE = """\
-# A comment line, skipped.
-#
-NAME|REPO|DRAFT|PORT|SIZE|FLAGS|NOTE
-gpt-oss-20b|mlx-community/gpt-oss-20b-Q8|-|8088|12.1G|-|Fast MoE.
-Qwen3.8-27B|lmstudio/Qwen3.8-27B-6bit|lukaskremla/Qwen3.8-MTP|8080|22.8G|--enable-thinking|Dense.
-Gemma4-31B|lmstudio/gemma-4-31B-6bit|-|8082|26.1G|--enable-thinking --kv-bits 8|Slowest.
-"""
+_REGISTRY_FIXTURE = "\n".join(
+    (
+        "# A comment line, skipped.",
+        "#",
+        "NAME|REPO|DRAFT|PORT|SIZE|FLAGS|PARAMS|NOTE",
+        "gpt-oss-20b|mlx-community/gpt-oss-20b-Q8|-|8088|12.1G|-|-|Fast MoE.",
+        # Joined rather than written as one block so this row keeps realistic repo ids and a
+        # two-parameter PARAMS cell without running past the line limit. The eight columns are
+        # what the format declares, so a row of them is simply long.
+        "Qwen3.8-27B|lmstudio/Qwen3.8-27B-6bit|lukaskremla/Qwen3.8-MTP|8080|22.8G"
+        "|--enable-thinking|enable_thinking=false top_k=20|Dense.",
+        "Gemma4-31B|lmstudio/gemma-4-31B-6bit|-|8082|26.1G|--enable-thinking --kv-bits 8|-|Slow.",
+        "",
+    )
+)
 
 
 def _registry(tmp_path: Path, *, present: tuple[str, ...] = ()) -> ModelRegistry:
@@ -56,6 +63,55 @@ def test_resolve_carries_the_draft_model_when_the_row_names_one(tmp_path: Path) 
     resolved = _registry(tmp_path, present=("Qwen3.8-27B",)).resolve("Qwen3.8-27B")
 
     assert resolved.draft_repo == "lukaskremla/Qwen3.8-MTP"
+
+
+def test_generation_params_resolve_to_typed_values_not_strings(tmp_path: Path) -> None:
+    """A parameter reaches the request body as the type the server's schema declares.
+
+    Oracle: the column is read as ``key=value`` pairs and the values are JSON scalars, so
+    ``enable_thinking=false`` is the boolean ``False`` and ``top_k=20`` the integer ``20`` — the
+    types ``mlx_vlm``'s request schema declares for those fields. The string ``"false"`` would be
+    truthy in the body and silently leave thinking on, which is the exact defect this column
+    exists to fix, so the distinction is the whole test rather than a detail of it.
+    """
+    resolved = _registry(tmp_path, present=("Qwen3.8-27B",)).resolve("Qwen3.8-27B")
+
+    assert resolved.generation_params == {"enable_thinking": False, "top_k": 20}
+
+
+def test_an_absent_params_column_declares_no_generation_params(tmp_path: Path) -> None:
+    """A "-" means nothing to declare, matching every other optional column in the format.
+
+    Oracle: ``-`` already means "nothing to declare" for DRAFT and FLAGS (``_ABSENT``), so one
+    reading of that token across the format is what keeps the catalog legible. An empty mapping —
+    not ``None`` — because the consumer forwards it into a request body either way.
+    """
+    resolved = _registry(tmp_path, present=("gpt-oss-20b",)).resolve("gpt-oss-20b")
+
+    assert resolved.generation_params == {}
+
+
+def test_a_generation_parameter_without_a_value_is_refused(tmp_path: Path) -> None:
+    """A bare token in the PARAMS column has no field to bind, so the row fails closed.
+
+    Oracle: the column's declared format is ``key=value`` pairs, so a token carrying no ``=``
+    names no request field. Reading it as a valueless flag would invent a shape the server's
+    request schema has no slot for — and silently, since an unknown body field is simply ignored.
+    The refusal names the offending token, which is what an author needs to repair the row.
+    """
+    registry_path = tmp_path / "models.tsv"
+    registry_path.write_text(
+        "NAME|REPO|DRAFT|PORT|SIZE|FLAGS|PARAMS|NOTE\n"
+        "bad-params|repo|-|8088|1G|-|enable_thinking|Missing the value.\n"
+    )
+    store_root = tmp_path / "store"
+    (store_root / "bad-params").mkdir(parents=True)
+    registry = ModelRegistry(registry_path=registry_path, store_root=store_root)
+
+    with pytest.raises(MalformedRegistry) as refusal:
+        registry.resolve("bad-params")
+
+    assert "enable_thinking" in str(refusal.value)
 
 
 def test_a_declared_draft_whose_weights_are_absent_resolves_to_no_draft_path(
@@ -151,12 +207,14 @@ def test_names_lists_the_catalog_skipping_comments_and_the_header(tmp_path: Path
 def test_a_row_with_the_wrong_column_count_is_refused(tmp_path: Path) -> None:
     """A short row would silently mis-assign every column after the missing one.
 
-    Oracle: the format declares 7 columns, so a row with fewer cannot be read positionally.
+    Oracle: the format declares 8 columns, so a row with fewer cannot be read positionally.
     Failing closed with the file and line is the only outcome that lets the author fix it;
     reading it anyway would resolve a port from the SIZE column.
     """
     registry_path = tmp_path / "models.tsv"
-    registry_path.write_text("NAME|REPO|DRAFT|PORT|SIZE|FLAGS|NOTE\ntruncated|repo|-|8088\n")
+    registry_path.write_text(
+        "NAME|REPO|DRAFT|PORT|SIZE|FLAGS|PARAMS|NOTE\ntruncated|repo|-|8088\n"
+    )
     registry = ModelRegistry(registry_path=registry_path, store_root=tmp_path)
 
     with pytest.raises(MalformedRegistry) as refusal:

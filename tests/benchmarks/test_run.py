@@ -147,6 +147,101 @@ def test_main_exits_2_when_only_names_an_unknown_case(
     assert "05_rbac" in err  # and the real ids, so the typo is correctable from the message
 
 
+def test_generation_params_reach_every_request_body() -> None:
+    """``--generation-params`` rides in each chat-completion body, on every case and every retry.
+
+    Oracle: the flag's declared contract is a JSON object of request-body fields, so the value the
+    server receives is the one passed in — ``False``, the JSON boolean, not the string "false". The
+    assertion is on the wire because that is the only place the guarantee holds: a body field is
+    the ONLY lever that reaches a chat template defaulting a behaviour on, so a parameter that
+    reaches the driver but not the request buys nothing. Every request is checked rather than the
+    first, because a per-call body rebuilt without the field would still pass a first-request check
+    while leaving every retry unconfigured.
+    """
+    bodies: list[dict[str, object]] = []
+
+    with replay_cases_http_client(
+        _golden_sources(),
+        request_observer=lambda request: bodies.append(json.loads(request.content)),
+    ) as http_client:
+        exit_code = main(
+            [
+                "--base-url",
+                "http://benchmark.local",
+                "--model",
+                "replay/golden",
+                "--generation-params",
+                '{"enable_thinking": false, "top_k": 20}',
+            ],
+            http_client=http_client,
+        )
+
+    assert exit_code == 0
+    assert bodies, "no request was observed, so the assertion below would be vacuous"
+    assert all(body["enable_thinking"] is False for body in bodies)
+    assert all(body["top_k"] == 20 for body in bodies)
+
+
+def test_a_run_declaring_no_generation_params_sends_none() -> None:
+    """Without the flag, no extra field is invented — the default request body is left alone.
+
+    Oracle: the flag is optional, so its absence must mean "declare nothing", not "declare a
+    default". A field silently present with a guessed value would configure every model in the
+    catalog from one row's needs.
+    """
+    bodies: list[dict[str, object]] = []
+
+    with replay_cases_http_client(
+        _golden_sources(),
+        request_observer=lambda request: bodies.append(json.loads(request.content)),
+    ) as http_client:
+        exit_code = main(
+            ["--base-url", "http://benchmark.local", "--model", "replay/golden"],
+            http_client=http_client,
+        )
+
+    assert exit_code == 0
+    assert bodies
+    assert all("enable_thinking" not in body for body in bodies)
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        pytest.param("{not json}", id="not-json"),
+        pytest.param('["enable_thinking"]', id="json-but-not-an-object"),
+    ],
+)
+def test_generation_params_that_are_not_a_json_object_are_a_usage_error(
+    declared: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The flag takes a JSON object of body fields; anything else is refused before any case runs.
+
+    Oracle: a request body is a JSON object, so a list or a scalar names no fields and cannot be
+    merged into one. Failing at parse time is what makes the typo correctable — a server ignores an
+    unrecognised body field silently, so a malformed declaration accepted here would read as a
+    working configuration through an entire benchmark run.
+    """
+    with pytest.raises(SystemExit) as refusal:
+        main(
+            [
+                "--base-url",
+                "http://benchmark.local",
+                "--model",
+                "replay/golden",
+                "--generation-params",
+                declared,
+            ]
+        )
+
+    assert refusal.value.code == 2  # argparse's usage-error code, as for any bad argument
+    err = capsys.readouterr().err
+    assert "--generation-params" in err
+    # The requirement itself, not just the flag name: an unrecognised-argument error also names
+    # the flag, so asserting only that would pass against a build where the flag does not exist.
+    assert "JSON object" in err
+
+
 def test_main_exits_2_when_no_model_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
     """With no --model and no env fallback, the script reports a usage error and exits 2.
 

@@ -15,10 +15,12 @@ A leaf: imports nothing from the package, so every consumer can depend inward on
 
 from __future__ import annotations
 
+import json
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 _STORE_ROOT_ENV = "CLAUDE_LOCAL_MODELS"
 """Overrides the store location — the weights live outside any one git worktree."""
@@ -29,11 +31,47 @@ _HEADER_FIELD = "NAME"
 _ABSENT = "-"
 """A column with nothing to declare: no draft model, no extra serving flags."""
 
-_FIELDS_PER_ROW = 7
-"""NAME|REPO|DRAFT|PORT|SIZE|FLAGS|NOTE — a short row would silently mis-assign columns."""
+_FIELDS_PER_ROW = 8
+"""NAME|REPO|DRAFT|PORT|SIZE|FLAGS|PARAMS|NOTE — a short row silently mis-assigns columns.
+
+FLAGS and PARAMS are both configuration but reach the model by different routes, and the split is
+load-bearing rather than cosmetic: FLAGS are command-line arguments to the server process, PARAMS
+are fields in each request body. A model whose template defaults a behaviour ON cannot be talked
+out of it by a server flag — the flag's absence leaves the template variable undefined, which is
+not the same as false — so the only lever is the request. One column cannot express both.
+"""
 
 _DRAFT_SUFFIX = "-MTP"
 """A draft model is stored beside the model it accelerates, under this suffixed name."""
+
+
+def _generation_params(declared: str, model: str) -> Mapping[str, object]:
+    """Parse a PARAMS cell into the typed request-body fields it declares.
+
+    Values are JSON scalars, so a parameter arrives as the type the server's request schema
+    expects: ``enable_thinking=false`` is the boolean ``False``, not the string ``"false"`` — and
+    that distinction is the whole point, because a non-empty string is truthy in a request body
+    and would silently leave the behaviour on. A value that is not valid JSON is taken verbatim,
+    which is what lets a plain identifier be written without quoting it inside a ``|``-delimited
+    cell.
+
+    Raises:
+        MalformedRegistry: a token carries no ``=``, so it names no field. Failing closed matters
+            here more than it looks: a server ignores an unrecognised body field silently, so a
+            typo accepted at this layer would read as a working configuration forever.
+    """
+    if declared == _ABSENT:
+        return MappingProxyType({})
+    params: dict[str, object] = {}
+    for token in declared.split():
+        key, separator, value = token.partition("=")
+        if not separator:
+            raise MalformedRegistry(f"{model}: generation parameter {token!r} is not key=value")
+        try:
+            params[key] = json.loads(value)
+        except ValueError:
+            params[key] = value
+    return MappingProxyType(params)
 
 
 class UnknownModel(Exception):
@@ -61,6 +99,15 @@ class ResolvedModel:
     draft_repo: str | None
     port: int
     flags: tuple[str, ...]
+    generation_params: Mapping[str, object]
+    """Request-body fields sent with every generation, empty when the row declares none.
+
+    Distinct from ``flags`` by destination, not by kind: these ride in each request rather than
+    on the server's command line, which is the only way to countermand a chat template's own
+    default. Read-only, so one resolved row cannot be edited into a different configuration by
+    a consumer that forwards it.
+    """
+
     path: Path
     draft_path: Path | None
     """The draft model's weights, or None when the row declares one that was never pulled.
@@ -132,6 +179,7 @@ class ModelRegistry:
                 draft_repo=draft_repo,
                 port=int(row[3]),
                 flags=() if row[5] == _ABSENT else tuple(row[5].split()),
+                generation_params=_generation_params(row[6], name),
                 path=path,
                 # Absent unless BOTH the row declares a draft and its weights are on disk. A
                 # declared-but-unpulled draft is the common case (the catalog names one for
