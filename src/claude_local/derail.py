@@ -1,16 +1,25 @@
 """The derail guard — cuts a stuck local decode mid-stream, before a full wasted completion.
 
 One guard instance watches one generation. The caller feeds it decoded text deltas as they
-stream; ``feed`` returns the first bound that trips (or ``None``), and the caller aborts the
-generation on the first non-``None``. Three bounds, checked in order per delta:
+stream and ticks it on every transport chunk; both return the first bound that trips (or
+``None``), and the caller aborts the generation on the first non-``None``. Four bounds:
 
   TIMEOUT   — the injected wall clock passed ``start + timeout_s`` (deterministic under a fake
               clock in tests; ``time.monotonic`` in production).
+  STALLED   — no content for ``STALL_TIMEOUT_S``, whatever kept the socket warm. Throughput, not
+              elapsed time, separates a slow model from a hung one, so this is the bound that lets
+              ``timeout_s`` be generous without letting a hang spend it.
   TOKEN_CAP — decoded chars exceeded ``max_tokens * CHARS_PER_TOKEN``. A lenient *client* backstop
               on decode length; the server's ``max_tokens`` is the primary hard bound (D-PERF-001).
   REPETITION — a large-n line repeated ``REPETITION_THRESHOLD`` times consecutively past a warmup
               (D-DERAIL-001: consecutive exact repetition is a stuck decode; global token-diversity
               is not).
+
+The two clock bounds are checked by BOTH entry points; the two content bounds only by ``feed``.
+That split is what makes the clock bounds enforceable at all: they were previously checked only
+per delta, so a server streaming bytes that decode to no content — keepalive comments, or
+``event:``/``id:`` lines the SSE decoder drops — held every bound asleep while the socket stayed
+warm. Measured: one content token in 447.2s against a 120s budget.
 
 The verdict depends only on the *concatenated* text, never on how the server chunked it into
 deltas — a hard invariant (``CLAUDE.md`` → inference hot path; D-DERAIL-002). Token count is
@@ -43,6 +52,14 @@ WARMUP_CHARS = 200
 # Coarse chars-per-token proxy for the client-side decode backstop. The server's max_tokens
 # is the real hard bound (D-PERF-001); this proxy only needs to be chunking-invariant.
 CHARS_PER_TOKEN = 4
+# Seconds of no content before a generation counts as hung rather than working. Throughput, not
+# elapsed time, is what separates the two: a stream at 48 tok/s never approaches this bound
+# however long it runs, while both measured pathologies produced ONE content token in 447.2s and
+# 338s respectively. Those are time-to-FIRST-token stalls, so the bound must also clear the
+# slowest catalogued prefill; it is set between the two, cutting a hang at roughly half the time
+# it took to surface while leaving a slow model room to start. Prefill rate per model is the
+# measurement that would tighten this — the benchmark's own telemetry is where it comes from.
+STALL_TIMEOUT_S = 180.0
 
 
 class DerailReason(enum.Enum):
@@ -51,6 +68,7 @@ class DerailReason(enum.Enum):
     REPETITION = "repetition"
     TOKEN_CAP = "token_cap"  # noqa: S105 — enum value, not a credential (name contains "TOKEN")
     TIMEOUT = "timeout"
+    STALLED = "stalled"
 
 
 class DerailGuard:
@@ -64,6 +82,11 @@ class DerailGuard:
     def __init__(self, budget: Budget, now: Callable[[], float] = time.monotonic) -> None:
         self._now = now
         self._deadline = now() + budget.timeout_s
+        # Silence runs from construction, so a generation that never produces a first token is
+        # bounded by the same rule as one that stops mid-decode — the measured pathologies were
+        # all time-to-first-token, which a since-last-delta clock started on first content
+        # would never have reached.
+        self._last_content = now()
         self._token_cap_chars = budget.max_tokens * CHARS_PER_TOKEN
         self._chars = 0  # total decoded chars fed — the token-cap proxy (chunking-invariant)
         self._pending: list[str] = []  # deltas buffered since the last completed line
@@ -71,16 +94,55 @@ class DerailGuard:
         self._recent: deque[str] = deque(maxlen=REPETITION_THRESHOLD)
         self._tripped: DerailReason | None = None
 
+    @property
+    def tripped(self) -> DerailReason | None:
+        """The latched verdict, or ``None``.
+
+        Readable without feeding another delta, because a stall's defining case is that no further
+        content arrives — a verdict reachable only through ``feed`` would be unreadable in exactly
+        the situation the stall bound exists to report.
+        """
+        return self._tripped
+
+    def tick(self) -> DerailReason | None:
+        """Judge elapsed time alone, for bytes that carried no content; return a bound or ``None``.
+
+        The clock bounds are unenforceable without this. Both are checked inside ``feed``, which
+        the caller can only invoke once content arrives — so a server streaming keepalives, or
+        ``event:``/``id:`` lines the SSE decoder drops, holds the socket open while every bound
+        sleeps. Call this for each chunk read from the transport, whatever it decoded to.
+
+        Content accounting deliberately stays out: the token-cap and repetition verdicts depend
+        only on the concatenated text and must not vary with how the server chunked it
+        (D-DERAIL-002). Only time may be judged here, because only time actually passed.
+        """
+        if self._tripped is not None:
+            return self._tripped
+        return self._clock_bounds()
+
     def feed(self, text_delta: str) -> DerailReason | None:
         """Consume one decoded text delta; return the first bound tripped, or ``None``."""
         if self._tripped is not None:
             return self._tripped
-        if self._now() > self._deadline:
-            return self._trip(DerailReason.TIMEOUT)
+        # Judged against the gap this delta is ENDING, so a token arriving after a hung stretch
+        # trips exactly as a tick during that stretch would have — the two agree on one history.
+        clock_verdict = self._clock_bounds()
+        if clock_verdict is not None:
+            return clock_verdict
+        self._last_content = self._now()
         self._chars += len(text_delta)
         if self._chars > self._token_cap_chars:
             return self._trip(DerailReason.TOKEN_CAP)
         return self._scan_for_repetition(text_delta)
+
+    def _clock_bounds(self) -> DerailReason | None:
+        """The two time-only bounds, in severity order: the total deadline, then silence."""
+        now = self._now()
+        if now > self._deadline:
+            return self._trip(DerailReason.TIMEOUT)
+        if now - self._last_content > STALL_TIMEOUT_S:
+            return self._trip(DerailReason.STALLED)
+        return None
 
     def _trip(self, reason: DerailReason) -> DerailReason:
         """Latch the terminal verdict so every later feed reports it."""

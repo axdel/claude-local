@@ -34,6 +34,7 @@ import httpx
 
 from claude_local.backend import HttpxBackend
 from claude_local.client import ModelClient
+from claude_local.derail import STALL_TIMEOUT_S
 from claude_local.loop import AttemptProgress, Loop
 from claude_local.prompt import PromptBuilder
 from claude_local.runner import TestRunner
@@ -52,10 +53,6 @@ _BUNDLED_RULES_CARD = Path(__file__).parent / "rules_card.md"
 
 _HTTP_CONNECT_TIMEOUT_S = 10.0
 """Connect-phase cap for an owned client — reaching a local server is fast or it is down."""
-
-_HTTP_READ_MARGIN_S = 30.0
-"""Read timeout headroom over the oracle budget: the transport must outlast the decode the
-DerailGuard already bounds, so the guard — not the socket — is what stops a runaway."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,7 +162,7 @@ def implement(
     subtree = _writable_subtree(spec.impl_path)
     card = rules_card_path if rules_card_path is not None else _BUNDLED_RULES_CARD
     owns_client = http_client is None
-    client = _new_http_client(spec.budget.timeout_s) if owns_client else http_client
+    client = _new_http_client() if owns_client else http_client
     try:
         with _scratch_worktree(worktree) as wt:
             (wt / Path(spec.impl_path).parent).mkdir(parents=True, exist_ok=True)
@@ -222,13 +219,19 @@ def _writable_subtree(impl_path: str) -> str:
     return parts[0]
 
 
-def _new_http_client(timeout_s: float) -> httpx.Client:
+def _new_http_client() -> httpx.Client:
     """Create the keep-alive HTTP client for an owned-lifecycle call.
 
-    The read timeout sits a margin above the oracle budget so the transport outlasts the decode
-    the DerailGuard bounds — the guard stops a runaway, not a premature socket read.
+    The read timeout IS the guard's stall bound, derived from it rather than restated, because the
+    two bound one fact from either side: the guard cuts a stream that delivers bytes but no
+    content, and the socket cuts one that delivers no bytes at all. Whichever notices first is
+    right, and neither can outlast the other into the silent hang both exist to stop.
+
+    It deliberately does not scale with the task's ``timeout_s``. That budget bounds how long a
+    PRODUCING generation may run, and pinning a silence bound to it made the transport wait longer
+    the more generous the task was — the opposite of what a hang detector should do.
     """
-    timeout = httpx.Timeout(timeout_s + _HTTP_READ_MARGIN_S, connect=_HTTP_CONNECT_TIMEOUT_S)
+    timeout = httpx.Timeout(STALL_TIMEOUT_S, connect=_HTTP_CONNECT_TIMEOUT_S)
     return httpx.Client(timeout=timeout)
 
 

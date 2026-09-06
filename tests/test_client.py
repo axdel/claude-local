@@ -360,6 +360,31 @@ def test_token_cap_derail_stops_the_stream_and_estimates() -> None:
     )
 
 
+def test_a_stream_of_content_free_bytes_is_cut_at_the_stall_bound() -> None:
+    """Bytes that decode to nothing still drive the guard, so a warm socket cannot outlast it.
+
+    The stream is SSE keepalive comments — real wire bytes a server sends to hold a connection
+    open, which ``decode_sse`` drops (``sse.py:105``) because a comment carries no payload. The
+    client's event loop therefore runs zero iterations and can never call ``feed``, so unless the
+    chunk itself drives the guard, no bound is reachable: this is the shape that produced 1 content
+    token in 447.2s under a 120s budget.
+
+    Oracle: the guard's stall bound is 180s of silence, so a clock reading 200s at the first chunk
+    is past it, and the deadline is set far beyond that so the verdict can only be STALLED. The
+    expected text is empty because a comment yields no delta — derived from the SSE contract, not
+    from running the decoder.
+    """
+    client = ModelClient(
+        ReplayBackend([b": keep-alive\n\n: keep-alive\n\n"]),
+        now=ScriptedClock(0.0, 0.0, 0.0, 200.0),
+    )
+
+    result = client.generate("prefix", "tail", build_budget(timeout_s=100_000.0))
+
+    assert result.derail_reason is DerailReason.STALLED
+    assert result.text == ""
+
+
 def test_timeout_derail_uses_the_clients_injected_clock() -> None:
     # The client must feed ITS clock to the guard: an advancing clock (step >> timeout) is
     # already past the deadline by the first feed. Had the client wired time.monotonic instead,

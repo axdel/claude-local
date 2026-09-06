@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from factories import build_budget
 
-from claude_local.derail import DerailGuard, DerailReason
+from claude_local.derail import STALL_TIMEOUT_S, DerailGuard, DerailReason
 
 FIXTURES = Path(__file__).parent / "fixtures" / "derail"
 
@@ -67,9 +67,9 @@ def drive(guard: DerailGuard, text: str, chunk_size: int | None = None) -> Derai
 # --- DerailReason: the closed set of bounds ---------------------------------------
 
 
-def test_reason_enumerates_exactly_the_three_bounds() -> None:
-    # Oracle: the guard enforces exactly these three bounds — nothing more, nothing less.
-    assert {r.name for r in DerailReason} == {"REPETITION", "TOKEN_CAP", "TIMEOUT"}
+def test_reason_enumerates_exactly_the_four_bounds() -> None:
+    # Oracle: the guard enforces exactly these four bounds — nothing more, nothing less.
+    assert {r.name for r in DerailReason} == {"REPETITION", "TOKEN_CAP", "TIMEOUT", "STALLED"}
 
 
 @pytest.mark.parametrize(
@@ -78,6 +78,7 @@ def test_reason_enumerates_exactly_the_three_bounds() -> None:
         (DerailReason.REPETITION, "repetition"),
         (DerailReason.TOKEN_CAP, "token_cap"),
         (DerailReason.TIMEOUT, "timeout"),
+        (DerailReason.STALLED, "stalled"),
     ],
 )
 def test_reason_values_are_stable_lowercase(member: DerailReason, value: str) -> None:
@@ -171,6 +172,95 @@ def test_timeout_is_checked_before_content() -> None:
     clock.value = 5.001
     # Even the first tiny delta trips TIMEOUT — the clock bound needs no warmup or content.
     assert guard.feed("a") is DerailReason.TIMEOUT
+
+
+# --- STALLED: silence, measured independently of total elapsed time ---------------
+
+
+def test_silence_past_the_stall_bound_is_cut_even_while_the_socket_stays_warm() -> None:
+    """A stream delivering bytes but no content is cut once the silence bound passes.
+
+    Oracle: the bound is ``STALL_TIMEOUT_S`` since the last content, so one hundredth of a second
+    past it trips and the expected value is that constant — a mutated constant diverges it. The
+    measured pathology this encodes: 1 content token in 447.2s under a 120s budget, because the
+    only bound that could have cut it was checked solely on content that never came.
+    """
+    clock = FakeClock(0.0)
+    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+    guard.feed("def main():\n")  # last content — silence is measured from here
+
+    clock.value = STALL_TIMEOUT_S + 0.01
+
+    assert guard.tick() is DerailReason.STALLED
+
+
+def test_silence_is_not_yet_a_stall_at_exactly_the_bound() -> None:
+    """The bound is exclusive, matching every other clock bound in this guard.
+
+    Oracle: ``test_timeout_not_reached_at_exactly_the_deadline`` fixes the guard's convention that
+    a clock bound trips strictly past it, so this bound is exclusive by the same contract rather
+    than by whatever the comparison happens to be.
+    """
+    clock = FakeClock(0.0)
+    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+    guard.feed("def main():\n")
+
+    clock.value = STALL_TIMEOUT_S
+
+    assert guard.tick() is None
+
+
+def test_a_stream_that_keeps_producing_survives_far_past_the_stall_bound() -> None:
+    """Total elapsed time does not stall a producing stream — only silence does.
+
+    Oracle: the whole point of the bound is that throughput, not elapsed time, separates a model
+    that is cooking from one that is hung. Ten rounds of just-under-the-bound silence accumulate
+    to nine times the bound, so a guard measuring total elapsed time instead of the gap since the
+    last content fails here — which is precisely the confusion the bound exists to remove.
+    """
+    clock = FakeClock(0.0)
+    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+
+    for _ in range(10):
+        clock.value += STALL_TIMEOUT_S * 0.9
+        assert guard.tick() is None, "a gap under the bound is not a stall"
+        assert guard.feed("more generated code\n") is None
+
+    # Ten gaps of nine tenths of the bound: nine full bounds of total time, never one of silence.
+    assert clock.value == pytest.approx(STALL_TIMEOUT_S * 9)
+
+
+def test_a_tick_enforces_the_total_deadline_during_silence() -> None:
+    """The total deadline binds even when no content ever arrives.
+
+    Oracle: ``Budget.timeout_s`` is documented as a wall-clock bound on the generation, so a
+    generation that produces nothing must still end at it. Checked only on content, the bound is
+    unenforceable exactly when it matters most — against a stream that produces no content.
+    """
+    clock = FakeClock(0.0)
+    guard = DerailGuard(build_budget(timeout_s=30.0, max_tokens=1_000_000), now=clock)
+
+    clock.value = 30.001
+
+    assert guard.tick() is DerailReason.TIMEOUT
+
+
+def test_a_tripped_tick_is_latched_and_readable_without_another_delta() -> None:
+    """The verdict survives for a caller that never receives another delta to feed.
+
+    Oracle: the latch contract (``test_verdict_latches_after_the_first_trip``) says the first
+    verdict is terminal. A stall's defining case is that no further content arrives, so a caller
+    can only learn the verdict by reading it — a latch reachable solely through ``feed`` would be
+    unreadable in exactly the situation the stall bound exists to report.
+    """
+    clock = FakeClock(0.0)
+    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+    guard.feed("def main():\n")
+    clock.value = STALL_TIMEOUT_S + 0.01
+
+    guard.tick()
+
+    assert guard.tripped is DerailReason.STALLED
 
 
 # --- Latching: once derailed, stays derailed --------------------------------------

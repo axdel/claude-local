@@ -34,7 +34,7 @@ from claude_local.sse import Delta, Error, Finish, Usage, decode_sse
 _LENGTH_FINISH_REASON = "length"
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable, Iterator
 
     from claude_local.backend import Backend
     from claude_local.derail import DerailReason
@@ -115,6 +115,25 @@ class ModelClient:
         """Logical generations attempted — the count the economy record reconciles against."""
         return self._total_calls
 
+    @staticmethod
+    def _ticking(chunks: Iterable[bytes], guard: DerailGuard) -> Iterator[bytes]:
+        """Yield transport chunks, driving the guard's clock on each and stopping when one trips.
+
+        The guard's time bounds are otherwise checked only inside ``feed``, which cannot run until
+        a chunk decodes to content. A server holding the socket open with keepalive comments, or
+        with ``event:``/``id:`` lines the SSE decoder drops, therefore keeps every bound asleep —
+        measured as one content token in 447.2s against a 120s budget. Judging arrival here closes
+        that gap at the only layer that sees the bytes.
+
+        The tick precedes the yield so it judges the gap this chunk is ending, and the stream
+        stops rather than raising: the caller's loop then finishes normally and reads the latched
+        verdict, keeping the abort path identical to the one every other bound already uses.
+        """
+        for chunk in chunks:
+            if guard.tick() is not None:
+                return
+            yield chunk
+
     def generate(self, prefix: str, tail: str, budget: Budget) -> GenerationResult:
         """Stream one generation, aborting on the first derail; return its metered result.
 
@@ -131,7 +150,8 @@ class ModelClient:
         derail_reason: DerailReason | None = None
         fault: str | None = None
         finish_reason: str | None = None
-        for event in decode_sse(self._backend.generate(prefix, tail, budget)):
+        chunks = self._ticking(self._backend.generate(prefix, tail, budget), guard)
+        for event in decode_sse(chunks):
             if isinstance(event, Delta):
                 parts.append(event.text)
                 chars += len(event.text)
@@ -150,6 +170,10 @@ class ModelClient:
                 fault = event.message
                 break
         seconds = self._now() - start
+        # A stall trips in the chunk layer, which ends the stream without ever reaching an event,
+        # so the loop above has no verdict to report. Reading the latch is what makes a generation
+        # that produced nothing at all distinguishable from one that ended cleanly and empty.
+        derail_reason = derail_reason or guard.tripped
         if server_tokens is None:
             # No trustworthy server count (truncation, upstream error, or a derail cut the stream
             # before the trailer). Proxy from decoded chars, ceil so any content reports >= 1 token

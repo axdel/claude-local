@@ -78,6 +78,11 @@ dev = [
 [tool.ruff]
 target-version = "py312"
 line-length = 99
+# Benchmark run artifacts: scorecard JSON and, beside it, the code each model produced. That code
+# is the measurement — evidence of what a model wrote, read by a human to judge it — so linting it
+# would report a weak model's style as this repository's own findings. Excluded here rather than
+# left to .gitignore because a formatter or type checker is free to walk ignored paths.
+exclude = ["benchmarks/scorecards"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "S", "UP", "B", "C4", "SIM", "RUF"]
@@ -103,8 +108,17 @@ typeCheckingMode = "standard"
 # type-check their assembled `app` contract against its authoritative source tree.
 extraPaths = [".", "src", "tests", "benchmarks/schedule_manager/golden"]
 # Example oracles import generated implementations with no in-repo counterpart. Benchmark oracles
-# instead resolve against the golden app above and remain fully type-checked.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/**/*_oracle.py"]
+# instead resolve against the golden app above and remain fully type-checked. Benchmark run
+# artifacts hold the code each model produced — the measurement itself, whose imports resolve only
+# inside the case worktree that has since been torn down, so type-checking it reports a model's
+# output as this repository's errors.
+exclude = [
+  "**/node_modules",
+  "**/__pycache__",
+  "**/.*",
+  "examples/**/*_oracle.py",
+  "benchmarks/scorecards",
+]
 
 [tool.deptry]
 # Scanned from the repo root, deptry cannot infer that this src-layout package is first-party,
