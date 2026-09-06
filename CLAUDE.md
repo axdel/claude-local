@@ -45,7 +45,20 @@ The loop engine decomposes into single-responsibility modules, dependencies flow
   timeout; non-thinking by default with a hard thinking cap.
 - **rules card** — a static, token-budgeted engineering-rules card injected as a stable system
   prefix (byte-identical across calls, so the prefill is KV-cache-reused).
+- **oracle sandbox** — the kernel profile the immutable test runs under: deny-by-default, with a
+  tight per-task deadline distinct from the generous one bounding decode.
 - **telemetry** — a run-scoped writer for the **local half** of the per-task economy record.
+
+Serving and the front doors sit above that engine, and the loop depends on none of them:
+
+- **model registry** — resolves a name against the curated catalogue and the on-disk store. A
+  catalogued model with no weights is refused, never fetched.
+- **model server** — spawns a resolved model on 127.0.0.1, waits until it answers, and guarantees
+  teardown on success and failure alike. Opt-in (`uv sync --group serve`); the loop never calls it.
+- **session** — the interactive surface: one `with` block yields a callable that serves a model,
+  meters each turn, and reaps the process afterwards.
+- **cli** — the machine front door claude-protocol dispatches to, taking one JSON envelope on
+  stdin. Its contract version is the cross-repo handshake.
 
 claude-local's own entry point is `implement()` — it owns the whole loop behind that one typed
 seam (see README). One thing stays **external to claude-local**: the **orchestrator half** of the

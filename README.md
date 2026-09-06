@@ -18,6 +18,11 @@ The load-bearing conclusion: a local model **can** implement a well-specified ch
 senior reviewer. It can't drive an agent, and it can't author its own oracle. That single
 constraint shapes everything here.
 
+It is a measured conclusion, not a hunch: [`docs/prior-model-study.md`](docs/prior-model-study.md)
+archives the controlled sweep it came from — several local models implementing one non-trivial
+feature through one deterministic driver against one hidden oracle. Read it as background and
+re-measure before quoting it; it ran against a different harness, at n=1 per cell.
+
 **Claude Local** is the harness that makes local models useful anyway — and, just as
 importantly, **measures whether they actually paid off**.
 
