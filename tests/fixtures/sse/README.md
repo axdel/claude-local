@@ -45,6 +45,7 @@ granularity, marker placement, and the usage trailer are preserved exactly.
 |-|-|-|
 | Role chunk (first) | `delta:{"role":"assistant","content":""}`, `finish_reason:null` | (none — empty content) |
 | Content delta | `delta:{"content":"..."}`, `finish_reason:null` | `Delta(text)` |
+| Reasoning delta | `delta:{"content":null,"reasoning_content":"...","reasoning":"..."}` | `Reasoning(text)` — the `reasoning` alias is ignored |
 | Finish | `delta:{}`, `finish_reason:"stop"\|"length"\|"tool_calls"` | `Finish(reason)` |
 | Invalid finish | non-null array/object `finish_reason` | `Error(message)` and no `Finish` |
 | Invalid nested shape | non-array `choices`, non-object choice/delta/usage, non-string content, invalid token count | one `Error(message)`, no partial events |
@@ -81,6 +82,19 @@ granularity, marker placement, and the usage trailer are preserved exactly.
   - The server calls it a clean `stop` while returning an unusable reply. Nothing
     upstream of the client has any signal that the generation failed, which is why
     the loop reported BLOCKED with a correct answer in hand.
+- `reasoning_channel_stream.bytes` — **a real capture**, recorded 2026-09-06 from
+  `mlx_vlm.server` serving `Qwen3.8-27B` (same prompts as above). 25 reasoning deltas
+  carrying 89 characters, then two content deltas (`"\n\n"`, `"OK"`) carrying 4,
+  `finish_reason:"stop"`, `usage.completion_tokens=29`. Every reasoning frame has
+  `content:null` and puts its text on `reasoning_content`, with a duplicate `reasoning`
+  alias beside it. Three facts this capture establishes that no derived fixture could:
+  - The thinking channel is a **separate wire field**, not markup inside `content` — the
+    structured twin of the harmony leak above, and invisible to `claude_local.harmony`.
+  - The server bills the thinking: 29 completion tokens for a 2-character answer, so a
+    loop that meters only content under-counts a reasoning model's real cost by 25/29ths.
+  - Thinking is 86% of the decode on a prompt this trivial. At the 12.2 tok/s this same
+    capture reports, a real task's thinking alone outlasts any content-silence bound —
+    which is how a healthy model came to be recorded as a dead socket.
 - `invalid_finish_reason_array.bytes` / `invalid_finish_reason_object.bytes` — schema-invalid
   non-null, non-string finish reasons paired with valid-looking implementation content and a
   later valid choice. The decoder must emit `Error` and stop the frame before any `Finish`.

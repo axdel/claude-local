@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 
 from claude_local.derail import CHARS_PER_TOKEN, DerailGuard
 from claude_local.harmony import assistant_content
-from claude_local.sse import Delta, Error, Finish, Usage, decode_sse
+from claude_local.sse import Delta, Error, Finish, Reasoning, Usage, decode_sse
 
 _LENGTH_FINISH_REASON = "length"
 
@@ -152,8 +152,12 @@ class ModelClient:
         finish_reason: str | None = None
         chunks = self._ticking(self._backend.generate(prefix, tail, budget), guard)
         for event in decode_sse(chunks):
-            if isinstance(event, Delta):
-                parts.append(event.text)
+            if isinstance(event, Delta | Reasoning):
+                # Reasoning is metered and watched exactly like content — it is decode the model
+                # really performed, which the server's own usage trailer bills — but it is never
+                # appended to the reply, or the file parser would read chain-of-thought as source.
+                if isinstance(event, Delta):
+                    parts.append(event.text)
                 chars += len(event.text)
                 if self._on_delta is not None:  # before the verdict, so a derail's cause is seen
                     self._on_delta(event.text)

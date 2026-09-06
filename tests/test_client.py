@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from backend_doubles import FramedReplayBackend
 from factories import build_budget, build_generation_result
 
 from claude_local.backend import ReplayBackend, ReplayExhausted
@@ -105,6 +106,86 @@ def test_a_streamed_harmony_transcript_yields_only_the_assistant_message() -> No
     assert result.is_length_capped is False
     assert result.completion_tokens == 53
     assert result.tokens_estimated is False
+
+
+# --- Reasoning channel: thinking beside the reply, not inside it -------------------
+
+
+def test_a_streamed_reasoning_channel_yields_only_the_answer() -> None:
+    """The structured twin of the harmony capture: a separate wire field, not inline markup.
+
+    ``reasoning_channel_stream.bytes`` is a real recorded session whose server streams
+    chain-of-thought on ``choices[].delta.reasoning_content`` while ``delta.content`` stays null.
+    Oracle for the text: the recording carries exactly two content deltas, ``"\\n\\n"`` and
+    ``"OK"``, so the reply is their concatenation — counted off the recorded bytes, never read
+    from the decoder's output. Oracle for the count: the server's own
+    ``usage.completion_tokens=29``, which meters the 25 reasoning tokens too, because the model
+    really did decode them.
+
+    The clock is frozen deliberately. This pins what the stream assembles to; whether the guard
+    stays awake through it is the separate concern below, and conflating them would let one
+    assertion pass for the other's reason.
+    """
+    client = ModelClient(
+        ReplayBackend([load_bytes("reasoning_channel_stream.bytes")]), now=ScriptedClock(0.0)
+    )
+
+    # The exact prompt the capture was recorded with (see the fixtures README).
+    result = client.generate(
+        "You are a terse assistant.", "Reply with exactly: OK", build_budget()
+    )
+
+    assert result.text == "\n\nOK"
+    assert result.finish_reason == "stop"
+    assert result.completion_tokens == 29
+    assert result.tokens_estimated is False
+
+
+def test_reasoning_tokens_are_metered_against_the_token_cap() -> None:
+    """Thinking is cost, so the guard's cap must see it — the server already bills it.
+
+    Oracle: the recording carries 89 characters of reasoning against 4 of content, and the cap is
+    ``max_tokens * CHARS_PER_TOKEN`` = 20 x 4 = 80. Reasoning alone therefore crosses it and
+    content alone cannot come close, so a TOKEN_CAP verdict here can only mean the reasoning was
+    metered. Both numbers are counted off the fixture; neither comes from running the client.
+
+    Without this, a model that thinks for 30k tokens and answers in 200 is billed for 200 by
+    every bound the loop owns, and the one guarantee the derail guard exists to make — that
+    decode is bounded by construction — quietly stops holding for reasoning models.
+    """
+    client = ModelClient(
+        ReplayBackend([load_bytes("reasoning_channel_stream.bytes")]), now=ScriptedClock(0.0)
+    )
+
+    result = client.generate("prefix", "tail", build_budget(max_tokens=20))
+
+    assert result.derail_reason is DerailReason.TOKEN_CAP
+
+
+def test_a_model_streaming_only_reasoning_is_not_judged_silent() -> None:
+    """Reasoning is arrival: a model decoding chain-of-thought is working, not hung.
+
+    This is the defect that scored a working flagship model 0/7. The stall bound measures the gap
+    since the last *content*, and reasoning deltas never reached it, so seven benchmark cases
+    died at exactly 180.0s apiece while the server streamed normally throughout.
+
+    Oracle: the recording opens with 25 consecutive reasoning deltas before its first content
+    delta, and the frames are replayed one per chunk, as a transport delivers them. Under a clock
+    advancing 10s per reading, total elapsed passes the 180s bound long before that first content
+    arrives, while no single gap between deltas approaches it. A stream whose deltas keep landing
+    is not silent by the bound's own definition. The deadline is set far past the run so TIMEOUT
+    cannot stand in for the verdict, and the default 2048-token cap is far above the recording's
+    93 fed characters so TOKEN_CAP cannot either.
+    """
+    client = ModelClient(
+        FramedReplayBackend(load_bytes("reasoning_channel_stream.bytes")),
+        now=AdvancingClock(step=10.0),
+    )
+
+    result = client.generate("prefix", "tail", build_budget(timeout_s=100_000.0))
+
+    assert result.derail_reason is None
+    assert result.text == "\n\nOK"
 
 
 # --- Finish frame: the server's own terminal reason -------------------------------
@@ -420,6 +501,7 @@ def test_aborted_stream_releases_the_transport_before_generate_returns() -> None
 
     class RecordingBackend:
         def generate(self, prefix: str, tail: str, budget: Budget) -> Iterator[bytes]:
+            del prefix, tail, budget  # the stream is scripted, not derived from the request
             return recording_stream()
 
     client = ModelClient(RecordingBackend(), now=ScriptedClock(0.0))
