@@ -450,13 +450,17 @@ def test_a_stream_of_content_free_bytes_is_cut_at_the_stall_bound() -> None:
     chunk itself drives the guard, no bound is reachable: this is the shape that produced 1 content
     token in 447.2s under a 120s budget.
 
-    Oracle: the guard's stall bound is 180s of silence, so a clock reading 200s at the first chunk
-    is past it, and the deadline is set far beyond that so the verdict can only be STALLED. The
-    expected text is empty because a comment yields no delta — derived from the SSE contract, not
-    from running the decoder.
+    The frames arrive separately because that is the claim: a socket that KEPT delivering. One
+    chunk cannot state it — the first arrival only starts the silence clock, so a stream judged
+    from a single tick is indistinguishable from one that never began (``derail.py``).
+
+    Oracle: the guard's stall bound is 180s of silence measured from the first byte, so the second
+    keepalive landing 200s after the first is past it, and the deadline is set far beyond that so
+    the verdict can only be STALLED. The expected text is empty because a comment yields no delta —
+    derived from the SSE contract, not from running the decoder.
     """
     client = ModelClient(
-        ReplayBackend([b": keep-alive\n\n: keep-alive\n\n"]),
+        FramedReplayBackend(b": keep-alive\n\n: keep-alive\n\n"),
         now=ScriptedClock(0.0, 0.0, 0.0, 200.0),
     )
 

@@ -102,6 +102,27 @@ class BackendUnavailable(RuntimeError):
         super().__init__(f"model server unavailable at {url} (model {model!r}): {reason}")
 
 
+class GenerationStalled(RuntimeError):
+    """A reachable server accepted the request and then sent nothing within the read bound.
+
+    A task outcome, not a precondition failure, and the distinction is the whole point of the
+    class. A read timeout is only reachable *after* a connection succeeded and the request went
+    out, so the prerequisite ``BackendUnavailable`` reports — a server that is down, unreachable,
+    or answering non-2xx — was demonstrably met. Raising that here made one model's slow first
+    generation abort every remaining task in the run.
+
+    The client translates this into the same ``STALLED`` verdict the DerailGuard reaches on a
+    silence it *can* see. Both describe one thing — a generation that produced nothing — and the
+    only reason two layers report it is that the guard's clock advances on chunk arrival, so a
+    stretch with no chunks in it is the one gap the guard is structurally unable to observe.
+    """
+
+    def __init__(self, url: str, model: str, reason: str) -> None:
+        self.url = url
+        self.model = model
+        super().__init__(f"model server sent nothing at {url} (model {model!r}): {reason}")
+
+
 class HttpxBackend:
     """POSTs the OpenAI-compatible streaming request to a local server, yielding bytes.
 
@@ -136,6 +157,9 @@ class HttpxBackend:
                 boundary so a missing prerequisite server surfaces as a domain fault the caller can
                 act on, not a raw ``httpx`` exception (clients translate infra errors to domain
                 errors); the original error is preserved as ``__cause__``.
+            GenerationStalled: the server took the request and then sent no bytes within the read
+                bound. Split from the fault above because the two demand opposite responses: the
+                prerequisite is met, so the run continues with this one task recorded as stalled.
         """
         body: dict[str, object] = {
             **self._generation_params,
@@ -155,6 +179,11 @@ class HttpxBackend:
         except httpx.HTTPStatusError as exc:
             reason = f"HTTP {exc.response.status_code}"
             raise BackendUnavailable(self._url, self._model, reason) from exc
+        except httpx.ReadTimeout as exc:
+            # Checked before RequestError, which it subclasses: the connection and the request
+            # both succeeded, so this is the generation failing rather than the server missing.
+            reason = f"{type(exc).__name__}: {exc}"
+            raise GenerationStalled(self._url, self._model, reason) from exc
         except httpx.RequestError as exc:
             reason = f"{type(exc).__name__}: {exc}"
             raise BackendUnavailable(self._url, self._model, reason) from exc

@@ -34,7 +34,6 @@ import httpx
 
 from claude_local.backend import HttpxBackend
 from claude_local.client import ModelClient
-from claude_local.derail import STALL_TIMEOUT_S
 from claude_local.loop import AttemptProgress, Loop
 from claude_local.prompt import PromptBuilder
 from claude_local.runner import TestRunner
@@ -53,6 +52,16 @@ _BUNDLED_RULES_CARD = Path(__file__).parent / "rules_card.md"
 
 _HTTP_CONNECT_TIMEOUT_S = 10.0
 """Connect-phase cap for an owned client — reaching a local server is fast or it is down."""
+
+_HTTP_READ_TIMEOUT_S = 600.0
+"""Time-to-first-byte cap, and the DerailGuard's backstop for the one gap it cannot see.
+
+Twelve times the 50.1s a cold 24 GB model took to answer at the benchmark's own token budget, of
+which 9.1s was prefill and the rest a lazy weight load (``scripts/measure-first-byte.py``). The
+margin is not padding: that figure is a floor, measured with the page cache evicted but nothing
+else contending, and the same load exceeded 180s outright under the memory pressure of a sweep
+that had already cycled three models through the host.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,16 +231,27 @@ def _writable_subtree(impl_path: str) -> str:
 def _new_http_client() -> httpx.Client:
     """Create the keep-alive HTTP client for an owned-lifecycle call.
 
-    The read timeout IS the guard's stall bound, derived from it rather than restated, because the
-    two bound one fact from either side: the guard cuts a stream that delivers bytes but no
-    content, and the socket cuts one that delivers no bytes at all. Whichever notices first is
-    right, and neither can outlast the other into the silent hang both exist to stop.
+    The read timeout outlasts the guard's stall bound rather than equalling it, because the two
+    are not peers. The guard bounds a stream delivering bytes but no content and reports one task
+    stalled; the socket bounds a stream delivering no bytes at all, and reaches that verdict from
+    outside the guard's sight — ``_ticking`` runs the guard's clock on chunk arrival, so a stretch
+    with no chunks in it is precisely the gap the guard cannot judge. Made equal, the socket won
+    every race, including the ones the guard could see. Strictly greater, the guard decides
+    whatever it can observe and the socket only what it alone can.
 
-    It deliberately does not scale with the task's ``timeout_s``. That budget bounds how long a
-    PRODUCING generation may run, and pinning a silence bound to it made the transport wait longer
-    the more generous the task was — the opposite of what a hang detector should do.
+    Its magnitude clears the longest legitimate silence a healthy server can open, which is the
+    lazy weight load, not the prefill: ``model_server`` reports ready off ``/v1/models``, which
+    answers as soon as the port binds, while mlx_vlm faults the weights in on the first inference
+    request. A 24 GB model therefore spends minutes mid-request with nothing on the socket, and
+    the server's own prefill timings cannot see it — they start once the weights are resident.
+    ``scripts/measure-first-byte.py`` is the measurement; re-run it when a larger model joins the
+    registry, because this bound tracks the biggest weights in the catalog.
+
+    It still deliberately does not scale with the task's ``timeout_s``. That budget bounds how long
+    a PRODUCING generation may run, and pinning a silence bound to it made the transport wait
+    longer the more generous the task was — the opposite of what a hang detector should do.
     """
-    timeout = httpx.Timeout(STALL_TIMEOUT_S, connect=_HTTP_CONNECT_TIMEOUT_S)
+    timeout = httpx.Timeout(_HTTP_READ_TIMEOUT_S, connect=_HTTP_CONNECT_TIMEOUT_S)
     return httpx.Client(timeout=timeout)
 
 

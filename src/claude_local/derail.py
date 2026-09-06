@@ -52,13 +52,14 @@ WARMUP_CHARS = 200
 # Coarse chars-per-token proxy for the client-side decode backstop. The server's max_tokens
 # is the real hard bound (D-PERF-001); this proxy only needs to be chunking-invariant.
 CHARS_PER_TOKEN = 4
-# Seconds of no content before a generation counts as hung rather than working. Throughput, not
-# elapsed time, is what separates the two: a stream at 48 tok/s never approaches this bound
-# however long it runs, while both measured pathologies produced ONE content token in 447.2s and
-# 338s respectively. Those are time-to-FIRST-token stalls, so the bound must also clear the
-# slowest catalogued prefill; it is set between the two, cutting a hang at roughly half the time
-# it took to surface while leaving a slow model room to start. Prefill rate per model is the
-# measurement that would tighten this — the benchmark's own telemetry is where it comes from.
+# Seconds of no content, measured from the stream's FIRST BYTE, before a generation counts as
+# hung rather than working. Throughput, not elapsed time, is what separates the two: a stream at
+# 48 tok/s never approaches this bound however long it runs, while both measured pathologies
+# produced ONE content token in 447.2s and 338s respectively — bytes the whole time, content
+# almost never. Set between the two, cutting a hang at roughly half the time it took to surface.
+# It does NOT have to clear the slowest model's startup: that is time-to-first-BYTE, dominated by
+# a lazy weight load (50.1s cold on the catalog's largest model, against 9.1s of prefill within
+# it), and `_HTTP_READ_TIMEOUT_S` owns that window alone — see `scripts/measure-first-byte.py`.
 STALL_TIMEOUT_S = 180.0
 
 
@@ -82,11 +83,12 @@ class DerailGuard:
     def __init__(self, budget: Budget, now: Callable[[], float] = time.monotonic) -> None:
         self._now = now
         self._deadline = now() + budget.timeout_s
-        # Silence runs from construction, so a generation that never produces a first token is
-        # bounded by the same rule as one that stops mid-decode — the measured pathologies were
-        # all time-to-first-token, which a since-last-delta clock started on first content
-        # would never have reached.
-        self._last_content = now()
+        # None until the first bytes arrive: the wait before them is a lazy weight load the
+        # transport bounds, not silence this guard may attribute to the model. Armed on first
+        # ARRIVAL rather than first content, so a stream delivering keepalives and no tokens is
+        # still judged — that distinction is what the measured time-to-first-token pathologies
+        # turn on, and a clock started on first content would miss every one of them.
+        self._silence_since: float | None = None
         self._token_cap_chars = budget.max_tokens * CHARS_PER_TOKEN
         self._chars = 0  # total decoded chars fed — the token-cap proxy (chunking-invariant)
         self._pending: list[str] = []  # deltas buffered since the last completed line
@@ -129,18 +131,26 @@ class DerailGuard:
         clock_verdict = self._clock_bounds()
         if clock_verdict is not None:
             return clock_verdict
-        self._last_content = self._now()
+        self._silence_since = self._now()
         self._chars += len(text_delta)
         if self._chars > self._token_cap_chars:
             return self._trip(DerailReason.TOKEN_CAP)
         return self._scan_for_repetition(text_delta)
 
     def _clock_bounds(self) -> DerailReason | None:
-        """The two time-only bounds, in severity order: the total deadline, then silence."""
+        """The two time-only bounds, in severity order: the total deadline, then silence.
+
+        The deadline runs from construction because it is a BUDGET — how long this generation may
+        occupy the machine, waiting for a server included. Silence runs from first arrival because
+        it is a LIVENESS signal, and a stream that has produced nothing yet is not quiet, it is
+        unstarted. Sharing one origin conflated the two and made a cold weight load read as a hang.
+        """
         now = self._now()
         if now > self._deadline:
             return self._trip(DerailReason.TIMEOUT)
-        if now - self._last_content > STALL_TIMEOUT_S:
+        if self._silence_since is None:
+            self._silence_since = now  # first arrival — start the clock, never judge it
+        if now - self._silence_since > STALL_TIMEOUT_S:
             return self._trip(DerailReason.STALLED)
         return None
 

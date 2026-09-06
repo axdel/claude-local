@@ -27,7 +27,13 @@ from factories import (
 
 from claude_local import AttemptProgress
 from claude_local.backend import BackendUnavailable
-from claude_local.entrypoint import Outcome, _writable_subtree, implement
+from claude_local.derail import STALL_TIMEOUT_S
+from claude_local.entrypoint import (
+    _HTTP_READ_TIMEOUT_S,
+    Outcome,
+    _writable_subtree,
+    implement,
+)
 from claude_local.sandbox import sandbox_available
 from claude_local.types import Budget, Status
 
@@ -135,6 +141,21 @@ def _unreachable_client() -> httpx.Client:
     def _handler(request: httpx.Request) -> httpx.Response:
         del request
         raise httpx.ConnectError("connection refused")
+
+    return httpx.Client(transport=httpx.MockTransport(_handler))
+
+
+def _silent_server_client() -> httpx.Client:
+    """An httpx client whose transport accepts the request and then never answers.
+
+    ``ReadTimeout`` is only reachable *after* a connection succeeded and the request went out, so
+    this is a running server that produced no bytes — a generation that failed, not a prerequisite
+    that was never met.
+    """
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        del request
+        raise httpx.ReadTimeout("timed out")
 
     return httpx.Client(transport=httpx.MockTransport(_handler))
 
@@ -352,6 +373,51 @@ def test_implement_propagates_backend_unavailable_when_the_server_is_unreachable
 
     assert excinfo.value.url == "http://local/v1/chat/completions"
     assert excinfo.value.model == _MODEL
+    assert client.is_closed is False  # an injected client is the caller's — never closed
+
+
+# --- Unit: a silent server is one task's derail, not the run's fault ----------------
+
+
+def test_the_transport_read_bound_outlasts_the_guards_silence_bound() -> None:
+    """The guard must win the race it is documented to win; the transport is only its backstop.
+
+    Two bounds watch the same silent stream and they are not interchangeable. The guard's verdict
+    is a recorded per-case STALLED that the ladder moves on from; the transport's aborts the run.
+    Set equal, the transport won a whole benchmark ladder — a model whose server was healthy
+    produced no scorecard at all, having attempted zero of seven cases.
+
+    Oracle: ``_ticking`` calls ``tick`` only when a chunk arrives, so across a stretch carrying no
+    bytes the guard cannot run at all. The two therefore never actually tie, whatever the values,
+    and strict inequality is the only ordering under which the guard decides every gap it can see.
+    """
+    assert _HTTP_READ_TIMEOUT_S > STALL_TIMEOUT_S
+
+
+def test_implement_records_a_silent_server_as_a_derail_not_a_harness_fault() -> None:
+    """A server that answers nothing failed this generation; it did not fail the prerequisite.
+
+    ``BackendUnavailable`` means the loop's precondition is unmet — nothing is listening — so it
+    propagates and the caller stops. A read timeout cannot mean that: it is reachable only after a
+    connection succeeded and the request was sent. Treating the two alike is what turned one slow
+    model's first case into zero results for all seven.
+
+    Oracle: the outcome type is the same one any other bounded-decode verdict produces, and the
+    injected client stays the caller's. Deriving from the fault taxonomy in ``BackendUnavailable``
+    itself — "a server that is down, unreachable, or returning a non-2xx status" — none of which
+    this is.
+    """
+    spec = build_task_spec(
+        impl_path="src/adder.py",
+        test_text=_ADDER_ORACLE,
+        expected_tests=2,
+        budget=build_budget(max_attempts=1),
+    )
+    client = _silent_server_client()
+
+    outcome = implement(spec, base_url="http://local", model=_MODEL, http_client=client)
+
+    assert outcome.status is Status.DERAILED
     assert client.is_closed is False  # an injected client is the caller's — never closed
 
 

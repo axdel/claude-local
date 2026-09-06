@@ -210,6 +210,44 @@ def test_silence_is_not_yet_a_stall_at_exactly_the_bound() -> None:
     assert guard.tick() is None
 
 
+def test_the_wait_for_the_first_byte_is_not_judged_as_silence() -> None:
+    """A slow start is the transport's window; this guard judges only silence it can attribute.
+
+    Oracle: the wait before the first byte is a lazy weight load, not a model going quiet.
+    ``model_server`` reports ready off ``/v1/models``, which answers as soon as the port binds,
+    while mlx_vlm faults the weights in on the first inference request — measured on the catalog's
+    largest model (24 GB) at the benchmark's own token budget as 50.1s to first byte with a cold
+    page cache, of which only 9.1s was prefill (``scripts/measure-first-byte.py``). That load
+    exceeded this bound outright under the memory pressure of a full sweep, so a guard whose clock
+    ran from construction would report a model that was loading normally as stalled — the same
+    false verdict the reasoning-channel fix removed, re-entering through the clock instead of the
+    decoder.
+    """
+    clock = FakeClock(0.0)
+    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+
+    clock.value = STALL_TIMEOUT_S * 2  # the whole load, twice over — still nothing has arrived
+
+    assert guard.tick() is None, "the first byte starts the silence clock, it cannot end one"
+
+
+def test_silence_is_measured_from_the_first_byte_once_the_stream_has_started() -> None:
+    """Arming on first arrival delays the clock; it does not disable it.
+
+    Oracle: the bound is ``STALL_TIMEOUT_S`` measured from the first byte, so a gap that long
+    after arrival trips even though nothing before arrival counted. This is the other half of the
+    contract — a guard that armed and then never judged would let the 447.2s pathology through.
+    """
+    clock = FakeClock(0.0)
+    guard = DerailGuard(build_budget(timeout_s=1_000_000.0, max_tokens=1_000_000), now=clock)
+
+    clock.value = STALL_TIMEOUT_S * 2
+    assert guard.tick() is None, "arrival arms the clock"
+    clock.value += STALL_TIMEOUT_S + 0.01
+
+    assert guard.tick() is DerailReason.STALLED
+
+
 def test_a_stream_that_keeps_producing_survives_far_past_the_stall_bound() -> None:
     """Total elapsed time does not stall a producing stream — only silence does.
 

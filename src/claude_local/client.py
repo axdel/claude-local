@@ -27,7 +27,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from claude_local.derail import CHARS_PER_TOKEN, DerailGuard
+from claude_local.backend import GenerationStalled
+from claude_local.derail import CHARS_PER_TOKEN, DerailGuard, DerailReason
 from claude_local.harmony import assistant_content
 from claude_local.sse import Delta, Error, Finish, Reasoning, Usage, decode_sse
 
@@ -151,28 +152,35 @@ class ModelClient:
         fault: str | None = None
         finish_reason: str | None = None
         chunks = self._ticking(self._backend.generate(prefix, tail, budget), guard)
-        for event in decode_sse(chunks):
-            if isinstance(event, Delta | Reasoning):
-                # Reasoning is metered and watched exactly like content — it is decode the model
-                # really performed, which the server's own usage trailer bills — but it is never
-                # appended to the reply, or the file parser would read chain-of-thought as source.
-                if isinstance(event, Delta):
-                    parts.append(event.text)
-                chars += len(event.text)
-                if self._on_delta is not None:  # before the verdict, so a derail's cause is seen
-                    self._on_delta(event.text)
-                derail_reason = guard.feed(event.text)
-                if derail_reason is not None:
-                    break  # abort early — stop decoding the moment a bound trips
-            elif isinstance(event, Usage):
-                server_tokens = event.completion_tokens
-            elif isinstance(event, Finish):
-                finish_reason = event.reason  # the server's own terminal reason (stop / length)
-            elif isinstance(event, Error):
-                # An upstream error frame is terminal: surface its message and stop decoding, so
-                # content streamed after it is never read (a server fault, not a derail).
-                fault = event.message
-                break
+        try:
+            for event in decode_sse(chunks):
+                if isinstance(event, Delta | Reasoning):
+                    # Reasoning is metered and watched exactly like content — it is decode the
+                    # model really performed, which the server's own usage trailer bills — but it
+                    # is never appended to the reply, or the file parser would read
+                    # chain-of-thought as source.
+                    if isinstance(event, Delta):
+                        parts.append(event.text)
+                    chars += len(event.text)
+                    if self._on_delta is not None:  # before the verdict, so a derail's cause shows
+                        self._on_delta(event.text)
+                    derail_reason = guard.feed(event.text)
+                    if derail_reason is not None:
+                        break  # abort early — stop decoding the moment a bound trips
+                elif isinstance(event, Usage):
+                    server_tokens = event.completion_tokens
+                elif isinstance(event, Finish):
+                    finish_reason = event.reason  # the server's own terminal reason (stop/length)
+                elif isinstance(event, Error):
+                    # An upstream error frame is terminal: surface its message and stop decoding,
+                    # so content streamed after it is never read (a server fault, not a derail).
+                    fault = event.message
+                    break
+        except GenerationStalled:
+            # The transport reporting the one silence the guard cannot: with no chunk ever
+            # arriving, tick never ran, so there is no latched verdict to read below. Whatever
+            # bytes did arrive stay in parts and chars, so a partial decode is still metered.
+            derail_reason = DerailReason.STALLED
         seconds = self._now() - start
         # A stall trips in the chunk layer, which ends the stream without ever reaching an event,
         # so the loop above has no verdict to report. Reading the latch is what makes a generation
