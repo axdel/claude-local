@@ -54,7 +54,14 @@ class BenchmarkProgress(Protocol):
 
 
 class BenchmarkDriver:
-    """Assemble and run one benchmark case while owning all scratch worktree children."""
+    """Assemble and run one benchmark case while owning all scratch worktree children.
+
+    ``rules_card_path`` selects the rules card every case is run under, defaulting to the bundled
+    one. It is a benchmark VARIABLE rather than a fixed asset: the card is the largest span of the
+    prompt, so comparing two cards on one model is as legitimate an experiment as comparing two
+    models on one card, and neither comparison is readable unless the card is named. Whichever
+    card is chosen, its digest travels back on every economy record and onto the scorecard.
+    """
 
     def __init__(
         self,
@@ -63,11 +70,13 @@ class BenchmarkDriver:
         model: str,
         generation_params: Mapping[str, object] | None = None,
         scratch_root: Path | None = None,
+        rules_card_path: Path | None = None,
     ) -> None:
         self._base_url = base_url
         self._model = model
         self._generation_params = dict(generation_params or {})
         self._scratch_root = scratch_root
+        self._rules_card_path = rules_card_path
 
     def run_case(
         self,
@@ -100,6 +109,7 @@ class BenchmarkDriver:
                 model=self._model,
                 generation_params=self._generation_params,
                 worktree=worktree,
+                rules_card_path=self._rules_card_path,
                 http_client=http_client,
                 on_delta=on_delta,
                 on_attempt=on_attempt,
@@ -126,6 +136,7 @@ def run_cases(
     model: str,
     generation_params: Mapping[str, object] | None = None,
     scratch_root: Path | None = None,
+    rules_card_path: Path | None = None,
     http_client: httpx.Client | None = None,
     progress: BenchmarkProgress | None = None,
 ) -> list[CaseResult]:
@@ -146,6 +157,9 @@ def run_cases(
         generation_params: Optional generation parameters applied uniformly across the benchmark.
         scratch_root: Parent directory for each case's disposable worktree; a managed system temp
             directory when omitted.
+        rules_card_path: The rules card every case runs under; the bundled card when omitted. One
+            card per benchmark, because a scorecard mixing two is not a comparison —
+            ``score_cases`` refuses such a run rather than labelling it with one of the two.
         http_client: An HTTP client shared across every case. When omitted, each case creates and
             closes its own; an injected client is the caller's and is never closed here.
         progress: Optional live observer. Each event fires as it happens, never batched at the
@@ -159,6 +173,7 @@ def run_cases(
         model=model,
         generation_params=generation_params,
         scratch_root=scratch_root,
+        rules_card_path=rules_card_path,
     )
     total = len(cases)
     results: list[CaseResult] = []

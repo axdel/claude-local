@@ -47,9 +47,55 @@ def _spec(
 def _card(
     tmp_path: Path, content: str = "# Rules\nReturn the complete implementation file.\n"
 ) -> Path:
+    # Created on demand so a caller can pass a fresh subdirectory per card, which is what a test
+    # comparing two DIFFERENT cards needs — one directory would have the second overwrite the first
+    tmp_path.mkdir(parents=True, exist_ok=True)
     card = tmp_path / "card.md"
     card.write_text(content, encoding="utf-8")
     return card
+
+
+def test_card_digest_differs_when_the_card_content_differs(tmp_path: Path) -> None:
+    """Two cards that would send different bytes to the model must not share a digest.
+
+    This is the whole point of stamping it: a scorecard comparing two cards is only readable if
+    the two runs are distinguishable, so a digest that collapsed distinct cards would silently
+    label an A/B as a repeat of one arm.
+    """
+    first = PromptBuilder(_card(tmp_path / "a", "# Rules\nExtract the shared step.\n"))
+    second = PromptBuilder(_card(tmp_path / "b", "# Rules\nInline the shared step.\n"))
+
+    assert first.card_digest != second.card_digest
+
+
+def test_card_digest_is_identical_for_identical_content_at_different_paths(
+    tmp_path: Path,
+) -> None:
+    """The digest is over the BYTES, so the same card at two paths is the same card.
+
+    ``implement`` takes a ``rules_card_path`` override, so a path-derived identity would report a
+    card change whenever a file moved — and would report no change when a path was repointed at
+    entirely different content, which is the failure that matters.
+    """
+    content = "# Rules\nReturn the complete implementation file.\n"
+    at_one_path = PromptBuilder(_card(tmp_path / "first", content))
+    at_another_path = PromptBuilder(_card(tmp_path / "second", content))
+
+    assert at_one_path.card_digest == at_another_path.card_digest
+
+
+def test_card_digest_ignores_trailing_newlines_the_prefix_strips(tmp_path: Path) -> None:
+    """Cards differing only in trailing newlines produce identical prompts, so one digest.
+
+    ``__init__`` rstrips the card before it is ever emitted, so those bytes reach no model. A
+    digest taken before that strip would report two distinct cards for one prompt.
+    """
+    bare = PromptBuilder(_card(tmp_path / "bare", "# Rules\nDerive, do not restate.\n"))
+    padded = PromptBuilder(_card(tmp_path / "padded", "# Rules\nDerive, do not restate.\n\n\n"))
+
+    spec = _spec()
+    assert bare.card_digest == padded.card_digest
+    assert bare.stable_prefix(spec) == padded.stable_prefix(spec)
 
 
 def _score(passed: int, failed: int, errors: int, collected: int, expected: int) -> TestScore:

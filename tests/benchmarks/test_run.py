@@ -292,6 +292,7 @@ def test_print_scorecard_surfaces_a_faulted_case_and_a_capped_case(
     """
     scorecard = Scorecard(
         model="local/candidate",
+        rules_card_digest="0123456789ab",
         cases=(
             CaseScore(case_id="01_scaffold", status=Status.DONE, attempts=2, length_capped=1),
             CaseScore(

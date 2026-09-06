@@ -112,6 +112,7 @@ def build_local_economy_record(**overrides: object) -> LocalEconomyRecord:
     """
     fields: dict[str, object] = {
         "model": "test/model",
+        "rules_card_digest": "0123456789ab",
         "total_calls": 1,
         "total_completion_tokens": 40,
         "total_model_seconds": 2.0,

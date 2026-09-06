@@ -312,6 +312,7 @@ class Loop:
         status = _terminal_status(final, scored=last_attempt is not None, best_score=best_score)
         record = LocalEconomyRecord.from_run(
             model=self._model,
+            rules_card_digest=self._prompt.card_digest,
             results=[*planning, *results],  # the plan burned real decode; the loop pays for it
             total_calls=self._client.total_calls,
             attempts=len(results),  # but planning is not an attempt at the implementation

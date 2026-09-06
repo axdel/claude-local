@@ -136,6 +136,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "own default a server flag cannot countermand."
         ),
     )
+    parser.add_argument(
+        "--rules-card",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Rules card to run every case under, replacing the bundled one. The card is the "
+            "largest span of the prompt, so running two cards against one model is a real "
+            "experiment; the card's digest is stamped on the scorecard either way."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -230,6 +241,7 @@ class ConsoleProgress:
 def _print_scorecard(scorecard: Scorecard) -> None:
     """Print the per-case table and benchmark totals to stderr — the human-readable verdict."""
     print(f"model: {scorecard.model}", file=sys.stderr)
+    print(f"rules card: {scorecard.rules_card_digest}", file=sys.stderr)
     for case in scorecard.cases:
         line = f"  {case.case_id:<20} {case.status.value:<10} {case.attempts} attempt(s)"
         if case.length_capped:
@@ -292,6 +304,7 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
             http_client=http_client,
             progress=ConsoleProgress(stream_text=args.stream),
             generation_params=args.generation_params,
+            rules_card_path=args.rules_card,
         )
     except (BackendUnavailable, SandboxUnavailable, OracleError) as fault:
         print(f"error: benchmark harness fault: {fault}", file=sys.stderr)

@@ -205,6 +205,38 @@ def test_names_lists_the_catalog_skipping_comments_and_the_header(tmp_path: Path
     assert registry.names() == ("gpt-oss-20b", "Qwen3.8-27B", "Gemma4-31B")
 
 
+def test_servable_names_keeps_only_the_rows_whose_weights_are_in_the_store(
+    tmp_path: Path,
+) -> None:
+    """Oracle: 2 of the fixture's 3 rows have a store directory, so exactly those 2 are servable.
+
+    The middle row is the one left unpulled, so a filter that returned a prefix or a suffix of the
+    catalog — rather than the actually-present subset — would not survive this arrangement.
+    """
+    registry = _registry(tmp_path, present=("gpt-oss-20b", "Gemma4-31B"))
+
+    assert registry.servable_names() == ("gpt-oss-20b", "Gemma4-31B")
+
+
+def test_servable_names_preserves_catalog_order_not_store_order(tmp_path: Path) -> None:
+    """Oracle: the catalog declares Qwen3.8-27B before Gemma4-31B, so servable order follows it.
+
+    The store is created in the opposite order below. A filesystem listing would return whatever
+    order the directory yields, which is not the catalog's — and the sweep reports in catalog
+    order.
+    """
+    registry = _registry(tmp_path, present=("Gemma4-31B", "Qwen3.8-27B"))
+
+    assert registry.servable_names() == ("Qwen3.8-27B", "Gemma4-31B")
+
+
+def test_servable_names_is_empty_when_the_store_holds_nothing(tmp_path: Path) -> None:
+    """Oracle: no weights pulled means no model can be served, so the catalog contributes none."""
+    registry = _registry(tmp_path)
+
+    assert registry.servable_names() == ()
+
+
 def test_a_row_with_the_wrong_column_count_is_refused(tmp_path: Path) -> None:
     """A short row would silently mis-assign every column after the missing one.
 

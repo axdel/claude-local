@@ -2,10 +2,17 @@
 
 claude-local writes only the local half; the orchestrator half and the shared correlation keys are
 owned by the driving orchestrator (D-TELEMETRY-001). ``LocalEconomyRecord`` is that half: which
-model ran, how many logical calls and loop attempts it took, how many completion tokens it decoded
-over how many model-seconds, the mean decode rate, whether any count was estimated, how many
-generations the server capped at its own token limit, and the final status. The telemetry module is
-its single writer (RESOURCE_OWNERSHIP).
+model ran under which rules card, how many logical calls and loop attempts it took, how many
+completion tokens it decoded over how many model-seconds, the mean decode rate, whether any count
+was estimated, how many generations the server capped at its own token limit, and the final status.
+The telemetry module is its single writer (RESOURCE_OWNERSHIP).
+
+``rules_card_digest`` makes the card a named variable of the run rather than an unstated constant.
+The card is the largest single span of the prompt and ``implement`` accepts an override for it, so
+two records are comparable only when they agree on it — a token total measured under one card says
+nothing about a run under another. The digest is carried from ``PromptBuilder``, the only reader of
+the card bytes, and never re-derived from a path here: a path identifies a card only until someone
+repoints it.
 
 ``from_run`` AGGREGATES a timeline of per-attempt ``GenerationResult`` (client token usage
 and timing) into those scalars. Two counts are deliberately NOT derived from the timeline.
@@ -68,6 +75,7 @@ class LocalEconomyRecord:
     """
 
     model: str
+    rules_card_digest: str
     total_calls: int
     total_completion_tokens: int
     total_model_seconds: float
@@ -82,6 +90,7 @@ class LocalEconomyRecord:
         cls,
         *,
         model: str,
+        rules_card_digest: str,
         results: Sequence[GenerationResult],
         total_calls: int,
         attempts: int,
@@ -97,6 +106,7 @@ class LocalEconomyRecord:
         mean = total_completion_tokens / total_model_seconds if total_model_seconds > 0 else None
         return cls(
             model=model,
+            rules_card_digest=rules_card_digest,
             total_calls=total_calls,
             total_completion_tokens=total_completion_tokens,
             total_model_seconds=total_model_seconds,
@@ -122,6 +132,7 @@ class LocalEconomyRecord:
         """JSON-ready mapping of the record; ``status`` becomes its lowercase value."""
         return {
             "model": self.model,
+            "rules_card_digest": self.rules_card_digest,
             "total_calls": self.total_calls,
             "total_completion_tokens": self.total_completion_tokens,
             "total_model_seconds": self.total_model_seconds,

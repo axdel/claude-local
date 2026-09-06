@@ -183,6 +183,30 @@ class ModelRegistry:
         """Every catalogued model name, in the order the catalog declares them."""
         return tuple(row[0] for row in self._rows())
 
+    def servable_names(self) -> tuple[str, ...]:
+        """The catalogued names whose weights are on disk, in catalog order.
+
+        A catalogued row is a claim about what exists UPSTREAM; only the store proves what is on
+        disk. This registry holds both, so which of the two a name satisfies is its fact to answer
+        — a caller that re-derived it would need its own store path and its own idea of what
+        "present" means, giving one fact two owners.
+
+        A name absent from the store is omitted rather than raised on: the question here is which
+        models a sweep can run, and one unpulled row is not an error in the others. Callers that
+        want a specific model still go through ``resolve``, which raises ``ModelNotPresent`` and
+        says where it looked.
+        """
+        return tuple(name for name in self.names() if self._weights_path(name).is_dir())
+
+    def _weights_path(self, name: str) -> Path:
+        """Where ``name``'s weights live in the store — the one place that layout is written.
+
+        Both ``servable_names`` and ``resolve`` ask whether a model is present, and they must agree
+        on where they looked: a second expression of the store layout would let the sweep call a
+        model servable that ``resolve`` then refuses.
+        """
+        return self.store_root / name
+
     def resolve(self, name: str) -> ResolvedModel:
         """Resolve a catalogued name to everything needed to serve it.
 
@@ -200,7 +224,7 @@ class ModelRegistry:
         for row in self._rows():
             if row[0] != name:
                 continue
-            path = self.store_root / name
+            path = self._weights_path(name)
             if not path.is_dir():
                 raise ModelNotPresent(
                     f"{name} is catalogued but absent from the store at {path} — pull it first"

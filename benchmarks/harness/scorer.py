@@ -58,6 +58,7 @@ class Scorecard:
     """
 
     model: str
+    rules_card_digest: str
     cases: tuple[CaseScore, ...]
     total_completion_tokens: int
     total_model_seconds: float
@@ -89,6 +90,7 @@ class Scorecard:
         """JSON-ready mapping; each case's ``status`` becomes its lowercase enum value."""
         return {
             "model": self.model,
+            "rules_card_digest": self.rules_card_digest,
             "cases_passed": self.cases_passed,
             "cases_total": self.cases_total,
             "total_completion_tokens": self.total_completion_tokens,
@@ -116,6 +118,22 @@ class Scorecard:
         return case_dict
 
 
+def _held_constant(observed: set[str], subject: str) -> str:
+    """The single value in ``observed``, or a ``ValueError`` naming what varied instead.
+
+    A scorecard is a comparison, and a comparison is sound only where everything but the axis
+    under test was held fixed. Two such conditions exist — one model, one rules card — and both
+    fail the same way: a mixed run silently produces a card labelled with whichever value the
+    reducer happened to pick. Naming the offending set is what turns that into a caller error.
+    """
+    if len(observed) > 1:
+        raise ValueError(
+            f"a scorecard describes one {subject}, but the benchmark ran {sorted(observed)}"
+        )
+    (value,) = observed
+    return value
+
+
 def score_cases(results: Sequence[CaseResult]) -> Scorecard:
     """Reduce the benchmark's per-case results to one comparable scorecard.
 
@@ -137,12 +155,10 @@ def score_cases(results: Sequence[CaseResult]) -> Scorecard:
     if not results:
         raise ValueError("cannot score an empty benchmark")
     records = [result.outcome.record for result in results]
-    models = {record.model for record in records}
-    if len(models) > 1:
-        raise ValueError(
-            f"a scorecard describes one model, but the benchmark ran {sorted(models)}"
-        )
-    (model,) = models
+    model = _held_constant({record.model for record in records}, "model")
+    rules_card_digest = _held_constant(
+        {record.rules_card_digest for record in records}, "rules card"
+    )
     total_completion_tokens = sum(record.total_completion_tokens for record in records)
     total_model_seconds = sum((record.total_model_seconds for record in records), 0.0)
     mean = total_completion_tokens / total_model_seconds if total_model_seconds > 0 else None
@@ -158,6 +174,7 @@ def score_cases(results: Sequence[CaseResult]) -> Scorecard:
     )
     return Scorecard(
         model=model,
+        rules_card_digest=rules_card_digest,
         cases=cases,
         total_completion_tokens=total_completion_tokens,
         total_model_seconds=total_model_seconds,

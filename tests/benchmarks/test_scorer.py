@@ -26,6 +26,7 @@ def _case_result(
     completion_tokens: int,
     model_seconds: float,
     model: str = "local/candidate-7b",
+    rules_card_digest: str = "0123456789ab",
     fault: str | None = None,
     length_capped: int = 0,
 ) -> CaseResult:
@@ -37,6 +38,7 @@ def _case_result(
     """
     record = build_local_economy_record(
         model=model,
+        rules_card_digest=rules_card_digest,
         total_completion_tokens=completion_tokens,
         total_model_seconds=model_seconds,
         status=status,
@@ -176,6 +178,50 @@ def test_score_cases_rejects_a_mixed_model_benchmark() -> None:
         score_cases(cases)
 
 
+def test_score_cases_rejects_a_benchmark_that_changed_rules_card_mid_run() -> None:
+    """One scorecard describes one rules card; two cards in one run is not a comparison.
+
+    The card is the largest span of the prompt, so a run whose cases saw different cards has no
+    single configuration to attribute its token total to. Left unchecked the reducer would label
+    the card with whichever digest the set happened to yield — a mislabelled result is worse than
+    a refused one, because nothing downstream can detect it.
+    """
+    cases = [
+        _case_result("a", Status.DONE, attempts=1, completion_tokens=10, model_seconds=1.0),
+        _case_result(
+            "b",
+            Status.DONE,
+            attempts=1,
+            completion_tokens=20,
+            model_seconds=1.0,
+            rules_card_digest="ffffffffffff",
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="one rules card"):
+        score_cases(cases)
+
+
+def test_score_cases_carries_the_rules_card_digest_onto_the_scorecard() -> None:
+    """Oracle: every record names one card, so the scorecard names that same card.
+
+    Without this the scorecard could not say which card produced it, and two sweeps under two
+    cards would be indistinguishable once written to disk.
+    """
+    cases = [
+        _case_result(
+            "a",
+            Status.DONE,
+            attempts=1,
+            completion_tokens=10,
+            model_seconds=1.0,
+            rules_card_digest="abcdef012345",
+        ),
+    ]
+
+    assert score_cases(cases).rules_card_digest == "abcdef012345"
+
+
 def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
     """The written JSON reloads to the hand-derived mapping, under a scorecard-prefixed name."""
     scorecard = score_cases(_mixed_cases())
@@ -187,6 +233,7 @@ def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
     assert path.suffix == ".json"
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "model": "local/candidate-7b",
+        "rules_card_digest": "0123456789ab",
         "cases_passed": 2,
         "cases_total": 3,
         "total_completion_tokens": 400,

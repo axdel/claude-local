@@ -16,6 +16,17 @@ cannot load, times out, or crashes the harness costs its own row in the summary 
 a sweep exists to produce a verdict per model, and losing eight results to the ninth's bad weights
 would defeat it.
 
+**A model with no weights is not even a row.** The catalog claims what exists upstream; the store
+proves what is on disk. A catalogued model that was never pulled — or was deleted to reclaim
+space — is announced and skipped before it costs a subprocess, so the sweep's exit code keeps
+meaning "every model that could be measured was". Naming a model with ``--only`` opts out of that
+filter: an explicit request for absent weights fails loudly rather than vanishing from the run.
+
+``--rules-card`` runs the whole sweep under a card other than the bundled one. The card is the
+largest span of the prompt, so sweeping the catalog twice under two cards is the experiment that
+says which card a given model is actually better under; each scorecard carries its card's digest,
+so the two sweeps stay distinguishable after the fact.
+
 Weights live outside any worktree, so ``CLAUDE_LOCAL_MODELS`` must point at the store. No path is
 hardcoded here: where the store lives is the registry's fact, not this script's.
 
@@ -52,26 +63,12 @@ _SCORECARD_DIR = _REPO_ROOT / "benchmarks" / "scorecards"
 _STARTUP_TIMEOUT_S = 900.0
 
 
-def _catalogued_names(registry: ModelRegistry) -> list[str]:
-    """Every model the catalog declares, in file order — which is the order the sweep reports in.
-
-    Read off the registry's own file rather than a hardcoded list, so a model added to the catalog
-    is swept without touching this script.
-    """
-    lines = [
-        line
-        for line in registry.registry_path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
-    return [line.split("|", 1)[0] for line in lines[1:]]  # lines[0] is the NAME|REPO|... header
-
-
 def _scorecards() -> set[Path]:
     """Every scorecard on disk now — the before/after sets whose difference is the verdict."""
     return set(_SCORECARD_DIR.glob("*.json"))
 
 
-def _bench_one(name: str) -> tuple[bool, float]:
+def _bench_one(name: str, rules_card: Path | None) -> tuple[bool, float]:
     """Run the per-model chain for ``name``. Returns (a scorecard appeared, wall-clock seconds).
 
     The verdict is "a new scorecard exists", never the exit code. Exit 1 is ambiguous by design:
@@ -84,17 +81,16 @@ def _bench_one(name: str) -> tuple[bool, float]:
     """
     before = _scorecards()
     started = time.monotonic()
-    subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            str(_PER_MODEL_SCRIPT),
-            name,
-            "--startup-timeout",
-            str(_STARTUP_TIMEOUT_S),
-        ],
-        cwd=_REPO_ROOT,
-        check=False,
-    )
+    command = [
+        sys.executable,
+        str(_PER_MODEL_SCRIPT),
+        name,
+        "--startup-timeout",
+        str(_STARTUP_TIMEOUT_S),
+    ]
+    if rules_card is not None:
+        command.extend(("--rules-card", str(rules_card)))
+    subprocess.run(command, cwd=_REPO_ROOT, check=False)  # noqa: S603
     return bool(_scorecards() - before), time.monotonic() - started
 
 
@@ -102,9 +98,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--only", action="append", metavar="NAME", help="Sweep just this model.")
     parser.add_argument("--skip", action="append", metavar="NAME", help="Exclude this model.")
+    parser.add_argument(
+        "--rules-card",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Rules card every model runs under, replacing the bundled one.",
+    )
     args = parser.parse_args(argv)
 
-    names = args.only or _catalogued_names(ModelRegistry.default())
+    # --only is the caller naming models outright, so it is NOT filtered against the store: a model
+    # asked for by name and missing its weights must fail loudly in the per-model script, never be
+    # silently dropped from a sweep the caller believes ran it.
+    names = args.only or list(ModelRegistry.default().servable_names())
     names = [name for name in names if name not in set(args.skip or ())]
 
     print(f"[sweep] {len(names)} model(s): {', '.join(names)}", file=sys.stderr, flush=True)
@@ -112,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     results: list[tuple[str, bool, float]] = []
     for index, name in enumerate(names, start=1):
         print(f"\n[sweep] === {index}/{len(names)}  {name} ===", file=sys.stderr, flush=True)
-        scored, seconds = _bench_one(name)
+        scored, seconds = _bench_one(name, args.rules_card)
         results.append((name, scored, seconds))
 
     print("\n[sweep] === complete ===", file=sys.stderr)

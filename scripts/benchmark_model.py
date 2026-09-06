@@ -61,6 +61,7 @@ def benchmark_command(
     stream: bool,
     only: Sequence[str],
     plan_first: bool = False,
+    rules_card: Path | None = None,
 ) -> list[str]:
     """Build the documented benchmark invocation for a server that is already up.
 
@@ -78,6 +79,7 @@ def benchmark_command(
         stream: Whether to also print the model's raw text as it decodes.
         plan_first: Whether each case spends one generation on a plan before implementing.
         only: Case ids to run, forwarded one flag each because the benchmark appends them.
+        rules_card: Rules card to run under; ``None`` forwards no flag, leaving the bundled card.
 
     Returns:
         The argv, ready for ``subprocess.run``. Never shell-interpreted.
@@ -102,6 +104,8 @@ def benchmark_command(
         command.append("--stream")
     if plan_first:
         command.append("--plan-first")
+    if rules_card is not None:
+        command.extend(("--rules-card", str(rules_card)))
     for case_id in only:
         # Forwarded, never checked here: the benchmark loads the ladder, so it is the only thing
         # that knows which ids exist, and a second validator would drift from it.
@@ -140,6 +144,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Spend one generation per case on a plan, frozen into the prefix. Off by default.",
     )
+    parser.add_argument(
+        "--rules-card",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Rules card to run under, replacing the bundled one. Its digest lands on the card.",
+    )
     args = parser.parse_args(argv)
 
     resolved = ModelRegistry.default().resolve(args.model)
@@ -170,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             stream=args.stream,
             only=args.only or (),
             plan_first=args.plan_first,
+            rules_card=args.rules_card,
         )
         done = subprocess.run(command, cwd=_REPO_ROOT, check=False)  # noqa: S603
 

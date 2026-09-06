@@ -31,6 +31,7 @@ def _record(**overrides: object) -> LocalEconomyRecord:
     # write cannot survive the round-trip equality — 3 == 3.0 would mask a calls/seconds swap.
     fields: dict[str, object] = {
         "model": "mlx-community/Qwen2.5-Coder-7B",
+        "rules_card_digest": "cafebabe1234",
         "total_calls": 3,
         "total_completion_tokens": 300,
         "total_model_seconds": 6.0,
@@ -58,7 +59,12 @@ def _from_run(
     fixed to ``"m"``; the lone test that asserts model is carried through constructs directly.
     """
     return LocalEconomyRecord.from_run(
-        model="m", results=results, total_calls=total_calls, attempts=attempts, status=status
+        model="m",
+        rules_card_digest="d",
+        results=results,
+        total_calls=total_calls,
+        attempts=attempts,
+        status=status,
     )
 
 
@@ -142,13 +148,21 @@ def test_total_calls_is_the_client_count_not_the_timeline_length() -> None:
     assert record.total_calls == 3
 
 
-def test_model_attempts_and_status_are_carried_through() -> None:
-    # attempts (5) is deliberately != total_calls (1) so a field-swap mutant cannot pass.
+def test_model_card_attempts_and_status_are_carried_through() -> None:
+    # attempts (5) is deliberately != total_calls (1) so a field-swap mutant cannot pass. The card
+    # digest is carried verbatim from the prompt builder and never derived here, so an aggregation
+    # that dropped or recomputed it would show up as a mismatch on this exact assertion.
     results = [build_generation_result()]
     record = LocalEconomyRecord.from_run(
-        model="qwen", results=results, total_calls=1, attempts=5, status=Status.DERAILED
+        model="qwen",
+        rules_card_digest="9f86d081884c",
+        results=results,
+        total_calls=1,
+        attempts=5,
+        status=Status.DERAILED,
     )
     assert record.model == "qwen"
+    assert record.rules_card_digest == "9f86d081884c"
     assert record.attempts == 5
     assert record.status is Status.DERAILED
 
@@ -165,6 +179,7 @@ def test_write_round_trips_every_field_as_json_and_returns_the_path(tmp_path: Pa
     assert path.parent == tmp_path
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "model": "mlx-community/Qwen2.5-Coder-7B",
+        "rules_card_digest": "cafebabe1234",
         "total_calls": 3,
         "total_completion_tokens": 300,
         "total_model_seconds": 6.0,

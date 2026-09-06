@@ -125,6 +125,46 @@ def test_stream_is_forwarded_only_when_asked(stream: bool, expected: bool, tmp_p
     assert ("--stream" in command) is expected
 
 
+def test_a_chosen_rules_card_is_forwarded_as_a_path(tmp_path: Path) -> None:
+    """``--rules-card`` reaches the benchmark as the path it was given.
+
+    Oracle: ``benchmarks/run.py`` declares ``--rules-card`` as a ``Path``-typed valued flag. A
+    dropped one is the silent failure this module exists to catch — the benchmark would run
+    perfectly well on the bundled card and produce a scorecard labelled with the wrong digest.
+    """
+    card = tmp_path / "experimental_card.md"
+
+    command = _script().benchmark_command(
+        base_url="http://localhost:8080",
+        served="replay/golden",
+        out=tmp_path,
+        generation_params={},
+        stream=False,
+        only=(),
+        rules_card=card,
+    )
+
+    assert command[command.index("--rules-card") + 1] == str(card)
+
+
+def test_no_chosen_rules_card_omits_the_flag_entirely(tmp_path: Path) -> None:
+    """Omitting the flag is what leaves the bundled card in force.
+
+    Passing ``--rules-card`` with an empty or ``"None"`` value would make the benchmark open a
+    path that does not exist, turning a default into a crash.
+    """
+    command = _script().benchmark_command(
+        base_url="http://localhost:8080",
+        served="replay/golden",
+        out=tmp_path,
+        generation_params={},
+        stream=False,
+        only=(),
+    )
+
+    assert "--rules-card" not in command
+
+
 def test_every_named_case_is_forwarded_as_its_own_only_flag(tmp_path: Path) -> None:
     """``--only`` is repeatable downstream, so N cases are N flags — never one joined value.
 

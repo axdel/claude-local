@@ -15,6 +15,7 @@ committed static asset), never per call, so no filesystem read sits on the per-i
 
 from __future__ import annotations
 
+import hashlib
 import re
 from itertools import takewhile
 from typing import TYPE_CHECKING
@@ -162,6 +163,11 @@ _RUN_DURATION = re.compile(r"(?<= )in \d+(?:\.\d+)?s(?: \(\d+:\d{2}:\d{2}\))?(?=
 _REPR_ADDRESS = re.compile(r"(?<= at )0x[0-9a-fA-F]+(?=>)")
 _REPR_ADDRESS_PLACEHOLDER = "0x<addr>"
 
+# Rules-card digest length. 12 hex characters is 48 bits — collision-free across the handful of
+# cards a benchmark ever compares, and short enough to read in a scorecard filename or a summary
+# table. The digest identifies a card; it is not a security boundary.
+_DIGEST_CHARS = 12
+
 
 class PromptBuilder:
     """Assembles the byte-stable prefix and the bounded feedback tail from a static rules card.
@@ -172,6 +178,23 @@ class PromptBuilder:
 
     def __init__(self, card_path: Path) -> None:
         self._card = card_path.read_text(encoding="utf-8").rstrip("\n")
+        self._card_digest = hashlib.sha256(self._card.encode("utf-8")).hexdigest()[:_DIGEST_CHARS]
+
+    @property
+    def card_digest(self) -> str:
+        """Short content digest of the rules card this builder is actually holding.
+
+        The digest is taken over the card BYTES read at construction, never over the path they
+        came from: ``implement`` accepts a ``rules_card_path`` override, so a path identifies a
+        card only until someone points it elsewhere, while the bytes are what the model was
+        actually sent. This builder is the only reader of those bytes, so it is the only thing
+        that can answer truthfully — every downstream record carries this value rather than
+        re-deriving it (Rule 4, single owner).
+
+        Trailing newlines are stripped before hashing, matching what ``stable_prefix`` emits, so
+        two cards that produce byte-identical prompts share a digest.
+        """
+        return self._card_digest
 
     def plan_request(self) -> str:
         """The tail that asks for an implementation plan, before any code is written.
