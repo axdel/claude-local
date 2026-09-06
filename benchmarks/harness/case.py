@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 
 from claude_local import Budget, ContextFile, TaskSpec
@@ -51,6 +51,16 @@ class BenchmarkCase:
             golden_tree=golden_tree,
             blank_stub=blank_stub,
         )
+
+    def planning_first(self) -> BenchmarkCase:
+        """The same case with the plan-first lever on — the fixtures are untouched.
+
+        A variant rather than a load-time parameter: plan-first is a property of how a case is
+        RUN, not of what the case is, so threading it down through the loader would make every
+        fixture-building layer carry a flag none of them read. Sweeping the mode is then one map
+        over already-loaded cases, and the pair being compared is provably the same fixtures.
+        """
+        return replace(self, task=replace(self.task, plan_first=True))
 
     def __post_init__(self) -> None:
         _validate_fixture_path(self.task.impl_path)

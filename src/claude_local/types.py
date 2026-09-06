@@ -81,6 +81,11 @@ class TaskSpec:
     so a reply that imports tests away fails the count check instead of passing.
     ``context_files`` carries ordered, read-only neighbors the implementation must
     integrate with and defaults to none for existing callers.
+
+    ``plan_first`` spends one generation on an implementation plan before the first
+    attempt and freezes it into the prefix for the whole task. It is a property of the
+    task rather than of the loop because it is measured per task class, and it defaults
+    off so an unchanged caller sends the prompt every prior measurement was taken against.
     """
 
     impl_path: str
@@ -89,6 +94,7 @@ class TaskSpec:
     expected_tests: int
     budget: Budget
     context_files: tuple[ContextFile, ...] = ()
+    plan_first: bool = False
 
     def __post_init__(self) -> None:
         if not self.impl_path.strip():

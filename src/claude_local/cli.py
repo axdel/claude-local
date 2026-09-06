@@ -145,7 +145,7 @@ _MODEL_ENV = "CLAUDE_LOCAL_MODEL"
 _ENVELOPE_HELP = (
     "JSON task envelope: impl_path, spec_text, test_text, expected_tests, "
     "budget {max_attempts, max_tokens, generation_timeout_s, oracle_timeout_s}, "
-    "optional context_files [{path, content}]."
+    "optional context_files [{path, content}], optional plan_first (bool)."
 )
 
 
@@ -236,6 +236,7 @@ def _task_from_json(raw: str) -> TaskSpec:
             expected_tests=_integer(envelope, "expected_tests"),
             budget=_budget(envelope),
             context_files=_context_files(envelope),
+            plan_first=_plan_first(envelope),
         )
     except ValueError as exc:
         raise TaskRejected(f"task envelope is not a runnable task: {exc}") from exc
@@ -304,6 +305,22 @@ def _context_files(envelope: Mapping[str, object]) -> tuple[ContextFile, ...]:
             )
         files.append(ContextFile(path=_string(entry, "path"), content=_string(entry, "content")))
     return tuple(files)
+
+
+def _plan_first(envelope: Mapping[str, object]) -> bool:
+    """Read the optional plan-first lever; absent means off.
+
+    Absent-means-off is what keeps this an additive envelope field: a caller written against an
+    earlier contract sends no such key and gets exactly the run it always got, so the version
+    string does not move. A present non-boolean is still rejected — a silently-coerced ``"false"``
+    would turn the lever on and quietly change what every later attempt reads.
+    """
+    supplied = envelope.get("plan_first", False)
+    if not isinstance(supplied, bool):
+        raise TaskRejected(
+            f"task envelope field 'plan_first' must be a boolean, got {_kind(supplied)}"
+        )
+    return supplied
 
 
 def _required_setting(supplied: str | None, env_var: str, flag: str) -> str:

@@ -129,6 +129,24 @@ _CONTEXT_HEADER = (
 )
 _TEST_HEADER = "## The test — immutable; do not modify or import it away. Make it pass."
 
+# The plan-first request, and the header its frozen answer sits under. The plan section is
+# appended LAST in the prefix, after the test, for two reasons that happen to agree. Cache: the
+# plan is generated from a prefix that does not yet contain it, so putting it last leaves that
+# shorter prefix a strict byte-prefix of every later one and the plan call warms exactly the head
+# the attempts reuse. Reading order: the model sees what it must satisfy, then the approach it
+# chose for satisfying it.
+#
+# The request asks for an approach and forbids code, because a plan that contains the
+# implementation is not a plan — it is a first attempt scored by nothing, frozen into the prefix
+# where no oracle can ever contradict it.
+_PLAN_HEADER = "## Your plan — you wrote this before implementing; follow it or better it."
+_PLAN_REQUEST = (
+    "Before writing any code, plan the implementation. Name the functions or classes the test "
+    "requires, the data each one holds, and the order you will build them in. Work from the "
+    "test's assertions — they define what must exist. Be brief and concrete, and write no code: "
+    "this is the approach, and you will be asked for the file itself next."
+)
+
 # An absolute POSIX directory prefix, anchored at a token boundary (line start, whitespace, or an
 # opening delimiter) so relative node ids like ``tests/test_x.py::test_y`` are never touched.
 _ABS_PATH_PREFIX = re.compile(r"(?:^|(?<=\s)|(?<=[(=]))/(?:[^/\s:()]+/)+", re.MULTILINE)
@@ -155,11 +173,25 @@ class PromptBuilder:
     def __init__(self, card_path: Path) -> None:
         self._card = card_path.read_text(encoding="utf-8").rstrip("\n")
 
-    def stable_prefix(self, spec: TaskSpec) -> str:
-        """Build the KV-cacheable rules, task, context-file, and immutable-test prefix.
+    def plan_request(self) -> str:
+        """The tail that asks for an implementation plan, before any code is written.
 
-        Byte-identical for a given spec (D-PROMPT-001). Introduces no timestamps, run ids, or
-        absolute worktree paths that would discard the server's prefill cache.
+        A tail rather than a prefix section: it is the one thing said to the model that differs
+        between the plan call and the attempts that follow, so keeping it out of the prefix is
+        what lets the plan call warm the head those attempts reuse.
+        """
+        return _PLAN_REQUEST
+
+    def stable_prefix(self, spec: TaskSpec, plan: str = "") -> str:
+        """Build the KV-cacheable rules, task, context-file, immutable-test, and plan prefix.
+
+        Byte-identical for a given spec and plan (D-PROMPT-001). Introduces no timestamps, run
+        ids, or absolute worktree paths that would discard the server's prefill cache.
+
+        ``plan`` is the frozen answer to ``plan_request``, computed once per task and passed
+        unchanged on every attempt; empty means the lever is off and the prefix is exactly what it
+        was before plan-first existed. It is appended last, so the plan call's own prefix — built
+        with no plan — stays a strict byte-prefix of every later one.
         """
         parts = [
             self._card,
@@ -178,6 +210,8 @@ class PromptBuilder:
             for context_file in spec.context_files:
                 parts.extend(("### ", context_file.path, "\n\n", context_file.content, "\n\n"))
         parts.extend((_TEST_HEADER, "\n\n", spec.test_text, "\n"))
+        if plan:
+            parts.extend(("\n", _PLAN_HEADER, "\n\n", plan, "\n"))
         return "".join(parts)
 
     def nudge_for(self, repeat_count: int) -> str | None:

@@ -118,6 +118,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Run just this case; repeatable. Ladder order is kept whatever order they are given.",
     )
     parser.add_argument(
+        "--plan-first",
+        action="store_true",
+        help=(
+            "Spend one generation per case on an implementation plan, frozen into the prefix. "
+            "Off by default, so an unflagged run is comparable with every sweep taken so far."
+        ),
+    )
+    parser.add_argument(
         "--generation-params",
         type=_generation_params,
         default={},
@@ -257,6 +265,10 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
         return 2
 
     cases = load_cases(_CASES, golden_app_root=_GOLDEN_APP)
+    if args.plan_first:
+        # Applied to loaded cases rather than passed down to the loader: the mode is how a case is
+        # run, not what it is, so the compared pair is provably the same fixtures.
+        cases = {case_id: case.planning_first() for case_id, case in cases.items()}
     if args.only:
         selected = set(args.only)  # membership is the whole access pattern here
         unknown = sorted(selected - set(cases))

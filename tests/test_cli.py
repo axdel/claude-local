@@ -226,6 +226,7 @@ def test_a_whitespace_only_oracle_is_refused_too(
         ),
         ("budget", "3 attempts"),
         ("context_files", "src/neighbor.py"),
+        ("plan_first", "yes"),
     ],
     ids=[
         "impl-path-not-a-string",
@@ -235,6 +236,7 @@ def test_a_whitespace_only_oracle_is_refused_too(
         "budget-attempts-not-positive",
         "budget-not-an-object",
         "context-files-not-an-array",
+        "plan-first-not-a-boolean",
     ],
 )
 def test_an_unrunnable_envelope_is_refused(
@@ -353,6 +355,7 @@ def test_the_envelope_becomes_the_task_the_loop_runs(
             {"path": "app/first.py", "content": "FIRST = 1\n"},
             {"path": "app/second.py", "content": "SECOND = 2\n"},
         ],
+        plan_first=True,
     )
 
     assert run_envelope(monkeypatch, tmp_path, envelope, runner) == 0
@@ -371,6 +374,24 @@ def test_the_envelope_becomes_the_task_the_loop_runs(
         ("app/first.py", "FIRST = 1\n"),
         ("app/second.py", "SECOND = 2\n"),
     ]
+    assert spec.plan_first is True
+
+
+def test_an_envelope_that_omits_plan_first_sends_the_prompt_it_always_sent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Oracle: the contract version is unchanged, so a parent written against it must still work.
+
+    ``plan_first`` was added to the envelope without bumping ``claude-local/1``, which is only
+    honest if an envelope that predates the field is run exactly as it was before — one decode
+    per attempt, no plan frozen into the prefix. Defaulting it on would silently change what
+    every existing caller's model is asked, and every measurement taken against them.
+    """
+    runner = RecordingImplement()
+
+    assert run_envelope(monkeypatch, tmp_path, build_envelope(), runner) == 0
+
+    assert runner.specs[0].plan_first is False
 
 
 @pytest.mark.parametrize("status", list(Status))

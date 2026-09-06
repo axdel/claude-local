@@ -154,9 +154,9 @@ class CountingPromptBuilder(PromptBuilder):
         super().__init__(card_path)
         self.prefix_calls = 0
 
-    def stable_prefix(self, spec: object) -> str:  # type: ignore[override]
+    def stable_prefix(self, spec: object, plan: str = "") -> str:  # type: ignore[override]
         self.prefix_calls += 1
-        return super().stable_prefix(spec)  # type: ignore[arg-type]
+        return super().stable_prefix(spec, plan)  # type: ignore[arg-type]
 
 
 def _setup_worktree(tmp_path: Path) -> Path:
@@ -512,6 +512,125 @@ def test_a_repeat_and_the_nudge_that_answers_it_are_both_reported_live(tmp_path:
     assert final.blocked is False
     assert final.score is not None
     assert final.score.passed == 2
+
+
+# --- Plan-first: one plan per task, frozen into the prefix -------------------------
+
+
+_PLAN_TEXT = "1. Define VALUE at module scope. 2. Set it to 2."
+
+
+def _plan_first_run(tmp_path: Path) -> tuple[RecordingReplayBackend, LoopResult]:
+    """One plan-first run: a plan reply, then two failing attempts. Returns the backend and result.
+
+    Two failing attempts, not one, because the property under test is about what stays constant
+    ACROSS attempts — a single attempt makes every "identical across the loop" claim vacuous.
+    """
+    worktree = tmp_path / "wt"
+    (worktree / "src").mkdir(parents=True)
+    backend = RecordingReplayBackend(
+        [_sse_script(_PLAN_TEXT), _edit_script(_V1), _edit_script(_V2)]
+    )
+    spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("one_failure.xml"))
+    loop, _ = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        budget=build_budget(max_attempts=2),
+        plan_first=True,
+    )
+
+    return backend, loop.run(spec, worktree)
+
+
+def test_plan_first_spends_one_call_on_a_plan_before_the_first_attempt(tmp_path: Path) -> None:
+    """The plan is computed once per TASK, never once per attempt.
+
+    Oracle: the lever's whole design constraint. A plan recomputed per attempt would mutate the
+    prefix every iteration and discard the server's prefill cache — reversing the guarantee the
+    stable prefix exists to provide. One plan call, then one call per attempt: three in total for
+    a two-attempt run, and the plan is the FIRST of them because later ones must carry it.
+    """
+    backend, _ = _plan_first_run(tmp_path)
+
+    assert len(backend.calls) == 3  # 1 plan + 2 attempts
+    plan_prefix, plan_tail = backend.calls[0]
+    assert _PLAN_TEXT not in plan_prefix  # nothing to carry yet
+    assert plan_tail  # the plan is requested in the tail, not baked into the prefix
+
+
+def test_plan_first_freezes_the_plan_into_a_prefix_identical_across_attempts(
+    tmp_path: Path,
+) -> None:
+    """The frozen plan rides in the prefix, byte-identical for every attempt (D-PROMPT-001).
+
+    Oracle: derived from the cache invariant, not from running the loop. Two things must hold at
+    once and neither implies the other — the attempts' prefixes are equal to each other (so the
+    prefill is reused across the loop), and they actually CONTAIN the plan (so the lever does
+    something). Asserting only equality would pass against a build that silently dropped the plan.
+    """
+    backend, _ = _plan_first_run(tmp_path)
+    attempt_prefixes = [prefix for prefix, _ in backend.calls[1:]]
+
+    assert len(set(attempt_prefixes)) == 1  # byte-identical across attempts
+    assert _PLAN_TEXT in attempt_prefixes[0]  # and the plan is really in there
+
+
+def test_the_plan_call_prefix_is_a_byte_prefix_of_the_attempt_prefix(tmp_path: Path) -> None:
+    """The plan section is appended LAST, so the plan call warms the cache the attempts reuse.
+
+    Oracle: prefix reuse is a property of shared leading bytes. Placing the plan anywhere but the
+    end would leave the plan call's prefix diverging from the attempts' at that point, so the
+    server could reuse only the head before it. Appending last makes the shorter prefix a strict
+    byte-prefix of the longer, which is the maximum reuse the arrangement permits.
+    """
+    backend, _ = _plan_first_run(tmp_path)
+    plan_prefix, _ = backend.calls[0]
+    attempt_prefix, _ = backend.calls[1]
+
+    assert attempt_prefix.startswith(plan_prefix)
+    assert attempt_prefix != plan_prefix  # the plan section really was appended
+
+
+def test_the_plan_step_is_paid_for_in_the_record_without_inflating_attempts(
+    tmp_path: Path,
+) -> None:
+    """One record per task, counting the plan's tokens — but the plan is not an attempt.
+
+    Oracle: the plan burns real decode, so a record omitting it would understate what the task
+    cost and corrupt the net-savings comparison the orchestrator makes. It is not an attempt at
+    the implementation, so counting it as one would misreport how many tries the model needed.
+    Both halves are asserted; either alone passes against the bug the other catches.
+    """
+    _, result = _plan_first_run(tmp_path)
+
+    assert result.record.attempts == 2  # the plan is not an attempt
+    # 3 calls' tokens are aggregated, so the total exceeds any single generation's.
+    assert result.record.total_calls == 3
+    assert result.record.total_completion_tokens > 0
+
+
+def test_plan_first_is_off_by_default_and_spends_no_extra_call(tmp_path: Path) -> None:
+    """The lever is opt-in: an unchanged spec produces the unchanged prompt and call count.
+
+    Oracle: every measurement taken against this harness so far ran without a plan step. If the
+    default changed, those numbers would silently describe a prompt nobody runs, and the first
+    call would be a plan rather than an implementation.
+    """
+    worktree = tmp_path / "wt"
+    (worktree / "src").mkdir(parents=True)
+    backend = RecordingReplayBackend([_edit_script(_V1)])
+    spawn = ScriptedSpawn(_junit("all_pass.xml"))
+    loop, _ = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, budget=build_budget(max_attempts=1)
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert len(backend.calls) == 1  # no plan call
+    assert result.record.attempts == 1
+    assert result.status is Status.DONE
 
 
 def test_a_score_plateau_escalates_through_the_same_ladder_as_a_repeat(tmp_path: Path) -> None:
@@ -899,6 +1018,40 @@ def test_prefix_is_built_once_per_task(tmp_path: Path) -> None:
 
     # Two attempts, one prefix build: the prefix is assembled once and reused (D-PROMPT-001).
     assert counting.prefix_calls == 1
+
+
+def test_plan_first_builds_the_prefix_twice_per_task_never_once_per_attempt(
+    tmp_path: Path,
+) -> None:
+    """Planning costs exactly one extra build for the whole task, however many attempts run.
+
+    Oracle: hand-derived from the two prefixes a plan-first task needs — one without the plan, to
+    ask for it, and one with the plan frozen in, for every attempt. Two, and two regardless of
+    attempt count: this run makes three attempts, so a build-per-attempt implementation would
+    count four. The sibling test above asserts the resulting bytes are identical; this asserts the
+    assembly itself does not repeat, which byte-identity alone would not catch — rebuilding the
+    same string every attempt is cache-safe but pays the assembly cost N times over.
+    """
+    worktree = _setup_worktree(tmp_path)
+    counting = CountingPromptBuilder(RULES_CARD)
+    backend = ReplayBackend(
+        [_sse_script(_PLAN_TEXT), _edit_script(_V0), _edit_script(_V1), _edit_script(_V2)]
+    )
+    spawn = ScriptedSpawn(
+        _junit("one_failure.xml"), _junit("one_failure.xml"), _junit("all_pass.xml")
+    )
+    loop, _ = _make_loop(worktree, backend, spawn, prompt_builder=counting)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=3),
+        plan_first=True,
+    )
+
+    loop.run(spec, worktree)
+
+    assert counting.prefix_calls == 2  # one to ask for the plan, one carrying it — not four
 
 
 def test_broken_oracle_propagates_and_is_not_masked(tmp_path: Path) -> None:

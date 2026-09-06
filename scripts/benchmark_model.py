@@ -60,6 +60,7 @@ def benchmark_command(
     generation_params: Mapping[str, object],
     stream: bool,
     only: Sequence[str],
+    plan_first: bool = False,
 ) -> list[str]:
     """Build the documented benchmark invocation for a server that is already up.
 
@@ -75,6 +76,7 @@ def benchmark_command(
         out: Directory the scorecard and produced code are written into.
         generation_params: The row's request-body fields; an empty mapping forwards no flag.
         stream: Whether to also print the model's raw text as it decodes.
+        plan_first: Whether each case spends one generation on a plan before implementing.
         only: Case ids to run, forwarded one flag each because the benchmark appends them.
 
     Returns:
@@ -98,6 +100,8 @@ def benchmark_command(
         command.extend(("--generation-params", json.dumps(dict(generation_params))))
     if stream:
         command.append("--stream")
+    if plan_first:
+        command.append("--plan-first")
     for case_id in only:
         # Forwarded, never checked here: the benchmark loads the ladder, so it is the only thing
         # that knows which ids exist, and a second validator would drift from it.
@@ -131,6 +135,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="CASE_ID",
         help="Run just this case; repeatable. Forwarded verbatim, so the benchmark owns validity.",
     )
+    parser.add_argument(
+        "--plan-first",
+        action="store_true",
+        help="Spend one generation per case on a plan, frozen into the prefix. Off by default.",
+    )
     args = parser.parse_args(argv)
 
     resolved = ModelRegistry.default().resolve(args.model)
@@ -160,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
             generation_params=resolved.generation_params,
             stream=args.stream,
             only=args.only or (),
+            plan_first=args.plan_first,
         )
         done = subprocess.run(command, cwd=_REPO_ROOT, check=False)  # noqa: S603
 

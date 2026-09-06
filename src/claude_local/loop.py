@@ -19,7 +19,7 @@ rendering outside preserves the no-I/O rule above (D-PROGRESS-001).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from claude_local.edits import apply_file, extract_file
@@ -35,12 +35,20 @@ if TYPE_CHECKING:
     from claude_local.prompt import PromptBuilder
     from claude_local.runner import OracleRun, TestRunner, TestScore
     from claude_local.snapshot import SnapshotStore
-    from claude_local.types import TaskSpec
+    from claude_local.types import Budget, TaskSpec
 
 # The immutable oracle test is written to the worktree ROOT — outside the SnapshotStore's src
 # subtree (so restore_best never clobbers it) and distinct from any impl path (so apply_file never
 # overwrites it). A run-stable name, carrying no timestamp, keeps the worktree predictable.
 ORACLE_TEST_FILENAME = "test_loop_oracle.py"
+
+_PLAN_MAX_TOKENS = 512
+"""Decode ceiling for the plan step — roughly a screen of outline, generous for an approach.
+
+Bounded separately from the implementation because the two decodes want opposite things. A file
+needs room; a plan does not, and a long one is actively harmful: it is frozen into the prefix,
+so it is re-read on every attempt and never scored by anything.
+"""
 
 _PLATEAU_ATTEMPTS = 2
 """Consecutive attempts that fail to clear the best score before the loop calls it a plateau.
@@ -251,7 +259,8 @@ class Loop:
         broken oracle (``OracleError`` from the runner) are never caught — they propagate, so a
         harness fault fails loud rather than masquerading as a failing implementation.
         """
-        stable = self._prompt.stable_prefix(spec)  # built ONCE — the prefill-cache invariant
+        planning, plan = self._plan(spec)
+        stable = self._prompt.stable_prefix(spec, plan)  # built ONCE — the prefill-cache invariant
         oracle_path = worktree / ORACLE_TEST_FILENAME
         oracle_path.write_text(spec.test_text, encoding="utf-8")
 
@@ -303,9 +312,9 @@ class Loop:
         status = _terminal_status(final, scored=last_attempt is not None, best_score=best_score)
         record = LocalEconomyRecord.from_run(
             model=self._model,
-            results=results,
+            results=[*planning, *results],  # the plan burned real decode; the loop pays for it
             total_calls=self._client.total_calls,
-            attempts=len(results),
+            attempts=len(results),  # but planning is not an attempt at the implementation
             status=status,
         )
         return LoopResult(
@@ -314,6 +323,40 @@ class Loop:
             record=record,
             fault=final.fault if final is not None else None,
         )
+
+    def _plan(self, spec: TaskSpec) -> tuple[list[GenerationResult], str]:
+        """Spend one generation on a plan, or nothing at all when the lever is off.
+
+        Returns the generation for the economy record and the plan text to freeze into the prefix,
+        so the caller adds no branch of its own — the lever's whole cost is contained here.
+
+        Computed once per TASK. Recomputing it per attempt would mutate the prefix every iteration
+        and discard the server's prefill cache, reversing the guarantee the stable prefix exists to
+        provide (D-PROMPT-001) — the same freeze-once shape context files already have.
+
+        A plan the model failed to produce degrades to no plan rather than ending the run: the
+        plan is an aid, never the oracle. If the server faulted or the guard cut the generation,
+        the attempts that follow meet the same condition and terminate through the existing
+        precedence, so a second termination path here would only duplicate it.
+        """
+        if not spec.plan_first:
+            return [], ""
+        planning = self._client.generate(
+            self._prompt.stable_prefix(spec), self._prompt.plan_request(), self._plan_budget(spec)
+        )
+        return [planning], planning.text.strip()
+
+    @staticmethod
+    def _plan_budget(spec: TaskSpec) -> Budget:
+        """The task's budget with decode capped to plan length.
+
+        A plan given the implementation's full token cap invites an essay, and an essay is worse
+        than useless here: it is frozen into the prefix, so every later attempt reads it and no
+        oracle can ever contradict it. The cap bounds that blast radius by construction rather
+        than by asking the model for brevity, which it is free to ignore. It only ever lowers the
+        ceiling — a caller whose whole budget is already smaller keeps theirs.
+        """
+        return replace(spec.budget, max_tokens=min(spec.budget.max_tokens, _PLAN_MAX_TOKENS))
 
     def _repair_brief(self, attempt: _ScoredAttempt, nudge: str) -> str:
         """The next tail: the file the last attempt wrote, how it failed, and any escalation."""
