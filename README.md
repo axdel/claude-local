@@ -187,6 +187,33 @@ not a runtime dependency: MLX is Apple-silicon only, and the loop must install a
 name that is catalogued but not pulled is refused rather than fetched; pulling weights stays an
 explicit, user-initiated act.
 
+### Dispatching to it from claude-protocol
+
+claude-protocol can route a task here as its `local` implementer. That takes two things, and it
+refuses to dispatch until both hold.
+
+Put the CLI on `PATH`:
+
+```bash
+uv tool install --from . claude-local
+claude-local --contract-version   # → claude-local/1
+```
+
+Then declare it in the consuming project's `.claude-protocol.toml`:
+
+```toml
+[implementers]
+enabled = ["claude", "local"]
+```
+
+Availability and authorization are deliberately separate: resolving on `PATH` only makes the
+backend *visible*, and a task is dispatched here only when the config above also names it. On top
+of that, claude-protocol probes `claude-local --contract-version` and compares the output to its
+own `LOCAL_CONTRACT_VERSION` — a mismatch fails closed, so a version skew drops claude-local from
+the ready set instead of sending it an envelope it would reject. Sensitive work never arrives at
+all: the ceremony classifier withholds `untrusted_implementer_allowed` for auth, payments, PII,
+migrations, and for any change it cannot confidently classify.
+
 ## License
 
 MIT (c) 2026 axdel

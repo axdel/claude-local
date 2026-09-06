@@ -28,7 +28,8 @@ class — whether offloading to a free local model saved net frontier tokens.
 - Test: `uv run --group bench pytest`
 - Lint / format: `uv run ruff check` · `uv run ruff format`
 - Types: `uv run basedpyright`
-- Commit gate (pre-commit): `lefthook run pre-commit` — ruff check + format --check + basedpyright + bench-aware pytest
+- Commit gate (pre-commit): `lefthook run pre-commit` — the registry's `pre-commit-fast` phase
+  (ruff lint + format + gitleaks) plus this project's own basedpyright and bench-aware pytest
 
 ## Architecture overview
 

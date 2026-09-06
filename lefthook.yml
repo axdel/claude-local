@@ -1,13 +1,16 @@
 # Pre-commit gate — the fast, deterministic checks every commit must pass.
-# Plain project tooling only (ruff, basedpyright, pytest — all dev dependencies), so a
-# fresh clone works after `lefthook install` with no other CLI on PATH. Safe to edit.
+#
+# The registry-owned half is delegated, never restated here: `pre-commit-fast` is the quality
+# registry's phase, so the tools it runs (today ruff-lint, ruff-format, and the gitleaks secret
+# scan) stay under one owner and a tool added there is picked up here for free. Listing them
+# inline is what silently dropped the secret scan from this gate.
+#
+# The two below are the project's own stricter additions, which the registry does not own.
 pre-commit:
   parallel: true
   commands:
-    lint:
-      run: uv run ruff check
-    format:
-      run: uv run ruff format --check
+    quality-gate:
+      run: claude-protocol quality run --phase pre-commit-fast
     types:
       run: uv run basedpyright
     tests:
