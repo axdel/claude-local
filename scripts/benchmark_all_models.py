@@ -1,9 +1,9 @@
 #!/usr/bin/env -S uv run --quiet python
-"""Sweep the whole catalog: benchmark every model in turn, one resident at a time.
+"""Sweep the whole registry: benchmark every model in turn, one resident at a time.
 
 `benchmark_model.py` already owns the per-model chain — resolve, serve, benchmark, tear down — and
 says so in its own docstring. This adds exactly the one thing it does not do: iteration over the
-catalog, with a per-model failure boundary. It re-implements none of that chain; it invokes it, so
+registry, with a per-model failure boundary. It re-implements none of that chain; it invokes it, so
 the two can never drift into two different ideas of how a model is served.
 
 One model is resident at a time. Weights run 12-45 GB against this machine's unified memory and
@@ -16,14 +16,14 @@ cannot load, times out, or crashes the harness costs its own row in the summary 
 a sweep exists to produce a verdict per model, and losing eight results to the ninth's bad weights
 would defeat it.
 
-**A model with no weights is not even a row.** The catalog claims what exists upstream; the store
-proves what is on disk. A catalogued model that was never pulled — or was deleted to reclaim
+**A model with no weights is not even a row.** The registry claims what exists upstream; the store
+proves what is on disk. A registered model that was never pulled — or was deleted to reclaim
 space — is announced and skipped before it costs a subprocess, so the sweep's exit code keeps
 meaning "every model that could be measured was". Naming a model with ``--only`` opts out of that
 filter: an explicit request for absent weights fails loudly rather than vanishing from the run.
 
 ``--rules-card`` runs the whole sweep under a card other than the bundled one. The card is the
-largest span of the prompt, so sweeping the catalog twice under two cards is the experiment that
+largest span of the prompt, so sweeping the registry twice under two cards is the experiment that
 says which card a given model is actually better under; each scorecard carries its card's digest,
 so the two sweeps stay distinguishable after the fact.
 
@@ -48,7 +48,7 @@ import argparse
 import contextlib
 import os
 import signal
-import subprocess  # nosec B404 (argv is built from catalog data, never shell-interpreted)
+import subprocess  # nosec B404 (argv is built from registry data, never shell-interpreted)
 import sys
 import time
 from pathlib import Path

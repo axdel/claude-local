@@ -32,7 +32,7 @@ scripts/capture_sse_fixture.py <model> <destination.bytes> --user "<prompt>"
 
 ### The one normalization a capture makes
 
-The script replaces the served model id with the catalog name, and changes nothing
+The script replaces the served model id with the registry name, and changes nothing
 else. Models are named by absolute store path so a repo id can never fall through
 to `snapshot_download`, so every chunk would otherwise echo the capturing machine's
 home directory — one copy per token. `decode_sse` reads `choices`, `delta.content`,

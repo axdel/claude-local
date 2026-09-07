@@ -35,7 +35,7 @@ from claude_local.model_server import (
 
 # A real HTTP server answering the readiness endpoint, and nothing else. Spawned as a genuine
 # subprocess so teardown assertions are about a real process and a real bound port. The body it
-# serves is an argument, so a test can choose what the catalogue endpoint advertises.
+# serves is an argument, so a test can choose what the served-models endpoint advertises.
 _SUBSTITUTE_SERVER = """
 import http.server, sys, time
 
@@ -162,7 +162,7 @@ def test_a_flags_cell_may_not_redeclare_an_option_the_builder_supplies(
 ) -> None:
     """Oracle: argparse's own resolution rules, which decide what the server actually binds.
 
-    FLAGS is unvalidated catalog text, split on whitespace and appended after the options this
+    FLAGS is unvalidated registry text, split on whitespace and appended after the options this
     builder supplies — so ordering alone is what keeps the bind on loopback, and argparse breaks
     ties the other way. All three spellings below reach ``--host`` in argparse and were confirmed
     against it directly: a repeated option takes the last value, ``--host=`` is the same option in
@@ -179,9 +179,9 @@ def test_a_flags_cell_may_not_redeclare_an_option_the_builder_supplies(
 
 
 def test_serving_flags_the_builder_does_not_own_stay_servable(tmp_path: Path) -> None:
-    """The refusal is scoped to conflicts: every real catalog flag must still pass through.
+    """The refusal is scoped to conflicts: every real registry flag must still pass through.
 
-    Oracle: the FLAGS cells the shipped catalog actually carries. A refusal that also rejected
+    Oracle: the FLAGS cells the shipped registry actually carries. A refusal that also rejected
     these would be a fail-closed check that closed the feature.
     """
     flags = ("--enable-thinking", "--kv-bits", "8", "--quantized-kv-start", "0")
@@ -216,7 +216,7 @@ def test_a_present_draft_model_adds_the_speculative_decoding_arguments(tmp_path:
 def test_a_declared_but_unpulled_draft_is_left_out_rather_than_named_by_repo_id(
     tmp_path: Path,
 ) -> None:
-    """The catalog names a draft for a model whose weights were never pulled.
+    """The registry names a draft for a model whose weights were never pulled.
 
     Oracle: the same download trap as the main model — a repo id the server cannot find
     locally is fetched, not refused. Serving without speculative decoding is slower; silently
@@ -255,7 +255,7 @@ def test_the_handle_reports_the_model_id_the_server_actually_serves() -> None:
     """Oracle: OpenAI's `/v1/models` schema — the served id is `data[0].id`.
 
     The server names the model however it chose to: mlx_vlm reports the store path it was
-    launched with, which is neither the catalogue name nor the repo id, and a chat-completions
+    launched with, which is neither the registry name nor the repo id, and a chat-completions
     request must echo that id back. Asking beats assuming, so the handle owns the question.
     """
     port = free_port()
@@ -384,7 +384,7 @@ def test_a_server_that_answers_slowly_is_ready_not_timed_out() -> None:
         assert handle.port == port
 
 
-def test_a_catalogue_answer_of_the_wrong_shape_names_the_server_and_what_it_said() -> None:
+def test_a_served_models_answer_of_the_wrong_shape_names_the_server_and_what_it_said() -> None:
     """Oracle: a proxy or a wrong process on the port answers 200 with something else entirely.
 
     Indexing straight into the decoded body turns that into a bare KeyError naming neither the

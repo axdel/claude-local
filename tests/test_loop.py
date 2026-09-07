@@ -554,9 +554,9 @@ def test_plan_first_spends_one_call_on_a_plan_before_the_first_attempt(tmp_path:
     """The plan is computed once per TASK, never once per attempt.
 
     Oracle: the lever's whole design constraint. A plan recomputed per attempt would mutate the
-    prefix every iteration and discard the server's prefill cache — reversing the guarantee the
-    stable prefix exists to provide. One plan call, then one call per attempt: three in total for
-    a two-attempt run, and the plan is the FIRST of them because later ones must carry it.
+    prefix and discard the server's prefill cache — reversing the guarantee the stable prefix
+    exists to provide. One plan call, then one call per attempt: three in total for a two-attempt
+    run, and the plan is the FIRST of them because later ones must carry it.
     """
     backend, _ = _plan_first_run(tmp_path)
 
@@ -884,7 +884,7 @@ def test_the_correction_carries_the_reply_that_earned_it(tmp_path: Path) -> None
 def test_the_prefix_is_unchanged_by_a_correction(tmp_path: Path) -> None:
     """The correction rides in the tail, so the cached prefill survives it.
 
-    Oracle: the prefix is byte-identical across a task's iterations by design (D-PROMPT-001) — a
+    Oracle: the prefix is byte-identical across a task's attempts by design (D-PROMPT-001) — a
     server reuses its prefill cache only while that holds. A correction written into the prefix
     would discard the cache on the attempt that most needs to be cheap.
     """

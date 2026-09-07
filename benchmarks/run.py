@@ -8,7 +8,7 @@ for every model, so "add a model, bench it" is a single command.
 
 A running server is a prerequisite OF THIS MODULE — it scores a model, it does not serve one.
 That is a division of labour inside claude-local, not a capability claude-local lacks:
-``scripts/benchmark_model.py <name>`` supplies exactly this prerequisite, spawning a catalogued
+``scripts/benchmark_model.py <name>`` supplies exactly this prerequisite, spawning a registered
 model through ``model_server`` and tearing it down on the way out, then invoking the command
 below. Reach for it unless a server is already up. (Downloading is the one thing nothing here
 does: weights are user-initiated, always.)

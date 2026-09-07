@@ -19,7 +19,7 @@ type — so it stays decoupled and reusable.
 
 Fail-closed: if ``sandbox-exec`` is absent the spawn raises rather than running untrusted
 code unconfined. Since the local models are Apple-silicon MLX, the real path is always
-macOS; a missing front-end means a broken host, not a fallback to run without a cage.
+macOS; a missing front-end means a broken host, not a fallback to run without the sandbox.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ _PROFILE_TEMPLATE = """\
 (allow process*)
 (allow sysctl-read)
 ; No mach-lookup grant: (deny network*) does not cover Mach IPC, so an unscoped one is a side
-; channel out of the cage. Measured — a confined pbpaste read the developer's clipboard through
+; channel out of the sandbox. Measured — a confined pbpaste read the developer's clipboard through
 ; it. The oracle needs none beyond what system.sb already scopes; see D-SANDBOX-008.
 {metadata_rules}
 {read_rules}

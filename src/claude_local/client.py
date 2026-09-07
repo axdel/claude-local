@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from claude_local.backend import GenerationStalled
+from claude_local.backend import GenerationSilent
 from claude_local.derail import CHARS_PER_TOKEN, DerailGuard, DerailReason
 from claude_local.harmony import assistant_content
 from claude_local.sse import Delta, Error, Finish, Reasoning, Usage, decode_sse
@@ -175,13 +175,13 @@ class ModelClient:
                     # so content streamed after it is never read (a server fault, not a derail).
                     fault = event.message
                     break
-        except GenerationStalled:
+        except GenerationSilent:
             # The transport reporting the one silence the guard cannot: with no chunk ever
             # arriving, tick never ran, so there is no latched verdict to read below. Whatever
             # bytes did arrive stay in parts and chars, so a partial decode is still metered.
-            derail_reason = DerailReason.STALLED
+            derail_reason = DerailReason.SILENT
         seconds = self._now() - start
-        # A stall trips in the chunk layer, which ends the stream without ever reaching an event,
+        # A silence trips in the chunk layer, which ends the stream without ever reaching an event,
         # so the loop above has no verdict to report. Reading the latch is what makes a generation
         # that produced nothing at all distinguishable from one that ended cleanly and empty.
         derail_reason = derail_reason or guard.tripped

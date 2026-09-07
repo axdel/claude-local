@@ -235,7 +235,7 @@ def test_a_run_declaring_no_generation_params_sends_none() -> None:
 
     Oracle: the flag is optional, so its absence must mean "declare nothing", not "declare a
     default". A field silently present with a guessed value would configure every model in the
-    catalog from one row's needs.
+    registry from one row's needs.
     """
     bodies: list[dict[str, object]] = []
 

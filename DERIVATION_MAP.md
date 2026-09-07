@@ -6,7 +6,7 @@
 |-|-|-|-|-|-|
 | LocalEconomyRecord | run measurements: client token usage and timing | per-attempt GenerationResult aggregates | Telemetry aggregation at loop exit | active |  |
 | PackageVersion | src/claude_local/__init__.py __version__ | — (root) | hatchling [tool.hatch.version] path reads __version__ at build | active |  |
-| ResolvedModel | models/models.psv | one catalog row, split positionally | ModelRegistry.resolve(name) — no build step; edit the row | active |  |
+| ResolvedModel | models/models.psv | one registry row, split positionally | ModelRegistry.resolve(name) — no build step; edit the row | active |  |
 | Scorecard | per-case run outcomes: each case's terminal status and local economy record | the CaseResult list from run_cases | score_cases() reduces the results; Scorecard.write() serializes JSON | active |  |
 | Scorecard.style_findings | the produced-code tree the run wrote (AC-PRODUCED) | the files the model produced, linted by benchmarks.harness.style.collect_style_findings under its fixed rule set — NOT from the CaseResult list the rest of the scorecard reduces. The scorer declares it caller-supplied for that reason: counting it means reading files on disk, and that module reduces results already in memory. | benchmarks/run.py --code-out DIR fills it during a run; scripts/score_style.py DIR re-reports it from a retained tree. Values in scorecards written before --code-out existed were back-filled from trees that were not retained, so they are frozen measurements, not regenerable ones — null and 0 stay distinct answers (not measured, versus measured and clean). | active |  |
 | TestScore | pytest JUnit-XML report | the attempt's test run | TestRunner.run() parses the XML | active |  |

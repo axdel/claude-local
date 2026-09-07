@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --quiet python
-"""Serve one catalogued model and report, from the wire, whether it emits a reasoning channel.
+"""Serve one registered model and report, from the wire, whether it emits a reasoning channel.
 
 The question this answers cannot be answered by reading the request. `enable_thinking` is a
 *soft* request: mlx_vlm resolves it against the model's own chat template, and when no
@@ -24,7 +24,7 @@ For each request it reports:
     scripts/probe_thinking_channel.py gpt-oss-20b
 
 The model store is read from CLAUDE_LOCAL_MODELS when set, which is what makes this usable
-from a git worktree whose own `models/` holds the catalog but no weights.
+from a git worktree whose own `models/` holds the registry but no weights.
 """
 
 from __future__ import annotations

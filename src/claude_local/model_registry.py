@@ -1,13 +1,13 @@
-"""The curated catalog of servable models, resolved against the store on disk.
+"""The curated registry of servable models, resolved against the store on disk.
 
 Two concepts meet here and must not be conflated. The **model registry** is the curated,
-version-controlled catalog: one row per model that *may* be served, naming its upstream repo,
+version-controlled table: one row per model that *may* be served, naming its upstream repo,
 the port it serves on, its best-quality serving flags, and any speculative-decoding draft
 model. The **model store** is the machine-local directory of weights actually pulled. A row is
 a claim about what is available upstream; only the store proves what is on disk, so the two
-failures stay distinct — an uncatalogued name and an unpulled model call for different fixes.
+failures stay distinct — an unregistered name and an unpulled model call for different fixes.
 
-The catalog is the single source for a model's serving configuration. It is committed, so a
+The registry is the single source for a model's serving configuration. It is committed, so a
 new model becomes servable by adding one row and pulling its weights, with no code change.
 
 A leaf: imports nothing from the package, so every consumer can depend inward on it.
@@ -110,15 +110,15 @@ def _generation_params(declared: str, model: str) -> Mapping[str, object]:
 
 
 class UnknownModel(Exception):
-    """The requested name is absent from the catalog, so nothing can serve it."""
+    """The requested name is absent from the registry, so nothing can serve it."""
 
 
 class ModelNotPresent(Exception):
-    """The catalog names the model, but its weights are not in the store."""
+    """The registry names the model, but its weights are not in the store."""
 
 
 class MalformedRegistry(Exception):
-    """A catalog row does not match the declared column format."""
+    """A registry row does not match the declared column format."""
 
 
 class UnservableCombination(Exception):
@@ -133,9 +133,9 @@ class UnservableCombination(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ResolvedModel:
-    """One catalog row, resolved to a concrete location on this machine.
+    """One registry row, resolved to a concrete location on this machine.
 
-    Carries only what a consumer acts on. The catalog's human-facing columns (on-disk size,
+    Carries only what a consumer acts on. The registry's human-facing columns (on-disk size,
     the note explaining what a model is for) stay in the file rather than riding along here.
     """
 
@@ -182,9 +182,9 @@ class ResolvedModel:
 
 @dataclass(frozen=True, slots=True)
 class ModelRegistry:
-    """The catalog paired with the store its rows resolve against.
+    """The registry paired with the store its rows resolve against.
 
-    Both locations are injected so a test can resolve against a fixture catalog and a scratch
+    Both locations are injected so a test can resolve against a fixture registry and a scratch
     store; ``default`` supplies the real pair.
     """
 
@@ -193,9 +193,9 @@ class ModelRegistry:
 
     @classmethod
     def default(cls) -> ModelRegistry:
-        """The committed catalog, resolved against this machine's store.
+        """The committed registry, resolved against this machine's store.
 
-        The catalog is repo-relative and therefore present in every worktree. The store is not:
+        The registry is repo-relative and therefore present in every worktree. The store is not:
         weights live in one place outside any worktree, so ``CLAUDE_LOCAL_MODELS`` overrides it
         and the repo-relative directory is only the fallback.
         """
@@ -207,13 +207,13 @@ class ModelRegistry:
         )
 
     def names(self) -> tuple[str, ...]:
-        """Every catalogued model name, in the order the catalog declares them."""
+        """Every registered model name, in the order the registry declares them."""
         return tuple(row[0] for row in self._rows())
 
     def servable_names(self) -> tuple[str, ...]:
-        """The catalogued names whose weights are on disk, in catalog order.
+        """The registered names whose weights are on disk, in registry order.
 
-        A catalogued row is a claim about what exists UPSTREAM; only the store proves what is on
+        A registered row is a claim about what exists UPSTREAM; only the store proves what is on
         disk. This registry holds both, so which of the two a name satisfies is its fact to answer
         — a caller that re-derived it would need its own store path and its own idea of what
         "present" means, giving one fact two owners.
@@ -235,18 +235,18 @@ class ModelRegistry:
         return self.store_root / name
 
     def resolve(self, name: str) -> ResolvedModel:
-        """Resolve a catalogued name to everything needed to serve it.
+        """Resolve a registered name to everything needed to serve it.
 
         Args:
-            name: A model name from the catalog's NAME column.
+            name: A model name from the registry's NAME column.
 
         Returns:
             The row's serving configuration, with ``path`` pointing into the store.
 
         Raises:
-            UnknownModel: no catalog row declares this name.
+            UnknownModel: no registry row declares this name.
             ModelNotPresent: the row exists but the weights were never pulled.
-            MalformedRegistry: a catalog row does not match the column format.
+            MalformedRegistry: a registry row does not match the column format.
         """
         for row in self._rows():
             if row[0] != name:
@@ -254,7 +254,7 @@ class ModelRegistry:
             path = self._weights_path(name)
             if not path.is_dir():
                 raise ModelNotPresent(
-                    f"{name} is catalogued but absent from the store at {path} — pull it first"
+                    f"{name} is registered but absent from the store at {path} — pull it first"
                 )
             draft_repo = None if row[2] == _ABSENT else row[2]
             draft_path = self.store_root / f"{name}{_DRAFT_SUFFIX}"
@@ -267,12 +267,12 @@ class ModelRegistry:
                 generation_params=_generation_params(row[6], name),
                 path=path,
                 # Absent unless BOTH the row declares a draft and its weights are on disk. A
-                # declared-but-unpulled draft is the common case (the catalog names one for
+                # declared-but-unpulled draft is the common case (the registry names one for
                 # Qwen3.8-27B that was never pulled), and it must read as "no draft" rather
                 # than as a repo id a server would try to fetch.
                 draft_path=draft_path if draft_repo and draft_path.is_dir() else None,
             )
-        raise UnknownModel(f"no catalog row for {name!r}; available: {', '.join(self.names())}")
+        raise UnknownModel(f"no registry row for {name!r}; available: {', '.join(self.names())}")
 
     def _rows(self) -> Iterator[tuple[str, ...]]:
         """Yield each model row, skipping comments, blanks, and the column header."""

@@ -2,7 +2,7 @@
 
 The script's job is to supply the standing benchmark's one prerequisite — a running server — and
 then invoke the documented benchmark command against it. Everything that decides WHAT that command
-says is pure, and is what these tests cover: which flags are forwarded, and how a catalog row's
+says is pure, and is what these tests cover: which flags are forwarded, and how a registry row's
 generation parameters cross the process boundary into them. Serving a real model is not exercised
 here; that is the live path, and a unit test that spawned 20 GB of weights would be neither.
 
@@ -43,7 +43,7 @@ def test_generation_params_are_forwarded_as_one_json_object(tmp_path: Path) -> N
     The input is a ``MappingProxyType`` because that is what the registry actually resolves a row
     to — a read-only mapping, deliberately not a dict. A plain-dict fixture here reads identically
     and tests nothing: ``json.dumps`` accepts the dict and rejects the mapping proxy, so the
-    convenient fixture is green against code that raises on every real catalog row.
+    convenient fixture is green against code that raises on every real registry row.
     """
     command = _script().benchmark_command(
         base_url="http://localhost:8080",
@@ -63,7 +63,7 @@ def test_a_model_declaring_no_generation_params_omits_the_flag(tmp_path: Path) -
     """An empty mapping sends no flag at all, rather than an empty JSON object.
 
     Oracle: the flag is optional and defaults to declaring nothing, so passing ``{}`` explicitly
-    would say the same thing in more words. Most catalog rows declare no parameters, so this is the
+    would say the same in more words. Most registry rows declare no parameters, so this is the
     common shape of the command and the one a reader will check against the docstring.
     """
     command = _script().benchmark_command(
@@ -83,7 +83,7 @@ def test_the_command_carries_the_server_the_run_is_scored_against(tmp_path: Path
 
     Oracle: ``benchmarks/run.py`` takes the server it scores against as ``--base-url``/``--model``
     and its scorecard destination as ``--out``. The served id is the one the server REPORTS, not
-    the catalog name — a scorecard labelled with a name the server never served would attribute the
+    the registry name — a scorecard labelled with a name the server never served attributes the
     result to the wrong weights.
     """
     command = _script().benchmark_command(

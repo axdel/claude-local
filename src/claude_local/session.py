@@ -1,4 +1,4 @@
-"""The interactive surface — serve one catalogued model and hand back something you can call.
+"""The interactive surface — serve one registered model and hand back something you can call.
 
 ``implement()`` is the machine front door: it takes a task and returns an outcome. This is the
 human one. ``model_session("gpt-oss-20b")`` resolves the name in the store, spawns a server, waits
@@ -107,10 +107,10 @@ class ModelSession:
         max_tokens: int = _CHAT_MAX_TOKENS,
         generation_timeout_s: float = _CHAT_GENERATION_TIMEOUT_S,
     ) -> ModelSession:
-        """Resolve a catalogued name into a session specification, spawning nothing.
+        """Resolve a registered name into a session specification, spawning nothing.
 
         Args:
-            name: A model name from the catalog's NAME column.
+            name: A model name from the registry's NAME column.
             max_tokens: Decode cap for one turn.
             generation_timeout_s: Wall-clock bound on one turn's decode.
 
@@ -118,9 +118,9 @@ class ModelSession:
             The specification, carrying the row's own generation parameters.
 
         Raises:
-            ModelNotPresent: The name is catalogued but its weights are not in the store.
+            ModelNotPresent: The name is registered but its weights are not in the store.
                 Nothing here ever downloads a model.
-            UnknownModel: The name is not in the catalog at all.
+            UnknownModel: The name is not in the registry at all.
         """
         resolved = ModelRegistry.default().resolve(name)
         return cls(
@@ -171,7 +171,7 @@ def model_session(
     generation_timeout_s: float = _CHAT_GENERATION_TIMEOUT_S,
     startup_timeout_s: float = DEFAULT_STARTUP_TIMEOUT_S,
 ) -> AbstractContextManager[ChatSession]:
-    """Serve a catalogued model for the duration of a ``with`` block.
+    """Serve a registered model for the duration of a ``with`` block.
 
     The one-liner the REPL wants::
 
@@ -182,7 +182,7 @@ def model_session(
     The server is spawned on entry and gone on exit, including when the block raises.
 
     Args:
-        name: A model name from the catalog's NAME column.
+        name: A model name from the registry's NAME column.
         max_tokens: Decode cap for one turn.
         generation_timeout_s: Wall-clock bound on one turn's decode.
         startup_timeout_s: How long to wait for the server to answer before giving up.
@@ -191,8 +191,8 @@ def model_session(
         A context manager yielding a callable ``ChatSession``.
 
     Raises:
-        ModelNotPresent: The name is catalogued but its weights are not in the store.
-        UnknownModel: The name is not in the catalog at all.
+        ModelNotPresent: The name is registered but its weights are not in the store.
+        UnknownModel: The name is not in the registry at all.
     """
     spec = ModelSession.for_model(
         name, max_tokens=max_tokens, generation_timeout_s=generation_timeout_s

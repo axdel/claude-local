@@ -1,8 +1,8 @@
 """Resolution tests for the model registry.
 
-The registry is the curated catalog of models that *may* be served; the model store is the
+The registry is the curated table of models that *may* be served; the model store is the
 directory of weights actually on disk. These are two concepts, and the tests hold them apart:
-a name absent from the catalog and a name present in the catalog but missing from disk are
+a name absent from the registry and a name present in the registry but missing from disk are
 different failures, because they call for different fixes (add a row vs pull the weights).
 
 Expected values are read off the registry format the fixtures declare, never off the parser.
@@ -40,7 +40,7 @@ _REGISTRY_FIXTURE = "\n".join(
 
 
 def _registry(tmp_path: Path, *, present: tuple[str, ...] = ()) -> ModelRegistry:
-    """Build a registry over a fixture catalog and a store holding ``present`` models."""
+    """Build a registry over a fixture table and a store holding ``present`` models."""
     registry_path = tmp_path / "models.psv"
     registry_path.write_text(_REGISTRY_FIXTURE)
     store_root = tmp_path / "store"
@@ -50,7 +50,7 @@ def _registry(tmp_path: Path, *, present: tuple[str, ...] = ()) -> ModelRegistry
     return ModelRegistry(registry_path=registry_path, store_root=store_root)
 
 
-def test_resolve_returns_the_catalog_row_and_the_store_path(tmp_path: Path) -> None:
+def test_resolve_returns_the_registry_row_and_the_store_path(tmp_path: Path) -> None:
     resolved = _registry(tmp_path, present=("gpt-oss-20b",)).resolve("gpt-oss-20b")
 
     # Oracle: the fixture's own row declares each value; nothing here was read off the parser.
@@ -84,7 +84,7 @@ def test_an_absent_params_column_declares_no_generation_params(tmp_path: Path) -
     """A "-" means nothing to declare, matching every other optional column in the format.
 
     Oracle: ``-`` already means "nothing to declare" for DRAFT and FLAGS (``_ABSENT``), so one
-    reading of that token across the format is what keeps the catalog legible. An empty mapping —
+    reading of that token across the format is what keeps the registry legible. An empty mapping —
     not ``None`` — because the consumer forwards it into a request body either way.
     """
     resolved = _registry(tmp_path, present=("gpt-oss-20b",)).resolve("gpt-oss-20b")
@@ -118,12 +118,12 @@ def test_a_generation_parameter_without_a_value_is_refused(tmp_path: Path) -> No
 def test_a_declared_draft_whose_weights_are_absent_resolves_to_no_draft_path(
     tmp_path: Path,
 ) -> None:
-    """A draft named in the catalog but never pulled must not read as servable.
+    """A draft named in the registry but never pulled must not read as servable.
 
     Oracle: the registry/store split — the DRAFT column says what may be pulled, only the store
     proves what is on disk. A consumer handed the repo id for absent weights downloads them, so
     the path staying None is what keeps that branch unreachable. This is the real shipped state:
-    the catalog names a draft for Qwen3.8-27B whose weights are not in the store.
+    the registry names a draft for Qwen3.8-27B whose weights are not in the store.
     """
     resolved = _registry(tmp_path, present=("Qwen3.8-27B",)).resolve("Qwen3.8-27B")
 
@@ -146,7 +146,7 @@ def test_a_model_with_no_declared_draft_has_no_draft_path_even_if_a_directory_ex
     """The row decides whether a draft exists at all; a stray directory must not enable one.
 
     Oracle: speculative decoding needs a draft that actually matches the model, which only the
-    catalog can assert. Inferring one from a directory name would serve an unvalidated pairing.
+    registry can assert. Inferring one from a directory name would serve an unvalidated pairing.
     """
     resolved = _registry(tmp_path, present=("gpt-oss-20b", "gpt-oss-20b-MTP")).resolve(
         "gpt-oss-20b"
@@ -171,7 +171,7 @@ def test_a_row_with_no_flags_resolves_to_an_empty_sequence(tmp_path: Path) -> No
 
 
 def test_an_unknown_name_is_refused_and_names_what_is_available(tmp_path: Path) -> None:
-    """A name absent from the catalog cannot be served, and the refusal must be actionable."""
+    """A name absent from the registry cannot be served, and the refusal must be actionable."""
     registry = _registry(tmp_path, present=("gpt-oss-20b",))
 
     with pytest.raises(UnknownModel) as refusal:
@@ -183,14 +183,14 @@ def test_an_unknown_name_is_refused_and_names_what_is_available(tmp_path: Path) 
     assert "gpt-oss-20b" in str(refusal.value)
 
 
-def test_a_catalogued_model_absent_from_the_store_is_a_distinct_refusal(tmp_path: Path) -> None:
-    """Catalogued-but-not-pulled is not the same failure as unknown, and must not be conflated.
+def test_a_registered_model_absent_from_the_store_is_a_distinct_refusal(tmp_path: Path) -> None:
+    """Registered-but-not-pulled is not the same failure as unknown, and must not be conflated.
 
     Oracle: the registry lists what *may* be pulled, so a row proves nothing about the disk.
     The two cases call for different fixes — add a row vs pull the weights — so a caller that
     cannot tell them apart cannot act on either.
     """
-    registry = _registry(tmp_path, present=())  # catalogued, but nothing on disk
+    registry = _registry(tmp_path, present=())  # registered, but nothing on disk
 
     with pytest.raises(ModelNotPresent) as refusal:
         registry.resolve("gpt-oss-20b")
@@ -198,7 +198,7 @@ def test_a_catalogued_model_absent_from_the_store_is_a_distinct_refusal(tmp_path
     assert "gpt-oss-20b" in str(refusal.value)
 
 
-def test_names_lists_the_catalog_skipping_comments_and_the_header(tmp_path: Path) -> None:
+def test_names_lists_the_registry_skipping_comments_and_the_header(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
 
     # Oracle: the fixture declares 3 model rows behind 2 comment lines and 1 header line.
@@ -211,18 +211,18 @@ def test_servable_names_keeps_only_the_rows_whose_weights_are_in_the_store(
     """Oracle: 2 of the fixture's 3 rows have a store directory, so exactly those 2 are servable.
 
     The middle row is the one left unpulled, so a filter that returned a prefix or a suffix of the
-    catalog — rather than the actually-present subset — would not survive this arrangement.
+    registry — rather than the actually-present subset — would not survive this arrangement.
     """
     registry = _registry(tmp_path, present=("gpt-oss-20b", "Gemma4-31B"))
 
     assert registry.servable_names() == ("gpt-oss-20b", "Gemma4-31B")
 
 
-def test_servable_names_preserves_catalog_order_not_store_order(tmp_path: Path) -> None:
-    """Oracle: the catalog declares Qwen3.8-27B before Gemma4-31B, so servable order follows it.
+def test_servable_names_preserves_registry_order_not_store_order(tmp_path: Path) -> None:
+    """Oracle: the registry declares Qwen3.8-27B before Gemma4-31B, so servable order follows it.
 
     The store is created in the opposite order below. A filesystem listing would return whatever
-    order the directory yields, which is not the catalog's — and the sweep reports in catalog
+    order the directory yields, which is not the registry's — and the sweep reports in registry
     order.
     """
     registry = _registry(tmp_path, present=("Gemma4-31B", "Qwen3.8-27B"))
@@ -231,7 +231,7 @@ def test_servable_names_preserves_catalog_order_not_store_order(tmp_path: Path) 
 
 
 def test_servable_names_is_empty_when_the_store_holds_nothing(tmp_path: Path) -> None:
-    """Oracle: no weights pulled means no model can be served, so the catalog contributes none."""
+    """Oracle: no weights pulled means no model can be served, so the registry contributes none."""
     registry = _registry(tmp_path)
 
     assert registry.servable_names() == ()
@@ -256,25 +256,25 @@ def test_a_row_with_the_wrong_column_count_is_refused(tmp_path: Path) -> None:
     assert "models.psv:2" in str(refusal.value)
 
 
-def test_the_shipped_catalog_parses_without_a_store() -> None:
-    """The committed catalog is well-formed — checked where no store is needed to check it.
+def test_the_shipped_registry_parses_without_a_store() -> None:
+    """The committed registry is well-formed — checked where no store is needed to check it.
 
-    Oracle: the catalog is repo-relative, so it exists in every worktree, while the store does not
+    Oracle: the registry is repo-relative, so it exists in every worktree, while the store does not
     (see ``ModelRegistry.default``). Reconciling the two must therefore skip when no weights are
-    present — but the catalog's SHAPE never needs weights, and folding both checks into one
+    present — but the registry's SHAPE never needs weights, and folding both checks into one
     skippable test left the shape unguarded exactly where the suite normally runs. A NOTE that
     grew a stray pipe split its row into eight fields and reached a passing commit gate; the same
-    catalog raised MalformedRegistry the moment anything resolved a name against it. This test is
+    registry raised MalformedRegistry the moment anything resolved a name against it. This test is
     that resolution, run unconditionally, so the refusal happens at the gate instead of in front
     of a user.
     """
     names = ModelRegistry.default().names()
 
-    assert names, "the committed catalog names no models"
+    assert names, "the committed registry names no models"
 
 
-def test_the_shipped_registry_catalogues_every_model_the_store_holds() -> None:
-    """The committed catalog and the real store agree — no directory the catalog fails to name.
+def test_the_shipped_registry_names_every_model_the_store_holds() -> None:
+    """The committed registry and the real store agree — no directory the registry fails to name.
 
     Oracle: the registry is the single source for serving a model, so a directory it does not
     name is unservable. Skipped rather than passed when no weights are present — a worktree's

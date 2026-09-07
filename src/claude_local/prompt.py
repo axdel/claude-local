@@ -1,7 +1,7 @@
 """Prompt assembly — the byte-stable KV-cacheable prefix and the bounded volatile tail.
 
 D-PROMPT-001, amended by D-CONTEXT-001: the loop reuses the server's prefill KV cache by
-sending a prefix that is byte-identical across a task's iterations — the static rules card,
+sending a prefix that is byte-identical across a task's attempts — the static rules card,
 the task spec, any ordered read-only context files, and the IMMUTABLE test, in a fixed layout
 with no builder-generated timestamps, run ids, or absolute worktree paths. Pinning the test in
 the prefix also blocks the model from rewriting or importing it away. Only the tail varies: the
@@ -10,7 +10,7 @@ path-stripped so neither can starve the other or prime a derail.
 
 Assembly is a pure function of (card, spec): ``stable_prefix`` returns identical bytes for the
 same spec, which is what the prefill cache keys on. The card is read once at construction (a
-committed static asset), never per call, so no filesystem read sits on the per-iteration path.
+committed static asset), never per call, so no filesystem read sits on the per-attempt path.
 """
 
 from __future__ import annotations

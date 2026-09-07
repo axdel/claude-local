@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --quiet python
-"""Serve one catalogued model and drive the bundled example against it, end to end.
+"""Serve one registered model and drive the bundled example against it, end to end.
 
 This is the whole chain a downstream user composes, in one re-runnable command: resolve a name
 through the model registry, spawn the MLX server for it, and run the documented example — the
@@ -14,14 +14,14 @@ time drifts silently from the code it exercises.
     scripts/e2e_local_model.py gpt-oss-20b
 
 The model store is read from CLAUDE_LOCAL_MODELS when set. That override is what makes the
-script usable from a git worktree, whose own `models/` holds the catalog but no weights.
+script usable from a git worktree, whose own `models/` holds the registry but no weights.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import subprocess  # nosec B404 (argv is built here from catalog data, never shell-interpreted)
+import subprocess  # nosec B404 (argv is built here from registry data, never shell-interpreted)
 import sys
 import time
 from pathlib import Path

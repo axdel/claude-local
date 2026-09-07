@@ -27,7 +27,7 @@ from claude_local.types import Budget
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "sse"
 
-# A substitute for the model server: the same /v1/models catalogue a real one advertises, plus a
+# A substitute for the model server: the same /v1/models list a real one advertises, plus a
 # /v1/chat/completions that replays a recorded SSE stream. Small enough to pass as an argument,
 # real enough that the process must actually be reaped.
 _SUBSTITUTE_SERVER = """
@@ -190,7 +190,7 @@ def test_a_server_that_never_answers_is_still_reaped() -> None:
 def _store_with(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str) -> None:
     """Point the registry at a throwaway store holding just ``name``, so no real weights are read.
 
-    The catalog is repo-relative and present in every worktree; the store is not, which is exactly
+    The registry is repo-relative and present in every worktree; the store is not, which is exactly
     what ``CLAUDE_LOCAL_MODELS`` exists to override.
     """
     (tmp_path / name).mkdir()
@@ -212,19 +212,19 @@ def test_for_model_resolves_without_spawning(
     assert spec.server.host == "127.0.0.1"  # never mlx_vlm's 0.0.0.0 default
 
 
-def test_an_uncatalogued_name_is_refused_before_anything_is_spawned(
+def test_an_unregistered_name_is_refused_before_anything_is_spawned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spawned: list[object] = []
     monkeypatch.setattr(subprocess, "Popen", lambda *args, **_kwargs: spawned.append(args))
 
     with pytest.raises(UnknownModel):
-        ModelSession.for_model("no-such-model-in-any-catalog")
+        ModelSession.for_model("no-such-model-in-any-registry")
 
     assert spawned == []
 
 
-def test_a_catalogued_model_with_no_weights_is_refused_never_fetched(
+def test_a_registered_model_with_no_weights_is_refused_never_fetched(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Nothing here ever downloads a model: an absent store entry is an error, not a fetch."""

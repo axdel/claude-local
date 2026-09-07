@@ -1,7 +1,7 @@
 """Tests for the prompt assembler (``claude_local.prompt``).
 
 The stable prefix is the KV-cache reuse invariant (D-PROMPT-001): byte-identical across a task's
-iterations so the server's prefill cache is reused. These tests pin ASSEMBLY DETERMINISM (same
+attempts so the server's prefill cache is reused. These tests pin ASSEMBLY DETERMINISM (same
 spec -> identical bytes) and the absence of volatile tokens in the committed card + scaffolding —
 never a server cache hit, which is not observable here. Feedback distillation is oracle-tested for
 its declared byte cap and for preserving the failing node id after absolute-path stripping.

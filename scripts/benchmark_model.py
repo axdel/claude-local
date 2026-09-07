@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --quiet python
-"""Serve one catalogued model and run the standing benchmark against it, end to end.
+"""Serve one registered model and run the standing benchmark against it, end to end.
 
 `benchmarks/run.py` scores a model over the whole case ladder, but takes an already-running server
 as a prerequisite — claude-local never downloads or serves a model on the benchmark's behalf. This
@@ -21,7 +21,7 @@ full ladder's cost.
     scripts/benchmark_model.py gpt-oss-20b --only 01_scaffold --stream
 
 The model store is read from CLAUDE_LOCAL_MODELS when set. That override is what makes the script
-usable from a git worktree, whose own `models/` holds the catalog but no weights.
+usable from a git worktree, whose own `models/` holds the registry but no weights.
 
 Run from the repository root, like every other command here — the shebang resolves the project's
 environment from the working directory. Under a bare `python3` it dies on the first import.
@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess  # nosec B404 (argv is built here from catalog data, never shell-interpreted)
+import subprocess  # nosec B404 (argv is built here from registry data, never shell-interpreted)
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -73,7 +73,7 @@ def benchmark_command(
 
     Args:
         base_url: Where the just-started server is listening.
-        served: The model id the server REPORTS, not the catalog name — the scorecard is labelled
+        served: The model id the server REPORTS, not the registry name — the scorecard is labelled
             with it, and a name the server never served would attribute the run to other weights.
         out: Directory the scorecard and produced code are written into.
         generation_params: The row's request-body fields; an empty mapping forwards no flag.

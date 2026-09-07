@@ -51,7 +51,7 @@ class Backend(Protocol):
 
     ``prefix`` is the byte-identical KV-cacheable head (rules card + spec + optional
     ordered context files + immutable test); ``tail`` is the per-attempt feedback.
-    Splitting them lets a caller hold the prefix constant across a task's iterations
+    Splitting them lets a caller hold the prefix constant across a task's attempts
     so the server can reuse its prefill cache.
     """
 
@@ -121,7 +121,7 @@ class BackendUnavailable(RuntimeError):
         super().__init__(f"model server unavailable at {url} (model {model!r}): {reason}")
 
 
-class GenerationStalled(RuntimeError):
+class GenerationSilent(RuntimeError):
     """A reachable server accepted the request and then sent nothing within the read bound.
 
     A task outcome, not a precondition failure, and the distinction is the whole point of the
@@ -130,7 +130,7 @@ class GenerationStalled(RuntimeError):
     or answering non-2xx — was demonstrably met. Raising that here made one model's slow first
     generation abort every remaining task in the run.
 
-    The client translates this into the same ``STALLED`` verdict the DerailGuard reaches on a
+    The client translates this into the same ``SILENT`` verdict the DerailGuard reaches on a
     silence it *can* see. Both describe one thing — a generation that produced nothing — and the
     only reason two layers report it is that the guard's clock advances on chunk arrival, so a
     stretch with no chunks in it is the one gap the guard is structurally unable to observe.
@@ -146,7 +146,7 @@ class HttpxBackend:
     """POSTs the OpenAI-compatible streaming request to a local server, yielding bytes.
 
     The client is injected and kept warm across generations (one resident connection,
-    not one per iteration). The request always streams with usage accounting on and the
+    not one per attempt). The request always streams with usage accounting on and the
     budget's token cap applied; ``generation_params`` supplies server-specific sampling
     knobs (non-thinking, repetition penalty) but can never countermand those core
     invariants. Real-run only — construction and request shape are unit-tested against a
@@ -177,11 +177,11 @@ class HttpxBackend:
                 a domain fault the caller can act on, not a raw ``httpx`` exception (clients
                 translate infra errors to domain errors); the original is preserved as
                 ``__cause__``.
-            GenerationStalled: the server took the request and then failed to finish answering —
+            GenerationSilent: the server took the request and then failed to finish answering —
                 it sent no bytes within the read bound, or the stream broke after the response had
                 started. Split from the fault above because the two demand opposite responses: a
                 missing prerequisite is fatal to the whole run, while a met one leaves the run
-                going with this single task recorded as stalled.
+                going with this single task recorded as silent.
 
         The split therefore turns on *whether the response started*, not on which transport error
         carried the failure. A server killed mid-decode raises the same ``RequestError`` family as
@@ -215,9 +215,9 @@ class HttpxBackend:
             # response got: a read bound expiring means the server took the request and then went
             # quiet, which is this generation failing rather than the server missing.
             reason = f"{type(exc).__name__}: {exc}"
-            raise GenerationStalled(self._url, self._model, reason) from exc
+            raise GenerationSilent(self._url, self._model, reason) from exc
         except httpx.RequestError as exc:
             reason = f"{type(exc).__name__}: {exc}"
             if response_started:
-                raise GenerationStalled(self._url, self._model, reason) from exc
+                raise GenerationSilent(self._url, self._model, reason) from exc
             raise BackendUnavailable(self._url, self._model, reason) from exc

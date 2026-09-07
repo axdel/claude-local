@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _with_model_id_replaced(raw: bytes, served: str, name: str) -> bytes:
-    """Swap the served model id for the catalog name in every recorded frame.
+    """Swap the served model id for the registry name in every recorded frame.
 
     The one substitution a capture from this project makes, and it is structural rather than
     cosmetic: models are named by absolute store path so that a repo id can never fall through

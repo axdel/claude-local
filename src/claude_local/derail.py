@@ -4,11 +4,11 @@ One guard instance watches one generation. The caller feeds it decoded text delt
 stream and ticks it on every transport chunk; both return the first bound that trips (or
 ``None``), and the caller aborts the generation on the first non-``None``. Four bounds:
 
-  TIMEOUT   — the injected wall clock passed ``start + timeout_s`` (deterministic under a fake
-              clock in tests; ``time.monotonic`` in production).
-  STALLED   — no content for ``STALL_TIMEOUT_S``, whatever kept the socket warm. Throughput, not
+  TIMEOUT   — the injected clock passed ``start + generation_timeout_s`` (deterministic under
+              a fake clock in tests; ``time.monotonic`` in production).
+  SILENT    — no content for ``SILENCE_TIMEOUT_S``, whatever kept the socket warm. Throughput, not
               elapsed time, separates a slow model from a hung one, so this is the bound that lets
-              ``timeout_s`` be generous without letting a hang spend it.
+              ``generation_timeout_s`` be generous without letting a hang spend it.
   TOKEN_CAP — decoded chars exceeded ``max_tokens * CHARS_PER_TOKEN``. A lenient *client* backstop
               on decode length; the server's ``max_tokens`` is the primary hard bound (D-PERF-001).
   REPETITION — a large-n line repeated ``REPETITION_THRESHOLD`` times consecutively past a warmup
@@ -58,9 +58,9 @@ CHARS_PER_TOKEN = 4
 # produced ONE content token in 447.2s and 338s respectively — bytes the whole time, content
 # almost never. Set between the two, cutting a hang at roughly half the time it took to surface.
 # It does NOT have to clear the slowest model's startup: that is time-to-first-BYTE, dominated by
-# a lazy weight load (50.1s cold on the catalog's largest model, against 9.1s of prefill within
+# a lazy weight load (50.1s cold on the registry's largest model, against 9.1s of prefill within
 # it), and `backend.HTTP_READ_TIMEOUT_S` owns that window — see `scripts/measure_first_byte.py`.
-STALL_TIMEOUT_S = 180.0
+SILENCE_TIMEOUT_S = 180.0
 
 
 class DerailReason(enum.Enum):
@@ -69,7 +69,7 @@ class DerailReason(enum.Enum):
     REPETITION = "repetition"
     TOKEN_CAP = "token_cap"  # noqa: S105 — enum value, not a credential (name contains "TOKEN")
     TIMEOUT = "timeout"
-    STALLED = "stalled"
+    SILENT = "silent"
 
 
 class DerailGuard:
@@ -100,9 +100,9 @@ class DerailGuard:
     def tripped(self) -> DerailReason | None:
         """The latched verdict, or ``None``.
 
-        Readable without feeding another delta, because a stall's defining case is that no further
+        Readable without feeding another delta: a silence's defining case is that no further
         content arrives — a verdict reachable only through ``feed`` would be unreadable in exactly
-        the situation the stall bound exists to report.
+        the situation the silence bound exists to report.
         """
         return self._tripped
 
@@ -150,8 +150,8 @@ class DerailGuard:
             return self._trip(DerailReason.TIMEOUT)
         if self._silence_since is None:
             self._silence_since = now  # first arrival — start the clock, never judge it
-        if now - self._silence_since > STALL_TIMEOUT_S:
-            return self._trip(DerailReason.STALLED)
+        if now - self._silence_since > SILENCE_TIMEOUT_S:
+            return self._trip(DerailReason.SILENT)
         return None
 
     def _trip(self, reason: DerailReason) -> DerailReason:

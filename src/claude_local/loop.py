@@ -375,7 +375,7 @@ class Loop:
         """Restore the best attempt, classify how the run ended, and total what it burned.
 
         The exit phase, whole: every branch here reads the run's accumulated facts and none of them
-        can advance it, so keeping them in the loop body only lent the iteration's variables a
+        can advance it, so keeping them in the loop body only lent the attempt's variables a
         second, longer life. ``scored`` is whether the LAST attempt reached the oracle, which is
         what separates a structural block from plain exhaustion.
         """
@@ -410,9 +410,9 @@ class Loop:
         Returns the generation for the economy record and the plan text to freeze into the prefix,
         so the caller adds no branch of its own — the lever's whole cost is contained here.
 
-        Computed once per TASK. Recomputing it per attempt would mutate the prefix every iteration
-        and discard the server's prefill cache, reversing the guarantee the stable prefix exists to
-        provide (D-PROMPT-001) — the same freeze-once shape context files already have.
+        Computed once per TASK. Recomputing it per attempt would mutate the prefix and discard the
+        server's prefill cache, reversing the guarantee the stable prefix exists to provide
+        (D-PROMPT-001) — the same freeze-once shape context files already have.
 
         A plan the model failed to produce degrades to no plan rather than ending the run: the
         plan is an aid, never the oracle. If the server faulted or the guard cut the generation,

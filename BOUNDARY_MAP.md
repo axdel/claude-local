@@ -58,8 +58,8 @@
 | loop | telemetry | may-import | Writes the local economy record. | active |  |
 | loop | types | may-import | Returns LoopResult. | active |  |
 | model_server | httpx | may-import | Readiness polling and the served-model probe speak HTTP, the one external transport this package allows. | active |  |
-| model_server | model_registry | may-import | Turns a resolved catalog row into a launch command; store paths keep the download branch unreachable. | active |  |
-| model_server | sandbox | must-not-import | The oracle profile denies network, so a listening server cannot run under it; hosting one would widen the cage that contains untrusted model code. Separate spawn paths by design. | active |  |
+| model_server | model_registry | may-import | Turns a resolved registry row into a launch command; store paths keep the download branch unreachable. | active |  |
+| model_server | sandbox | must-not-import | The oracle profile denies network, so a listening server cannot run under it; hosting one would widen the sandbox that contains untrusted model code. Separate spawn paths by design. | active |  |
 | prompt | runner | may-import | Distills feedback over the oracle TestScore. | active |  |
 | prompt | types | may-import | Assembles the stable prefix from TaskSpec. | active |  |
 | runner | sandbox | may-import | Runs the oracle under kernel confinement. | active |  |
@@ -76,7 +76,7 @@
 | session | backend | may-import | Constructs HttpxBackend against the id the running server advertises. | active |  |
 | session | client | may-import | Wraps the backend in ModelClient, kept warm for the session's whole lifetime. | active |  |
 | session | httpx | may-import | Constructs the one keep-alive httpx.Client the session reuses across turns. | active |  |
-| session | model_registry | may-import | Resolves a catalogued name to its store path before anything is spawned. | active |  |
+| session | model_registry | may-import | Resolves a registered name to its store path before anything is spawned. | active |  |
 | session | model_server | may-import | Composes ModelServer.for_model and .running; never spawns a process directly. | active |  |
 | session | sandbox | may-import | Reads DEFAULT_ORACLE_TIMEOUT_S for the Budget field a chat turn never spends. | active |  |
 | session | types | may-import | The interactive front door builds a Budget per turn, the same task value object implement takes. | active |  |

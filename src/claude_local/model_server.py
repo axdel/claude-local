@@ -22,7 +22,7 @@ import json
 import os
 import signal
 import socket
-import subprocess  # nosec B404 (argv is built here from catalog data, never shell-interpreted)
+import subprocess  # nosec B404 (argv is built here from registry data, never shell-interpreted)
 import sys
 import tempfile
 import time
@@ -45,7 +45,7 @@ _LOOPBACK = "127.0.0.1"
 _BUILDER_OWNED_OPTIONS = frozenset(
     {"--host", "--port", "--model", "--max-tokens", "--draft-model", "--draft-kind"}
 )
-"""Options ``for_model`` supplies itself, which a catalog FLAGS cell may therefore not declare.
+"""Options ``for_model`` supplies itself, which a registry FLAGS cell may therefore not declare.
 
 The server parses argv with argparse, which resolves a repeated option to its LAST value, and
 FLAGS is appended after these. Ordering is what would otherwise keep the bind on loopback, and
@@ -62,7 +62,7 @@ DEFAULT_STARTUP_TIMEOUT_S = 900.0
 """Fifteen minutes: a 27-31B model at 6-bit streams off disk on a cold first load.
 
 The value is the largest any caller needed, not a guess. It was eight minutes while every script
-that actually serves the biggest catalogued models overrode it upward — which is the constant
+that actually serves the biggest registered models overrode it upward — which is the constant
 being wrong rather than the callers being cautious, since an override that every caller makes is
 the default in the wrong place. Callers now pass this through instead of re-typing a number.
 """
@@ -78,7 +78,7 @@ that is loaded but busy — answering correctly in more than a poll interval —
 client-side and is reported as never having answered, at any budget.
 """
 
-_CATALOGUE_TIMEOUT_S = 30.0
+_SERVED_MODELS_TIMEOUT_S = 30.0
 """One-shot budget for reading the served model id — generous, since it is asked once per run."""
 
 _TERMINATE_GRACE_S = 10.0
@@ -88,7 +88,7 @@ _LOG_TAIL_BYTES = 8 * 1024
 """Diagnostic bytes kept from a failed startup; the cause is conventionally at the tail."""
 
 _ANSWER_EXCERPT_CHARS = 200
-"""How much of an unrecognised catalogue answer to quote — the head, where a proxy names itself."""
+"""Head chars kept from an unrecognised served-models answer — where a proxy names itself."""
 
 
 class PortUnavailable(Exception):
@@ -115,31 +115,31 @@ class ServerHandle:
         """Ask the running server which model it is serving.
 
         The server names the model however it chose to — mlx_vlm advertises the store path it was
-        launched with, which is neither the catalogue name nor the repo id — and every
+        launched with, which is neither the registry name nor the repo id — and every
         chat-completions request must echo that id back. Asking beats assuming, so the handle that
         already knows the address owns the question.
 
         Returns:
-            The id of the first model the server advertises at its catalogue endpoint.
+            The id of the first model the server advertises at its served-models endpoint.
 
         Raises:
             httpx.HTTPError: The server did not answer.
             LookupError: The server answered, but advertises no model this can address — either
-                an empty catalogue or a body that is not a catalogue at all.
+                an empty served-models list, or a body that is not one at all.
         """
-        catalogue_url = f"{self.base_url}{_READINESS_PATH}"
-        answer = httpx.get(catalogue_url, timeout=_CATALOGUE_TIMEOUT_S).text
-        advertised = _advertised_models(catalogue_url, answer)
+        served_models_url = f"{self.base_url}{_READINESS_PATH}"
+        answer = httpx.get(served_models_url, timeout=_SERVED_MODELS_TIMEOUT_S).text
+        advertised = _advertised_models(served_models_url, answer)
         if not advertised:
-            raise LookupError(f"the model server at {catalogue_url} advertises no model")
+            raise LookupError(f"the model server at {served_models_url} advertises no model")
         return str(advertised[0]["id"])
 
 
-def _advertised_models(catalogue_url: str, answer: str) -> list[dict[str, object]]:
-    """Read the catalogue entries out of a server's answer, or say what arrived instead.
+def _advertised_models(served_models_url: str, answer: str) -> list[dict[str, object]]:
+    """Read the advertised models out of a server's answer, or say what arrived instead.
 
     Anything can be listening on a port — a proxy, a dev server, the wrong process — and answer
-    200 with a body that is not a catalogue. Indexing straight into it raises a bare ``KeyError:
+    200 with a body that is not a served-models list. Indexing into it raises a bare ``KeyError:
     'data'`` naming neither the address probed nor what came back, so the operator learns that a
     dict lacked a key rather than that something other than a model server holds their port.
     """
@@ -147,7 +147,7 @@ def _advertised_models(catalogue_url: str, answer: str) -> list[dict[str, object
         return list(json.loads(answer)["data"])
     except (json.JSONDecodeError, TypeError, KeyError) as exc:
         raise LookupError(
-            f"the model server at {catalogue_url} did not answer with a model catalogue. "
+            f"the model server at {served_models_url} did not answer with a served-models list. "
             f"It said: {answer[:_ANSWER_EXCERPT_CHARS]}"
         ) from exc
 
@@ -163,7 +163,7 @@ def _redeclared_builder_options(flags: tuple[str, ...]) -> tuple[str, ...]:
     is left servable — argparse does not match it either.
 
     Args:
-        flags: The catalog FLAGS cell, already split on whitespace into argv tokens.
+        flags: The registry FLAGS cell, already split on whitespace into argv tokens.
 
     Returns:
         The owned options the cell would reach, sorted for a stable message. Empty means none.
@@ -198,7 +198,7 @@ class ModelServer:
         *,
         max_tokens: int = _DEFAULT_MAX_TOKENS,
     ) -> ModelServer:
-        """Build the launch specification for a catalogued model, bound to loopback.
+        """Build the launch specification for a registered model, bound to loopback.
 
         The model is named by its **store path**, never by its repo id. mlx_vlm resolves the
         argument with ``Path(arg)`` and falls through to ``snapshot_download`` when it does not
@@ -206,7 +206,7 @@ class ModelServer:
         path that ``ModelRegistry.resolve`` already proved present keeps that branch unreachable.
 
         The draft model follows the same rule and is included only when its weights are on disk:
-        the catalog names one for a model whose draft was never pulled, and passing that id would
+        the registry names one for a model whose draft was never pulled, and passing that id would
         download it.
 
         The bind address is not a parameter, mirroring ``sandboxed_spawn``: this exposes no knob
@@ -214,7 +214,7 @@ class ModelServer:
         construction rather than by every caller remembering to leave a default alone.
 
         Args:
-            resolved: A catalogued model whose weights the registry confirmed are present.
+            resolved: A registered model whose weights the registry confirmed are present.
             max_tokens: Server-side generation ceiling.
 
         Raises:

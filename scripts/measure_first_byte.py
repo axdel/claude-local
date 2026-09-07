@@ -2,7 +2,7 @@
 """Report how long a freshly served model takes to send its first byte.
 
 This is the measurement behind `HTTP_READ_TIMEOUT_S` (`claude_local.backend`). That bound is
-a time-to-first-byte cap, so the number it must clear is the slowest first byte in the catalog —
+a time-to-first-byte cap, so the number it must clear is the slowest first byte in the registry —
 and the previous value was chosen by reasoning about prefill instead of measuring arrival, which
 is how it came to be wrong.
 

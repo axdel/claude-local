@@ -162,10 +162,10 @@ def test_mach_service_lookup_beyond_the_platform_baseline_is_denied(tmp_path: Pa
     """Oracle: the trusted parent knows the host's real ComputerName; the confined child must not.
 
     ``(deny network*)`` does not cover Mach IPC, so an unscoped ``(allow mach-lookup)`` is a side
-    channel out of the cage — the child can reach any XPC service registered on the host. Measured
-    on this branch while the blanket grant was still present: a confined ``pbpaste`` read a
-    sentinel straight off the developer's clipboard, and ``scutil`` returned the machine's real
-    name; with the grant removed, the clipboard came back empty and ``scutil`` fell back to a
+    channel out of the sandbox — the child can reach any XPC service registered on the host.
+    Measured on this branch while the blanket grant was still present: a confined ``pbpaste``
+    read a sentinel straight off the developer's clipboard, and ``scutil`` returned the machine's
+    real name; with the grant removed, the clipboard came back empty and ``scutil`` fell back to a
     generic default. That is exactly the "cannot exfiltrate secrets" claim the confinement makes.
 
     ComputerName is read through the SystemConfiguration Mach service and is a read-only query, so

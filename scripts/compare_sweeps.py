@@ -51,8 +51,8 @@ _UNSTAMPED = "unstamped"
 
 
 @dataclass(frozen=True, slots=True)
-class SweepResult:
-    """One model's measured result under one rules card — the unit the decision compares."""
+class LoadedScorecard:
+    """One model's measured scorecard under one rules card — the unit the decision compares."""
 
     model: str
     rules_card_digest: str
@@ -75,8 +75,8 @@ class SweepResult:
         return self.model.rstrip("/").rsplit("/", 1)[-1]
 
 
-def _load_scorecards(scorecards: Path = _SCORECARDS) -> list[SweepResult]:
-    """Every complete scorecard in ``scorecards``, with the style count of its produced code.
+def _load_scorecards(scorecard_directory: Path = _SCORECARDS) -> list[LoadedScorecard]:
+    """Every complete scorecard in ``scorecard_directory``, with its produced code's style count.
 
     Completeness is defined by the scorecards themselves — the widest case ladder any of them
     scored — rather than by loading the ladder to count it. Two reasons, and the second is the
@@ -84,23 +84,23 @@ def _load_scorecards(scorecards: Path = _SCORECARDS) -> list[SweepResult]:
     ladder's location is a private constant of the benchmark runner, so reading it here would give
     one fact two owners. Deriving it from the artifacts also handles a ladder that GREW: runs that
     scored the old, shorter ladder drop out rather than being compared as though 7 of 9 were their
-    result.
+    scorecard.
     """
     documents = [
         (path, json.loads(path.read_text(encoding="utf-8")))
-        for path in sorted(scorecards.glob("scorecard-*.json"))
+        for path in sorted(scorecard_directory.glob("scorecard-*.json"))
     ]
     if not documents:
         return []
     full_ladder = max(document["cases_total"] for _, document in documents)
 
-    results: list[SweepResult] = []
+    scorecards: list[LoadedScorecard] = []
     for path, loaded in documents:
         if loaded["cases_total"] < full_ladder:
             continue
         stamp_ms = int(path.stem.rsplit("-", 1)[1])
-        results.append(
-            SweepResult(
+        scorecards.append(
+            LoadedScorecard(
                 model=loaded["model"],
                 # Scorecards written before the card became a benchmark variable carry no digest.
                 # They are kept and labelled rather than dropped: they were all produced under the
@@ -123,10 +123,10 @@ def _load_scorecards(scorecards: Path = _SCORECARDS) -> list[SweepResult]:
                 style_findings=loaded.get("style_findings"),
             )
         )
-    return results
+    return scorecards
 
 
-def _output_fingerprint(result: SweepResult) -> tuple[str, bool, int, int, int, int]:
+def _output_fingerprint(scorecard: LoadedScorecard) -> tuple[str, bool, int, int, int, int]:
     """What a deterministic loop reproduces exactly: the model, its score, and what it burned.
 
     Wall-clock is deliberately absent — it is the one number that moves between identical runs,
@@ -141,21 +141,21 @@ def _output_fingerprint(result: SweepResult) -> tuple[str, bool, int, int, int, 
     them the same.
     """
     return (
-        result.model,
-        result.plan_first,
-        result.cases_passed,
-        result.cases_total,
-        result.completion_tokens,
-        result.attempts,
+        scorecard.model,
+        scorecard.plan_first,
+        scorecard.cases_passed,
+        scorecard.cases_total,
+        scorecard.completion_tokens,
+        scorecard.attempts,
     )
 
 
-def _drop_duplicated_unstamped(results: list[SweepResult]) -> list[SweepResult]:
+def _drop_duplicated_unstamped(scorecards: list[LoadedScorecard]) -> list[LoadedScorecard]:
     """Drop an unstamped row whose measurement a stamped row of the same model already reports.
 
     The loop is output-deterministic, so a run's totals are its fingerprint: an unstamped row that
     matches a stamped one exactly is that same configuration, measured once before the card was
-    recorded and once after. Listing both shows one result twice under two labels, which reads as
+    recorded and once after. Listing both shows one scorecard twice under two labels, reading as
     two independent data points.
 
     An unstamped row with no such twin stays, because it may be the only surviving record of a
@@ -164,44 +164,47 @@ def _drop_duplicated_unstamped(results: list[SweepResult]) -> list[SweepResult]:
     unknown, which is why these rows are still excluded from the verdicts below.
     """
     reported = {
-        _output_fingerprint(result) for result in results if result.rules_card_digest != _UNSTAMPED
+        _output_fingerprint(scorecard)
+        for scorecard in scorecards
+        if scorecard.rules_card_digest != _UNSTAMPED
     }
     return [
-        result
-        for result in results
-        if result.rules_card_digest != _UNSTAMPED or _output_fingerprint(result) not in reported
+        scorecard
+        for scorecard in scorecards
+        if scorecard.rules_card_digest != _UNSTAMPED
+        or _output_fingerprint(scorecard) not in reported
     ]
 
 
-def _latest_per_configuration(results: list[SweepResult]) -> list[SweepResult]:
+def _latest_per_configuration(scorecards: list[LoadedScorecard]) -> list[LoadedScorecard]:
     """One row per (model, card, planning lever): the most recent run of each configuration.
 
     All three name the configuration a token total belongs to, so all three are the key. Leaving
     any one out silently discards an arm of the A/B that varied it and reports the survivor as
-    that model's result — which is what a plan-first sweep did to the baseline sweep it followed.
+    that model's scorecard — what a plan-first sweep did to the baseline sweep it followed.
     """
-    latest: dict[tuple[str, str, bool], SweepResult] = {}
-    for result in results:
-        key = (result.model, result.rules_card_digest, result.plan_first)
-        if key not in latest or result.stamp_ms > latest[key].stamp_ms:
-            latest[key] = result
+    latest: dict[tuple[str, str, bool], LoadedScorecard] = {}
+    for scorecard in scorecards:
+        key = (scorecard.model, scorecard.rules_card_digest, scorecard.plan_first)
+        if key not in latest or scorecard.stamp_ms > latest[key].stamp_ms:
+            latest[key] = scorecard
     return sorted(
         latest.values(),
         key=lambda r: (-r.cases_passed, r.completion_tokens, r.short_model),
     )
 
 
-def _mode(result: SweepResult) -> str:
+def _mode(scorecard: LoadedScorecard) -> str:
     """How the row's run was configured, in one column-width word.
 
     The lever's canonical name when it is on; ``off`` when it is not. Naming the off state after
     the same lever rather than inventing a second term keeps this to the one concept the glossary
     declares — there is no such thing as a run in "direct mode", only a run that did not plan.
     """
-    return "plan-first" if result.plan_first else "off"
+    return "plan-first" if scorecard.plan_first else "off"
 
 
-def _print_table(rows: list[SweepResult]) -> None:
+def _print_table(rows: list[LoadedScorecard]) -> None:
     """Print every configuration, best first — most cases passed, then fewest tokens."""
     header = (
         f"{'model':<30} {'card':<13} {'mode':<10} {'cases':>6} {'tokens':>8} "
@@ -218,13 +221,13 @@ def _print_table(rows: list[SweepResult]) -> None:
         )
 
 
-def _print_card_verdicts(rows: list[SweepResult]) -> None:
+def _print_card_verdicts(rows: list[LoadedScorecard]) -> None:
     """For every model measured under more than one card, say which card won and by how much.
 
     The per-model verdict is the point: a card that helps a weak model can cost a strong one, so
     a single overall winner would average away the only finding that changes what to run.
     """
-    by_model_and_mode: dict[tuple[str, bool], list[SweepResult]] = {}
+    by_model_and_mode: dict[tuple[str, bool], list[LoadedScorecard]] = {}
     for row in rows:
         # Unstamped rows stay in the table above — they are real measurements — but they cannot
         # appear in a verdict. A difference can only be ATTRIBUTED to a card that can be named,
@@ -254,7 +257,7 @@ def _print_card_verdicts(rows: list[SweepResult]) -> None:
         print(f"  {model:<30} {mode:<10} best: {best.rules_card_digest}   [{others}]")
 
 
-def _print_mode_verdicts(rows: list[SweepResult]) -> None:
+def _print_mode_verdicts(rows: list[LoadedScorecard]) -> None:
     """For every (model, card) measured in both modes, say whether the plan paid for itself.
 
     The mirror of the card verdict, on the axis the lever varies, and per configuration for the
@@ -263,7 +266,7 @@ def _print_mode_verdicts(rows: list[SweepResult]) -> None:
     scaffolding a strong one is only slowed by. A single global answer would average away the
     finding that decides what to run.
     """
-    by_configuration: dict[tuple[str, str], list[SweepResult]] = {}
+    by_configuration: dict[tuple[str, str], list[LoadedScorecard]] = {}
     for row in rows:
         if row.rules_card_digest == _UNSTAMPED:
             continue
@@ -292,12 +295,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args(argv)
 
-    results = _load_scorecards()
-    if not results:
+    scorecards = _load_scorecards()
+    if not scorecards:
         print(f"error: no complete scorecard found under {_SCORECARDS}", file=sys.stderr)
         return _USAGE_ERROR
 
-    rows = _drop_duplicated_unstamped(_latest_per_configuration(results))
+    rows = _drop_duplicated_unstamped(_latest_per_configuration(scorecards))
     _print_table(rows)
     _print_card_verdicts(rows)
     _print_mode_verdicts(rows)

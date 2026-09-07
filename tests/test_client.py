@@ -165,7 +165,7 @@ def test_reasoning_tokens_are_metered_against_the_token_cap() -> None:
 def test_a_model_streaming_only_reasoning_is_not_judged_silent() -> None:
     """Reasoning is arrival: a model decoding chain-of-thought is working, not hung.
 
-    This is the defect that scored a working flagship model 0/7. The stall bound measures the gap
+    This is the defect that scored a working flagship model 0/7. The silence bound measures the gap
     since the last *content*, and reasoning deltas never reached it, so seven benchmark cases
     died at exactly 180.0s apiece while the server streamed normally throughout.
 
@@ -441,7 +441,7 @@ def test_token_cap_derail_stops_the_stream_and_estimates() -> None:
     )
 
 
-def test_a_stream_of_content_free_bytes_is_cut_at_the_stall_bound() -> None:
+def test_a_stream_of_content_free_bytes_is_cut_at_the_silence_bound() -> None:
     """Bytes that decode to nothing still drive the guard, so a warm socket cannot outlast it.
 
     The stream is SSE keepalive comments — real wire bytes a server sends to hold a connection
@@ -454,9 +454,9 @@ def test_a_stream_of_content_free_bytes_is_cut_at_the_stall_bound() -> None:
     chunk cannot state it — the first arrival only starts the silence clock, so a stream judged
     from a single tick is indistinguishable from one that never began (``derail.py``).
 
-    Oracle: the guard's stall bound is 180s of silence measured from the first byte, so the second
+    Oracle: the guard's silence bound is 180s measured from the first byte, so the second
     keepalive landing 200s after the first is past it, and the deadline is set far beyond that so
-    the verdict can only be STALLED. The expected text is empty because a comment yields no delta —
+    the verdict can only be SILENT. The expected text is empty because a comment yields no delta —
     derived from the SSE contract, not from running the decoder.
     """
     client = ModelClient(
@@ -466,7 +466,7 @@ def test_a_stream_of_content_free_bytes_is_cut_at_the_stall_bound() -> None:
 
     result = client.generate("prefix", "tail", build_budget(generation_timeout_s=100_000.0))
 
-    assert result.derail_reason is DerailReason.STALLED
+    assert result.derail_reason is DerailReason.SILENT
     assert result.text == ""
 
 

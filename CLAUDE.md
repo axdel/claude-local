@@ -57,8 +57,8 @@ The loop engine decomposes into single-responsibility modules, dependencies flow
 
 Serving and the front doors sit above that engine, and the loop depends on none of them:
 
-- **model registry** — resolves a name against the curated catalogue and the on-disk store. A
-  catalogued model with no weights is refused, never fetched.
+- **model registry** — resolves a name against its curated rows and the on-disk store. A
+  registered model with no weights is refused, never fetched.
 - **model server** — spawns a resolved model on 127.0.0.1, waits until it answers, and guarantees
   teardown on success and failure alike. Opt-in (`uv sync --group serve`); the loop never calls it.
 - **session** — the interactive surface: one `with` block yields a callable that serves a model,
@@ -77,17 +77,17 @@ and burned); the driving orchestrator (Claude Code) owns the comparison.
 Speed is a correctness-tier concern here, not finishing polish: a local model pays off only if
 the loop wrings maximum useful work from every token and every second of decode. Engineer the
 **inference hot path** — prefix construction, the generation call, derail detection, the
-per-iteration loop — for peak throughput, and back every optimization with the loop's own
+per-attempt loop — for peak throughput, and back every optimization with the loop's own
 telemetry (measure, never guess; cold paths like init and record-writing stay simple).
 
 Standing hot-path principles:
 
 - **KV-cache prefix reuse.** The system prefix (rules card + spec + optional ordered context
-  files + immutable test) is byte-identical across a task's iterations — only the feedback tail
+  files + immutable test) is byte-identical across a task's attempts — only the feedback tail
   changes. Stability is a hard invariant: any per-call mutation silently discards the server's
   prefill cache.
 - **One warm client, one resident model.** Reuse a single keep-alive httpx client; never
-  reconnect per iteration. Local inference is memory-bandwidth-bound — keep one model resident.
+  reconnect per attempt. Local inference is memory-bandwidth-bound — keep one model resident.
 - **Stream and abort early.** Consume tokens as they decode, so the derail guard kills a
   repetition loop or budget overrun mid-generation — not after a full wasted completion.
 - **Bounded, right-typed hot-path structures.** Repetition detection over a fixed ring buffer

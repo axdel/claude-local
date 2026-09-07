@@ -232,9 +232,9 @@ def _writable_subtree(impl_path: str) -> str:
 def _new_http_client() -> httpx.Client:
     """Create the keep-alive HTTP client for an owned-lifecycle call.
 
-    The read timeout outlasts the guard's stall bound rather than equalling it, because the two
+    The read timeout outlasts the guard's silence bound rather than equalling it, because the two
     are not peers. The guard bounds a stream delivering bytes but no content and reports one task
-    stalled; the socket bounds a stream delivering no bytes at all, and reaches that verdict from
+    silent; the socket bounds a stream delivering no bytes at all, and reaches that verdict from
     outside the guard's sight — ``_ticking`` runs the guard's clock on chunk arrival, so a stretch
     with no chunks in it is precisely the gap the guard cannot judge. Made equal, the socket won
     every race, including the ones the guard could see. Strictly greater, the guard decides
@@ -246,11 +246,12 @@ def _new_http_client() -> httpx.Client:
     request. A 24 GB model therefore spends minutes mid-request with nothing on the socket, and
     the server's own prefill timings cannot see it — they start once the weights are resident.
     ``scripts/measure_first_byte.py`` is the measurement; re-run it when a larger model joins the
-    registry, because this bound tracks the biggest weights in the catalog.
+    registry, because this bound tracks the biggest weights it holds.
 
-    It still deliberately does not scale with the task's ``timeout_s``. That budget bounds how long
-    a PRODUCING generation may run, and pinning a silence bound to it made the transport wait
-    longer the more generous the task was — the opposite of what a hang detector should do.
+    It still deliberately does not scale with the task's ``generation_timeout_s``. That budget
+    bounds how long a PRODUCING generation may run, and pinning a silence bound to it made the
+    transport wait longer the more generous the task was — the opposite of what a hang detector
+    should do.
     """
     timeout = httpx.Timeout(HTTP_READ_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S)
     return httpx.Client(timeout=timeout)

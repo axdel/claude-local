@@ -27,7 +27,7 @@ def _script() -> ModuleType:
 
 
 def _result(module: ModuleType, **overrides: object) -> Any:
-    """A canonical ``SweepResult``; a test overrides only the field it exercises.
+    """A canonical ``LoadedScorecard``; a test overrides only the field it exercises.
 
     Returns ``Any`` because the script is loaded by path: its classes exist at runtime but have no
     statically-nameable type, so annotating anything narrower would be a fiction the checker then
@@ -46,7 +46,7 @@ def _result(module: ModuleType, **overrides: object) -> Any:
         "style_findings": 0,
     }
     fields.update(overrides)
-    return module.SweepResult(**fields)  # type: ignore[arg-type]
+    return module.LoadedScorecard(**fields)  # type: ignore[arg-type]
 
 
 def test_a_rerun_supersedes_the_earlier_run_of_the_same_configuration() -> None:
@@ -69,7 +69,7 @@ def test_the_same_model_under_two_cards_stays_two_rows() -> None:
     """Oracle: the card is part of the configuration, so one model yields two comparable rows.
 
     Collapsing on model alone is the failure this guards: it would silently discard one arm of
-    every card A/B and report the survivor as that model's result.
+    every card A/B and report the survivor as that model's scorecard.
     """
     module = _script()
     compact = _result(module, rules_card_digest="aaaaaaaaaaaa", stamp_ms=1_000)
@@ -174,7 +174,7 @@ def test_an_unstamped_run_a_stamped_one_already_reports_is_dropped() -> None:
     Oracle: the loop is output-deterministic — two runs 100 minutes apart produced the same 7,619
     tokens and the same per-case attempts — so identical totals for one model are the same
     configuration, measured once before the card was recorded and once after. Showing both invites
-    reading a single result as two independent data points.
+    reading a single scorecard as two independent data points.
     """
     module = _script()
     before_the_card_was_recorded = _result(
@@ -210,7 +210,7 @@ def test_an_unstamped_run_matching_a_different_models_totals_survives() -> None:
 
     Oracle: the totals are a fingerprint only because one model's decode is reproducible. Across
     models they are just numbers, and two models can land on the same token count — so a rule that
-    ignored the model would delete a real result belonging to another one.
+    ignored the model would delete a real scorecard belonging to another one.
     """
     module = _script()
     unstamped = _result(module, model="a/first", rules_card_digest=module._UNSTAMPED)
@@ -225,7 +225,7 @@ def test_two_stamped_cards_with_identical_totals_both_survive() -> None:
     """Only an unstamped row can be a duplicate; two named cards are two configurations.
 
     Oracle: a card that changed nothing about a model's output is itself the finding — the two rows
-    are what shows the card made no difference. Collapsing them would erase that result, and the
+    are what shows the card made no difference. Collapsing them would erase that scorecard, and the
     heretic model measured 6/7 under both cards for exactly this reason.
     """
     module = _script()
@@ -256,9 +256,9 @@ def test_the_style_count_is_read_from_the_scorecard_itself(tmp_path: Path) -> No
     module = _script()
     _write_scorecard(tmp_path, 1_000, cases=7, rules_card_digest="aaaaaaaaaaaa", style_findings=3)
 
-    (result,) = module._load_scorecards(tmp_path)
+    (scorecard,) = module._load_scorecards(tmp_path)
 
-    assert result.style_findings == 3
+    assert scorecard.style_findings == 3
 
 
 def test_a_scorecard_predating_the_style_field_reports_it_as_unknown(tmp_path: Path) -> None:
@@ -271,9 +271,9 @@ def test_a_scorecard_predating_the_style_field_reports_it_as_unknown(tmp_path: P
     module = _script()
     _write_scorecard(tmp_path, 1_000, cases=7, rules_card_digest="aaaaaaaaaaaa")
 
-    (result,) = module._load_scorecards(tmp_path)
+    (scorecard,) = module._load_scorecards(tmp_path)
 
-    assert result.style_findings is None
+    assert scorecard.style_findings is None
 
 
 def _write_scorecard(directory: Path, stamp: int, cases: int, **extra: object) -> None:
@@ -304,9 +304,9 @@ def test_a_partial_run_is_excluded_from_the_comparison(tmp_path: Path) -> None:
     _write_scorecard(tmp_path, 1_000, cases=7, rules_card_digest="aaaaaaaaaaaa")
     _write_scorecard(tmp_path, 2_000, cases=1, rules_card_digest="aaaaaaaaaaaa")
 
-    results = module._load_scorecards(tmp_path)
+    scorecards = module._load_scorecards(tmp_path)
 
-    assert [result.cases_total for result in results] == [7]
+    assert [scorecard.cases_total for scorecard in scorecards] == [7]
 
 
 def test_a_scorecard_written_before_the_card_axis_existed_is_kept_and_labelled(
@@ -320,9 +320,9 @@ def test_a_scorecard_written_before_the_card_axis_existed_is_kept_and_labelled(
     module = _script()
     _write_scorecard(tmp_path, 1_000, cases=7)
 
-    (result,) = module._load_scorecards(tmp_path)
+    (scorecard,) = module._load_scorecards(tmp_path)
 
-    assert result.rules_card_digest == module._UNSTAMPED
+    assert scorecard.rules_card_digest == module._UNSTAMPED
 
 
 def test_the_card_verdict_compares_cards_within_one_mode_never_across_them(

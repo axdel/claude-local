@@ -74,7 +74,7 @@ def test_a_missing_base_url_is_refused_rather_than_defaulted(
     happened to be listening." These two shipped surfaces carry the identical hazard, so the
     identical rule binds them; exit 2 is the usage code both docstrings declare.
 
-    Not hypothetical: every catalogued model serves on 8081-8093, and the registry documents 8080
+    Not hypothetical: every registered model serves on 8081-8093, and the registry documents 8080
     as deliberately unassignable because Docker Desktop binds it. The default that used to sit here
     could therefore only ever reach a foreign process or nothing — never a model this project
     serves.

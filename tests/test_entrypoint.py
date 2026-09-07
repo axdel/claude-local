@@ -27,7 +27,7 @@ from factories import (
 
 from claude_local import AttemptProgress
 from claude_local.backend import HTTP_READ_TIMEOUT_S, BackendUnavailable
-from claude_local.derail import STALL_TIMEOUT_S, DerailReason
+from claude_local.derail import SILENCE_TIMEOUT_S, DerailReason
 from claude_local.entrypoint import Outcome, _writable_subtree, implement
 from claude_local.sandbox import sandbox_available
 from claude_local.types import Budget, Status
@@ -433,7 +433,7 @@ def test_the_transport_read_bound_outlasts_the_guards_silence_bound() -> None:
     """The guard must win the race it is documented to win; the transport is only its backstop.
 
     Two bounds watch the same silent stream and they are not interchangeable. The guard's verdict
-    is a recorded per-case STALLED that the ladder moves on from; the transport's aborts the run.
+    is a recorded per-case SILENT that the ladder moves on from; the transport's aborts the run.
     Set equal, the transport won a whole benchmark ladder — a model whose server was healthy
     produced no scorecard at all, having attempted zero of seven cases.
 
@@ -441,7 +441,7 @@ def test_the_transport_read_bound_outlasts_the_guards_silence_bound() -> None:
     bytes the guard cannot run at all. The two therefore never actually tie, whatever the values,
     and strict inequality is the only ordering under which the guard decides every gap it can see.
     """
-    assert HTTP_READ_TIMEOUT_S > STALL_TIMEOUT_S
+    assert HTTP_READ_TIMEOUT_S > SILENCE_TIMEOUT_S
 
 
 def test_implement_records_a_silent_server_as_a_derail_not_a_harness_fault() -> None:

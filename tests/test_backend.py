@@ -21,7 +21,7 @@ from factories import build_budget
 
 from claude_local.backend import (
     BackendUnavailable,
-    GenerationStalled,
+    GenerationSilent,
     HttpxBackend,
     ReplayBackend,
     ReplayExhausted,
@@ -209,7 +209,7 @@ class _BreaksAfterFirstChunk(httpx.SyncByteStream):
         raise httpx.RemoteProtocolError("peer closed connection without sending complete body")
 
 
-def test_httpx_stream_dying_after_the_response_started_raises_generation_stalled() -> None:
+def test_httpx_stream_dying_after_the_response_started_raises_generation_silent() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, stream=_BreaksAfterFirstChunk())
 
@@ -217,12 +217,12 @@ def test_httpx_stream_dying_after_the_response_started_raises_generation_stalled
     backend = HttpxBackend("http://local:8080", client, model="local-model")
     # Oracle: the two faults are separated by contract, not by exception type. BackendUnavailable
     # means the PREREQUISITE is missing, and every caller treats it as fatal to the whole run;
-    # GenerationStalled means the prerequisite was met and this one generation failed, so the run
+    # GenerationSilent means the prerequisite was met and this one generation failed, so the run
     # continues with the task recorded. A server that answered 200 and streamed a chunk has
     # demonstrably met the prerequisite, so a break after that point is the second fault --
     # whatever transport error carries it. Classifying it as the first discards every task already
     # completed in a sweep because one connection reset.
-    with pytest.raises(GenerationStalled) as excinfo:
+    with pytest.raises(GenerationSilent) as excinfo:
         list(backend.generate("p", "t", build_budget()))
     assert excinfo.value.url == "http://local:8080/v1/chat/completions"
     assert excinfo.value.model == "local-model"
@@ -249,7 +249,7 @@ def test_httpx_reuses_injected_client_without_closing_it() -> None:
     budget = build_budget()
     list(backend.generate("p", "t", budget))
     # The client is injected and warm: the backend must not close it, so it stays
-    # usable across generations (one resident connection, not one per iteration).
+    # usable across generations (one resident connection, not one per attempt).
     assert client.is_closed is False
     list(backend.generate("p", "t", budget))  # a second generation still works
     assert client.is_closed is False

@@ -37,7 +37,7 @@ class Budget:
 
     The two deadlines are separate because they answer opposite questions. The generation
     deadline bounds one producing decode, where a slow model streaming steadily is healthy and a
-    hang is caught by silence instead (the derail guard's STALLED bound), so it is set generously.
+    hang is caught by silence instead (the derail guard's SILENT bound), so it is set generously.
     The oracle deadline bounds one sandboxed test run, where nothing legitimate takes long and a
     non-terminating implementation is the failure being caught, so it stays tight. All four
     values are strictly positive; the token cap is the real decode bound.

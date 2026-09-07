@@ -40,14 +40,14 @@ frontier tokens than it cost — and **switches itself off where it doesn't**.
 
 Claude Local never downloads a model, and the **loop** never serves one: `implement()` takes a
 `base_url` and infers against whatever is already listening. Serving is a separate, optional
-capability that claude-local *does* own — `model_server` spawns a catalogued model and guarantees
+capability that claude-local *does* own — `model_server` spawns a registered model and guarantees
 teardown (see [Where It Fits](#where-it-fits)) — so step 2 is a choice, not a prerequisite you
 must satisfy elsewhere.
 
 1. **Put a local model under `models/`.** Weights are git-ignored; downloads are explicit and
    user-initiated (see [`models/README.md`](models/README.md)).
 2. **Serve it over an OpenAI-compatible HTTP API.** Either bring your own — mlx-lm, llama.cpp's
-   server, LM Studio, vLLM — or let claude-local run one for a catalogued model
+   server, LM Studio, vLLM — or let claude-local run one for a registered model
    (`uv sync --group serve`, then `scripts/benchmark_model.py <name>`, which spawns the server,
    runs the work, and tears it down on success and failure alike). Note the base URL and the
    model name it serves — neither is defaulted, because a guessed port reaches whatever
@@ -78,7 +78,7 @@ must satisfy elsewhere.
      --generation-params '{"enable_thinking": false, "thinking_budget": 256}'
    ```
 
-   Steps 2 and 3 together, for a catalogued model, are one command that reads the row for you and
+   Steps 2 and 3 together, for a registered model, are one command that reads the row for you and
    tears the server down either way:
 
    ```bash
@@ -87,7 +87,7 @@ must satisfy elsewhere.
 
 ### Talking to a model interactively
 
-To try prompts against a catalogued model — tuning a rules card, checking how one answers before
+To try prompts against a registered model — tuning a rules card, checking how one answers before
 spending a benchmark on it — `model_session` collapses steps 1 and 2 into a `with` block. It
 resolves the name in the store, spawns the server, waits for it to answer, and guarantees the
 model is gone when the block ends, including when it ends by exception:
@@ -173,7 +173,7 @@ Three deliberate choices make weak models usable:
 - **That guarantee is scoped, and the scope is worth knowing.** The oracle defeats a model that is
   *wrong*; it does not defeat one that is *hostile*. The verdict is computed inside the same
   process that imports and executes the model's file, so top-level code in that file could forge a
-  green — and the catalogue carries safety-ablated rows, the model class for which "not hostile" is
+  green — and the registry carries safety-ablated rows, the model class for which "not hostile" is
   the weakest assumption. Making the verdict adversary-proof means computing it somewhere the impl
   cannot reach, which is a different design; this one takes the trade knowingly and says so, on
   stderr at every green and in `D-ORACLE-004` / `D-ORACLE-006`. Treat a local green as *supervised
@@ -193,7 +193,7 @@ Three deliberate choices make weak models usable:
 This is the whole question, and Claude Local answers it with data instead of hope. Every task
 emits the **local half** of an economy record:
 
-- **local tokens** produced + **wall-clock decode** + iterations (the *free* side and its cost)
+- **local tokens** produced + **wall-clock decode** + attempts (the *free* side and its cost)
 - **decode rate** (tokens/sec) and whether any count was estimated
 - **outcome** (done / exhausted / derailed / blocked), model, attempts
 
@@ -213,7 +213,7 @@ A weak model is only worth using if it is fast enough to be cheaper than your ow
 - **Non-thinking generation by default, hard thinking cap** — the derail guard bounds decode by
   construction.
 - **Stable-prefix prompting** — card + spec + optional ordered context files + test stay fixed;
-  only the tail changes, so the prefill is KV-cache-reused across iterations.
+  only the tail changes, so the prefill is KV-cache-reused across attempts.
 - **The tail is a repair brief, not a bug report** — it carries the complete file the last attempt
   wrote alongside the failure that file produced, because the card asks the model to correct its
   file and keep what already passed, and neither is possible against code it cannot see.
@@ -246,12 +246,12 @@ It is serving-agnostic by construction: `implement()` takes a `base_url` and nev
 anything, so its only runtime dependency is `httpx`.
 
 Serving is a separate, optional capability. `uv sync --group serve` installs the MLX stack, and
-`model_server` then spawns a server for a catalogued model and guarantees it is torn down
+`model_server` then spawns a server for a registered model and guarantees it is torn down
 afterwards — a model is resident only while something is using it. That group is deliberately
 not a runtime dependency: MLX is Apple-silicon only, and the loop must install anywhere.
 
 **Nothing here ever downloads a model.** Models are named by their path in the local store, so a
-name that is catalogued but not pulled is refused rather than fetched; pulling weights stays an
+name that is registered but not pulled is refused rather than fetched; pulling weights stays an
 explicit, user-initiated act.
 
 ### Dispatching to it from claude-protocol
