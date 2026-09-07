@@ -16,6 +16,7 @@ a macOS-kernel fact, so there is nothing meaningful to assert without the kernel
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -27,6 +28,7 @@ import pytest
 from claude_local.sandbox import (
     SandboxTimeout,
     SandboxUnavailable,
+    _build_profile,
     sandbox_available,
     sandboxed_spawn,
 )
@@ -105,6 +107,62 @@ def test_network_egress_is_denied(tmp_path: Path) -> None:
         _run(payload, box)
     # Oracle: (deny network*) blocks the outbound connect even to loopback.
     assert outcome.read_text().startswith("blocked")
+
+
+def test_mach_service_lookup_beyond_the_platform_baseline_is_denied(tmp_path: Path) -> None:
+    """Oracle: the trusted parent knows the host's real ComputerName; the confined child must not.
+
+    ``(deny network*)`` does not cover Mach IPC, so an unscoped ``(allow mach-lookup)`` is a side
+    channel out of the cage — the child can reach any XPC service registered on the host. Measured
+    on this branch while the blanket grant was still present: a confined ``pbpaste`` read a
+    sentinel straight off the developer's clipboard, and ``scutil`` returned the machine's real
+    name; with the grant removed, the clipboard came back empty and ``scutil`` fell back to a
+    generic default. That is exactly the "cannot exfiltrate secrets" claim the confinement makes.
+
+    ComputerName is read through the SystemConfiguration Mach service and is a read-only query, so
+    it gives the same signal as the pasteboard without writing to the developer's real clipboard.
+    The parent supplies ground truth by running it unconfined — the same shape as the network test
+    standing up its own listener, so the assertion never depends on a hardcoded host value.
+    """
+    scutil = shutil.which("scutil")
+    if scutil is None:
+        pytest.skip("scutil is absent, so the host has no SystemConfiguration query to compare")
+    real_name = subprocess.run(  # noqa: S603 - fixed argv, no shell, no untrusted input
+        [scutil, "--get", "ComputerName"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    if not real_name:
+        pytest.skip("this host reports no ComputerName, so there is no secret to withhold")
+
+    box = tmp_path / "box"
+    box.mkdir()
+    confined, _ = sandboxed_spawn([scutil, "--get", "ComputerName"], cwd=box, write_box=box)
+
+    assert confined.decode().strip() != real_name
+
+
+def test_the_profile_grants_no_unscoped_mach_lookup(tmp_path: Path) -> None:
+    """Every grant in the profile names what it applies to; ``mach-lookup`` is not exempt.
+
+    Oracle: SBPL semantics under ``(deny default)`` — a grant with no filter applies to every
+    service, so ``(allow mach-lookup)`` on its own line is the whole Mach namespace. This is the
+    deterministic backstop for the behavioral test above, which depends on a host having a
+    SystemConfiguration service to ask. Reading the rendered profile is reading the security
+    artifact itself, not an implementation detail: it is what the kernel is handed.
+    """
+    box = tmp_path / "box"
+    box.mkdir()
+
+    profile = _build_profile(tmp_path, box, [sys.executable])
+
+    # Grants only: a ';' comment line may name mach-lookup while granting nothing.
+    grants = [
+        stripped
+        for line in profile.splitlines()
+        if (stripped := line.strip()).startswith("(allow") and "mach-lookup" in stripped
+    ]
+    assert all("global-name" in grant or "xpc-service-name" in grant for grant in grants), (
+        f"unscoped mach-lookup grant in the oracle profile: {grants}"
+    )
 
 
 def test_two_spawns_agree_on_a_string_hash(tmp_path: Path) -> None:

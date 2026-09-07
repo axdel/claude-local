@@ -56,7 +56,9 @@ _PROFILE_TEMPLATE = """\
 (import "system.sb")
 (allow process*)
 (allow sysctl-read)
-(allow mach-lookup)
+; No mach-lookup grant: (deny network*) does not cover Mach IPC, so an unscoped one is a side
+; channel out of the cage. Measured — a confined pbpaste read the developer's clipboard through
+; it. The oracle needs none beyond what system.sb already scopes; see D-SANDBOX-008.
 {metadata_rules}
 {read_rules}
 (allow file-write* (subpath "{box}"))
