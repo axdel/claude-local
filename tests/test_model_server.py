@@ -23,6 +23,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from ports import free_port, port_is_bound
 
 from claude_local.model_registry import ResolvedModel, UnservableCombination
 from claude_local.model_server import (
@@ -66,13 +67,6 @@ _ONE_MODEL_BODY = (
 _NO_MODELS_BODY = '{"object": "list", "data": []}'
 
 
-def _free_port() -> int:
-    """Claim and release a port the OS says is free, then hand back its number."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
 def _substitute(port: int, *, body: str = _ONE_MODEL_BODY, delay_s: float = 0.0) -> ModelServer:
     """A ModelServer whose command is a real HTTP server rather than a 12 GB model.
 
@@ -109,13 +103,6 @@ def _resolved(
         path=store,
         draft_path=draft_path,
     )
-
-
-def _is_listening(port: int) -> bool:
-    """True when something accepts a loopback connection on ``port``."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.settimeout(0.5)
-        return probe.connect_ex(("127.0.0.1", port)) == 0
 
 
 def test_the_command_launches_the_mlx_server_module(tmp_path: Path) -> None:
@@ -271,7 +258,7 @@ def test_the_handle_reports_the_model_id_the_server_actually_serves() -> None:
     launched with, which is neither the catalogue name nor the repo id, and a chat-completions
     request must echo that id back. Asking beats assuming, so the handle owns the question.
     """
-    port = _free_port()
+    port = free_port()
 
     with _substitute(port).running(timeout_s=30.0) as handle:
         assert handle.served_model_id() == "substitute/store-path"
@@ -284,7 +271,7 @@ def test_a_server_advertising_no_models_is_named_rather_than_indexed_into() -> N
     `data[0]` would raise a bare `IndexError` whose message names no server, which is the
     failure a caller then has to guess at.
     """
-    port = _free_port()
+    port = free_port()
 
     with (
         _substitute(port, body=_NO_MODELS_BODY).running(timeout_s=30.0) as handle,
@@ -294,21 +281,21 @@ def test_a_server_advertising_no_models_is_named_rather_than_indexed_into() -> N
 
 
 def test_the_process_is_reaped_and_the_port_freed_after_a_normal_exit() -> None:
-    port = _free_port()
+    port = free_port()
 
     with _substitute(port).running(timeout_s=30.0) as handle:
-        assert _is_listening(port), "the substitute never came up, so teardown proves nothing"
+        assert port_is_bound(port), "the substitute never came up, so teardown proves nothing"
         pid = handle.pid
 
     # Oracle: a served model holds ~20 GB and its port; the requirement is that neither outlives
     # the block. Both are observed from outside the module, not reported by it.
-    assert not _is_listening(port)
+    assert not port_is_bound(port)
     assert not _process_alive(pid)
 
 
 def test_the_process_is_reaped_when_the_block_raises() -> None:
     """Teardown is structural, so an exception inside the block must not leak the server."""
-    port = _free_port()
+    port = free_port()
     escaped: int | None = None
 
     with (
@@ -319,7 +306,7 @@ def test_the_process_is_reaped_when_the_block_raises() -> None:
         raise RuntimeError("failure inside the block")
 
     assert escaped is not None
-    assert not _is_listening(port)
+    assert not port_is_bound(port)
     assert not _process_alive(escaped)
 
 
@@ -350,7 +337,7 @@ def test_a_server_that_dies_during_startup_reports_its_output_rather_than_timing
     process that already exited wastes the whole budget and reports the wrong cause, which is
     why the prior shell implementation checked liveness before every HTTP probe.
     """
-    port = _free_port()
+    port = free_port()
     doomed = ModelServer(
         command=(
             sys.executable,
@@ -369,7 +356,7 @@ def test_a_server_that_dies_during_startup_reports_its_output_rather_than_timing
 
 def test_a_server_that_never_answers_is_timed_out_and_still_torn_down() -> None:
     """The timeout path is the one most likely to leak: the process is alive and unresponsive."""
-    port = _free_port()
+    port = free_port()
     silent = ModelServer(
         command=(sys.executable, "-c", "import time; time.sleep(120)"),
         host="127.0.0.1",
@@ -380,7 +367,7 @@ def test_a_server_that_never_answers_is_timed_out_and_still_torn_down() -> None:
         pass
 
     # Oracle: a readiness failure is still an exit path, so the same teardown guarantee binds.
-    assert not _is_listening(port)
+    assert not port_is_bound(port)
 
 
 def test_a_server_that_answers_slowly_is_ready_not_timed_out() -> None:
@@ -391,7 +378,7 @@ def test_a_server_that_answers_slowly_is_ready_not_timed_out() -> None:
     answer exceeds the poll interval is unreachable at any budget — every probe aborts client-side
     and the run reports "did not answer" about a server that answers correctly every time.
     """
-    port = _free_port()
+    port = free_port()
 
     with _substitute(port, delay_s=0.6).running(timeout_s=4.0) as handle:
         assert handle.port == port
@@ -404,7 +391,7 @@ def test_a_catalogue_answer_of_the_wrong_shape_names_the_server_and_what_it_said
     address probed nor the body received — the operator learns a dict lacked a key, not that
     something other than a model server is on their port.
     """
-    port = _free_port()
+    port = free_port()
 
     with (
         _substitute(port, body='{"object": "list"}').running(timeout_s=30.0) as handle,
@@ -427,7 +414,7 @@ def test_a_named_log_survives_the_teardown_that_destroys_the_default_capture(
     inside its isolation worktree and a server log is not one of that worktree's artifacts.
     """
     log_path = tmp_path / "server.log"
-    port = _free_port()
+    port = free_port()
 
     with _substitute(port).running(timeout_s=30.0, log_path=log_path) as handle:
         assert _process_alive(handle.pid)
@@ -444,7 +431,7 @@ def test_a_server_that_dies_mid_run_attaches_its_output_to_the_failure_that_foll
     exception type and message intact; masking a BackendUnavailable with a ServerExited would
     change what every caller catches to deliver the same information.
     """
-    port = _free_port()
+    port = free_port()
 
     with pytest.raises(RuntimeError) as failure, _substitute(port).running(timeout_s=30.0) as h:
         os.kill(h.pid, signal.SIGKILL)

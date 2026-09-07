@@ -13,12 +13,12 @@ probing the port from the OS, not by trusting a return.
 
 from __future__ import annotations
 
-import socket
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from ports import free_port, port_is_bound
 
 from claude_local.model_registry import ModelNotPresent, UnknownModel
 from claude_local.model_server import ModelServer, ServerNotReady
@@ -66,19 +66,6 @@ http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 _FIXTURE_REPLY = "Artificial intelligence"
 
 
-def _free_port() -> int:
-    """Claim and release a port the OS says is free, then hand back its number."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
-def _port_is_bound(port: int) -> bool:
-    """Ask the OS whether anything is listening — the only honest teardown assertion."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        return probe.connect_ex(("127.0.0.1", port)) == 0
-
-
 def _session(port: int, *, stream: str = "complete_stream.bytes") -> ModelSession:
     """A session whose server is a real HTTP process rather than a multi-gigabyte model."""
     return ModelSession(
@@ -101,7 +88,7 @@ def _session(port: int, *, stream: str = "complete_stream.bytes") -> ModelSessio
 
 
 def test_a_session_yields_a_callable_that_returns_the_models_text() -> None:
-    port = _free_port()
+    port = free_port()
 
     with _session(port).open(startup_timeout_s=30.0) as chat:
         reply = chat("write a haiku")
@@ -111,7 +98,7 @@ def test_a_session_yields_a_callable_that_returns_the_models_text() -> None:
 
 
 def test_a_turn_records_its_metered_result_on_last() -> None:
-    port = _free_port()
+    port = free_port()
 
     with _session(port).open(startup_timeout_s=30.0) as chat:
         assert chat.last is None  # nothing generated yet
@@ -129,7 +116,7 @@ def test_a_session_reuses_one_client_across_turns() -> None:
     Oracle: the client's own call counter. Two turns through one session is two calls on ONE
     client — a per-turn client would start each turn's count at zero.
     """
-    port = _free_port()
+    port = free_port()
 
     with _session(port).open(startup_timeout_s=30.0) as chat:
         chat("first")
@@ -141,7 +128,7 @@ def test_a_session_reuses_one_client_across_turns() -> None:
 
 def test_a_session_reports_the_id_the_server_advertises() -> None:
     """The server names the model however it chose to, and every request must echo that back."""
-    port = _free_port()
+    port = free_port()
 
     with _session(port).open(startup_timeout_s=30.0) as chat:
         advertised = chat.model_id
@@ -153,32 +140,32 @@ def test_a_session_reports_the_id_the_server_advertises() -> None:
 
 
 def test_the_server_is_gone_after_the_block() -> None:
-    port = _free_port()
+    port = free_port()
 
     with _session(port).open(startup_timeout_s=30.0) as chat:
-        assert _port_is_bound(port)  # it really was up
+        assert port_is_bound(port)  # it really was up
         chat("write a haiku")
 
-    assert not _port_is_bound(port)
+    assert not port_is_bound(port)
 
 
 def test_the_server_is_gone_when_the_block_raises() -> None:
     """The failure mode this module exists to prevent: an exception leaking a resident model."""
-    port = _free_port()
+    port = free_port()
 
     with (
         pytest.raises(RuntimeError, match="user code failed"),
         _session(port).open(startup_timeout_s=30.0),
     ):
-        assert _port_is_bound(port)
+        assert port_is_bound(port)
         raise RuntimeError("user code failed")
 
-    assert not _port_is_bound(port)
+    assert not port_is_bound(port)
 
 
 def test_a_server_that_never_answers_is_still_reaped() -> None:
     """A startup timeout must not leave the process it gave up on still running."""
-    port = _free_port()
+    port = free_port()
     silent = ModelSession(
         server=ModelServer(
             command=(sys.executable, "-c", "import time; time.sleep(60)"),
@@ -194,7 +181,7 @@ def test_a_server_that_never_answers_is_still_reaped() -> None:
     with pytest.raises(ServerNotReady), silent.open(startup_timeout_s=1.0):
         pytest.fail("the session must not open against a server that never answered")
 
-    assert not _port_is_bound(port)
+    assert not port_is_bound(port)
 
 
 # --- The specification, built without spawning anything ----------------------------
