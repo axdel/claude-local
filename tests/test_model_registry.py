@@ -20,6 +20,7 @@ from claude_local.model_registry import (
     ModelRegistry,
     UnknownModel,
     UnservableCombination,
+    is_unservable_combination,
 )
 
 _REGISTRY_FIXTURE = "\n".join(
@@ -344,3 +345,26 @@ def test_a_thinking_budget_resolves_while_the_draft_weights_are_absent(tmp_path:
 
     assert resolved.draft_path is None
     assert resolved.generation_params["thinking_budget"] == 256
+
+
+@pytest.mark.parametrize(
+    ("draft_path", "params", "unservable"),
+    [
+        (Path("/store/M-MTP"), {"thinking_budget": 256}, True),
+        (Path("/store/M-MTP"), {"enable_thinking": False}, False),
+        (None, {"thinking_budget": 256}, False),
+        (None, {}, False),
+    ],
+)
+def test_only_a_thinking_budget_alongside_draft_weights_is_unservable(
+    draft_path: Path | None, params: dict[str, object], unservable: bool
+) -> None:
+    """Oracle: the server refuses speculative decoding *and* a thinking budget — never either one.
+
+    The truth table rather than the one true corner, because the predicate now answers for
+    parameters that never came from a row — a probe's candidate sweep, a caller's override — and
+    each of the three servable corners is a configuration something in this repo actually sends.
+    A guard that fired on the draft alone would refuse every drafted model; one that fired on the
+    budget alone would refuse the row the registry ships.
+    """
+    assert is_unservable_combination(draft_path, params) is unservable

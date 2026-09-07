@@ -35,7 +35,7 @@ import sys
 
 import httpx
 
-from claude_local.model_registry import ModelRegistry
+from claude_local.model_registry import ModelRegistry, is_unservable_combination
 from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
     ModelServer,
@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
             for label, prompt in _PROMPTS:
                 print(f"\n==== prompt: {label}")
                 for params in _CONTROLS:
-                    if "thinking_budget" in params and resolved.draft_path is not None:
+                    if is_unservable_combination(resolved.draft_path, params):
                         print("\n--- skipped thinking_budget: server raises with a draft model")
                         continue
                     _probe(http, handle.base_url, served, params, prompt)

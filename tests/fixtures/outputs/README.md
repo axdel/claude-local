@@ -41,9 +41,13 @@ pins is a thing a model does and not a thing the schema says:
 
 | Fixture | Property it pins | Provenance |
 |-|-|-|
-| `leading_blank_lines_before_frame.txt` | a well-formed frame preceded by blank lines is accepted (D-EDITS-005) | `scripts/probe_reply.py Qwen3.8-27B-abliterated examples/quicksort`, served with the thinking channel left on; recorded verbatim, 515 bytes, `finish_reason: stop`, 851 completion tokens |
+| `leading_blank_lines_before_frame.txt` | a well-formed frame preceded by blank lines is accepted (D-EDITS-005) | `scripts/probe_reply.py Qwen3.8-27B-abliterated examples/quicksort --raw --generation-params '{"enable_thinking": true}'`; recorded verbatim, 515 bytes, `finish_reason: stop`, 851 completion tokens |
 
 It is a capture and not an authored case on purpose: the two leading newlines are the residue of a
 reasoning channel, and an authored fixture would be this project guessing what that residue looks
 like — the input-side anti-oracle. The expected values in `test_edits.py` are still read off the
 wire schema and off the captured bytes, never off a parse of them.
+
+The override in that command is load-bearing. The probe sends the resolved registry row's
+request-body fields, and this model's row disables thinking — so without it the command serves the
+right model and reproduces nothing, because the channel whose residue this fixture pins is off.

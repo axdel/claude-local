@@ -54,6 +54,18 @@ resolved row carrying it needs checking against the rest of the row.
 """
 
 
+def is_unservable_combination(draft_path: Path | None, params: Mapping[str, object]) -> bool:
+    """Whether mlx_vlm would refuse this pairing of draft weights and request-body fields.
+
+    The rule ``ResolvedModel.__post_init__`` enforces on a row, exposed as a predicate because
+    the row's own parameters are not the only ones asked about: a probe sweeping candidate
+    parameters against a resolved model asks the same question of each candidate, and a caller
+    overriding a row's parameters asks it of the override. Answering it there instead would put
+    the server's rule — and the field name it turns on — under three writers.
+    """
+    return _THINKING_BUDGET in params and draft_path is not None
+
+
 def generation_params_from_json(declared: str) -> dict[str, object]:
     """Read a command line's ``--generation-params`` value as the request-body fields it declares.
 
@@ -172,7 +184,7 @@ class ResolvedModel:
                 is not supported with speculative decoding in the server" — so a row carrying
                 both cannot serve a single request.
         """
-        if _THINKING_BUDGET in self.generation_params and self.draft_path is not None:
+        if is_unservable_combination(self.draft_path, self.generation_params):
             raise UnservableCombination(
                 f"{self.name}: {_THINKING_BUDGET} cannot be sent to a server running "
                 f"speculative decoding, and the draft weights at {self.draft_path} are present. "

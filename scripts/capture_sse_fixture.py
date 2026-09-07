@@ -36,12 +36,6 @@ from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S
 from claude_local.types import Budget
 
 
-def _served_model_id(base_url: str) -> str:
-    """Ask the running server which model it is serving, rather than assuming its id."""
-    payload = httpx.get(f"{base_url}/v1/models", timeout=30.0).json()
-    return str(payload["data"][0]["id"])
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model", help="A name from the model registry (e.g. gpt-oss-20b).")
@@ -57,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     server = ModelServer.for_model(resolved)
 
     with server.running(startup_timeout_s=args.startup_timeout) as handle:
-        served = _served_model_id(handle.base_url)
+        served = handle.served_model_id()
         print(f"[capture] serving {served} (pid {handle.pid})", file=sys.stderr)
         # A capture is one generation, so the attempt and wall-clock bounds are formalities;
         # only max_tokens shapes the recorded bytes.

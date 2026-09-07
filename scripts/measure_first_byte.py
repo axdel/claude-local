@@ -91,16 +91,6 @@ def benchmark_sized_prefix() -> str:
     return card * math.ceil(_TARGET_PREFIX_BYTES / len(card.encode("utf-8")))
 
 
-def _served_model_id(base_url: str) -> str:
-    """Ask the running server which model it is serving, rather than assuming its id.
-
-    Cheap even on a cold server: this is the same endpoint the readiness probe polls, and it
-    answers off the bound port without touching the weights.
-    """
-    payload = httpx.get(f"{base_url}/v1/models", timeout=30.0).json()
-    return str(payload["data"][0]["id"])
-
-
 def _timings(raw: str) -> dict[str, object]:
     """The first frame's prefill timings, or empty when the server reported none."""
     for frame in raw.split("\n\n"):
@@ -149,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     ready = time.monotonic()
     with server.running(startup_timeout_s=arguments.startup_timeout) as handle:
         ready_s = time.monotonic() - ready
-        served = _served_model_id(handle.base_url)
+        served = handle.served_model_id()
         print(f"[first-byte] ready in {ready_s:.1f}s: {served}", file=sys.stderr)
         with httpx.Client(timeout=_GENERATION_TIMEOUT_S) as client:
             backend = HttpxBackend(base_url=handle.base_url, client=client, model=served)

@@ -19,14 +19,17 @@ exists to avoid. Ask the benchmark instead, which drives the real case through t
 
     scripts/benchmark_model.py <model> --only 01_scaffold --stream
 
-What is left here that the benchmark cannot do is `--raw`: the reply before `assistant_content`
-normalizes it, which is where a reasoning model's channel markup is visible.
+What is left here that the benchmark cannot do is asking under a configuration nothing else will
+send: `--raw` prints the reply before `assistant_content` normalizes it, which is where a
+reasoning model's channel markup is visible, and `--generation-params` sets aside the registry
+row's request-body fields, which is the only way to see a channel the row exists to suppress.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
@@ -34,7 +37,11 @@ import httpx
 from claude_local.backend import HttpxBackend
 from claude_local.client import ModelClient
 from claude_local.edits import extract_file
-from claude_local.model_registry import ModelRegistry
+from claude_local.model_registry import (
+    ModelRegistry,
+    generation_params_from_json,
+    is_unservable_combination,
+)
 from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
     ModelServer,
@@ -51,15 +58,24 @@ _DERAIL_UNMEASURED = "not measured (--raw bypasses the derail guard)"
 """What ``derail_reason`` is on the raw path — never ``None``, which would claim the guard ran."""
 
 
-def _print_provenance(served: str, fields: dict[str, object]) -> None:
+def _print_provenance(
+    served: str, params: Mapping[str, object], fields: dict[str, object]
+) -> None:
     """Emit the configuration a transcript must never be read without, ahead of the reply.
 
     stderr, so redirecting the transcript leaves it clean, and BEFORE the reply rather than after,
     because a reader holding the configuration while reading is the whole point of emitting it.
     Both paths print through here so the two cannot drift into two formats, and each names its own
     fields: the raw path has no derail reason to report, and says so rather than reporting one.
+
+    The two facts every transcript needs are positional and the per-path ones ride in the mapping,
+    so neither path can omit them. Which model answered is the obvious one; the generation
+    parameters are the one that bites: a reply recorded with the reasoning channel forced on and a
+    reply recorded under a row that disables it look nothing alike, and nothing in the transcript
+    itself says which one this is.
     """
     print(f"--- model: {served}", file=sys.stderr)
+    print(f"--- generation params: {dict(params) or '(none)'}", file=sys.stderr)
     for label, value in fields.items():
         print(f"--- {label}: {value}", file=sys.stderr)
 
@@ -92,6 +108,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print the server's whole reply, reasoning channels included, before normalization.",
     )
+    parser.add_argument(
+        "--generation-params",
+        type=generation_params_from_json,
+        help=(
+            "JSON object REPLACING the registry row's request-body fields, for asking what the "
+            'model does under a configuration its row does not declare (e.g. \'{"enable_thinking"'
+            ": true}' to see the reasoning channel a row that disables it would hide). Replaces "
+            "rather than merges: a row's hard cap is part of the configuration being set aside."
+        ),
+    )
     parser.add_argument("--max-tokens", type=int, default=4096)
     parser.add_argument("--generation-timeout", type=float, default=300.0)
     parser.add_argument("--startup-timeout", type=float, default=DEFAULT_STARTUP_TIMEOUT_S)
@@ -107,6 +133,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     spec = _spec_from(args.task_dir, budget)
     resolved = ModelRegistry.default().resolve(args.model)
+    override = args.generation_params
+    params = resolved.generation_params if override is None else override
+    if is_unservable_combination(resolved.draft_path, params):
+        # The rule the registry enforces on a row, applied to an override before a server is
+        # spawned: mlx_vlm refuses this pair outright, so the alternative is a cold model load
+        # that ends in a fault frame nobody asked for.
+        raise SystemExit(
+            f"{args.model}: a thinking budget cannot be sent to a server running speculative "
+            f"decoding, and the draft weights at {resolved.draft_path} are present"
+        )
     server = ModelServer.for_model(resolved)
 
     with server.running(startup_timeout_s=args.startup_timeout) as handle:
@@ -114,12 +150,14 @@ def main(argv: list[str] | None = None) -> int:
         with httpx.Client(timeout=args.generation_timeout) as http:
             # The row's PARAMS too, not just its FLAGS: a probe that answers "what did the model
             # actually say" has to ask under the configuration the model is actually run with, or
-            # it answers a question nobody asked.
+            # it answers a question nobody asked. Which is also why the override exists: a
+            # question ABOUT a different configuration is asked by declaring that one, never by
+            # the probe quietly dropping the row's.
             backend = HttpxBackend(
                 base_url=handle.base_url,
                 client=http,
                 model=served,
-                generation_params=resolved.generation_params,
+                generation_params=params,
             )
             # The same prefix implement() sends — read from the builder and the bundled card,
             # never restated here, so a probe cannot answer a question about a prompt the loop
@@ -135,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
                 transcript = "".join(e.text for e in events if isinstance(e, Delta))
                 _print_provenance(
                     served,
+                    params,
                     {
                         "finish_reason": next(
                             (e.reason for e in events if isinstance(e, Finish)), None
@@ -153,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     reply = extract_file(generation.text)
     _print_provenance(
         served,
+        params,
         {
             "finish_reason": generation.finish_reason,
             "derail_reason": generation.derail_reason,

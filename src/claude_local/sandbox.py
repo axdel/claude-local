@@ -54,6 +54,7 @@ _PROFILE_TEMPLATE = """\
 (version 1)
 (deny default)
 (import "system.sb")
+; The only two classes granted whole, and a closed set — INV-003 argues why neither widens the box.
 (allow process*)
 (allow sysctl-read)
 ; No mach-lookup grant: (deny network*) does not cover Mach IPC, so an unscoped one is a side

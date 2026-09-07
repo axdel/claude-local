@@ -75,7 +75,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the quicksort task; print the produced code (stdout) + outcome summary (stderr).
+    """Run the quicksort task; print the produced implementation (stdout) + summary (stderr).
 
     Returns the process exit code: 0 when the oracle went green (``Status.DONE``), 1 for any
     other terminal status, 2 for a usage error (no model named).

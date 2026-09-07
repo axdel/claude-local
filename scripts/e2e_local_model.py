@@ -76,7 +76,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"[e2e] example exit: {done.returncode}", file=sys.stderr)
         print(done.stderr, file=sys.stderr)
-        print(json.dumps({"produced_code": done.stdout}, indent=2)[:400], file=sys.stderr)
+        # Not "produced_code": that names the benchmark's saved TREE, and this is one task's one
+        # implementation file. Two concepts under one name is how a reader starts looking for a
+        # directory that a single-example run never writes.
+        produced = json.dumps({"produced_implementation": done.stdout}, indent=2)
+        print(produced[:400], file=sys.stderr)
 
     print(f"[e2e] server torn down after {time.monotonic() - started:.1f}s", file=sys.stderr)
     return done.returncode

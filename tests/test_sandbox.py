@@ -16,6 +16,7 @@ a macOS-kernel fact, so there is nothing meaningful to assert without the kernel
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -211,6 +212,35 @@ def test_the_profile_grants_no_unscoped_mach_lookup(tmp_path: Path) -> None:
     ]
     assert all("global-name" in grant or "xpc-service-name" in grant for grant in grants), (
         f"unscoped mach-lookup grant in the oracle profile: {grants}"
+    )
+
+
+def test_the_profile_grants_exactly_two_classes_without_a_filter(tmp_path: Path) -> None:
+    """The class-wide grants are a closed set of two, each one deliberate and argued.
+
+    Oracle: INV-003, which names them. ``process*`` and ``sysctl-read`` are granted whole because
+    neither widens the boundary — a child process inherits this same profile (measured on this
+    branch: the confined ``pbpaste`` was itself sandboxed, and what leaked was the Mach grant, not
+    its confinement), and sysctl-read returns read-only kernel parameters the runtime reads at
+    startup, reaching no file, socket or service.
+
+    The generalization of the mach-lookup test above, and the reason it is a separate one: that
+    test asks whether ONE class is scoped, so a fourth unfiltered grant of some other class passes
+    it silently. This pins the set, so adding one fails until someone argues it here — which is
+    the whole difference between an invariant that reads strict and an invariant that bites.
+    """
+    box = tmp_path / "box"
+    box.mkdir()
+
+    profile = _build_profile(tmp_path, box, [sys.executable])
+
+    unfiltered = {
+        match.group(1)
+        for line in profile.splitlines()
+        if (match := re.fullmatch(r"\(allow ([^\s)]+)\)", line.strip()))
+    }
+    assert unfiltered == {"process*", "sysctl-read"}, (
+        f"the oracle profile's class-wide grants changed: {sorted(unfiltered)}"
     )
 
 
