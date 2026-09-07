@@ -152,14 +152,24 @@ class HttpxBackend:
         """Stream the chat-completions response bytes for one generation under ``budget``.
 
         Raises:
-            BackendUnavailable: the server was unreachable (a transport failure) or answered with a
-                non-2xx status. The underlying ``httpx`` error is translated at this transport
-                boundary so a missing prerequisite server surfaces as a domain fault the caller can
-                act on, not a raw ``httpx`` exception (clients translate infra errors to domain
-                errors); the original error is preserved as ``__cause__``.
-            GenerationStalled: the server took the request and then sent no bytes within the read
-                bound. Split from the fault above because the two demand opposite responses: the
-                prerequisite is met, so the run continues with this one task recorded as stalled.
+            BackendUnavailable: the server answered with a non-2xx status, or a transport failure
+                struck *before* it produced a response. The underlying ``httpx`` error is
+                translated at this transport boundary so a missing prerequisite server surfaces as
+                a domain fault the caller can act on, not a raw ``httpx`` exception (clients
+                translate infra errors to domain errors); the original is preserved as
+                ``__cause__``.
+            GenerationStalled: the server took the request and then failed to finish answering —
+                it sent no bytes within the read bound, or the stream broke after the response had
+                started. Split from the fault above because the two demand opposite responses: a
+                missing prerequisite is fatal to the whole run, while a met one leaves the run
+                going with this single task recorded as stalled.
+
+        The split therefore turns on *whether the response started*, not on which transport error
+        carried the failure. A server killed mid-decode raises the same ``RequestError`` family as
+        one that was never listening, but it had already answered — so treating the two alike
+        throws away every task a sweep has finished because one connection reset. When the server
+        really is gone, the next task discovers it at connect time and aborts there, costing one
+        wasted task instead of the run.
         """
         body: dict[str, object] = {
             **self._generation_params,
@@ -172,18 +182,23 @@ class HttpxBackend:
             "stream_options": {"include_usage": True},
             "max_tokens": budget.max_tokens,
         }
+        response_started = False
         try:
             with self._client.stream("POST", self._url, json=body) as response:
                 response.raise_for_status()
+                response_started = True
                 yield from response.iter_bytes()
         except httpx.HTTPStatusError as exc:
             reason = f"HTTP {exc.response.status_code}"
             raise BackendUnavailable(self._url, self._model, reason) from exc
         except httpx.ReadTimeout as exc:
-            # Checked before RequestError, which it subclasses: the connection and the request
-            # both succeeded, so this is the generation failing rather than the server missing.
+            # Checked before RequestError, which it subclasses, and regardless of how far the
+            # response got: a read bound expiring means the server took the request and then went
+            # quiet, which is this generation failing rather than the server missing.
             reason = f"{type(exc).__name__}: {exc}"
             raise GenerationStalled(self._url, self._model, reason) from exc
         except httpx.RequestError as exc:
             reason = f"{type(exc).__name__}: {exc}"
+            if response_started:
+                raise GenerationStalled(self._url, self._model, reason) from exc
             raise BackendUnavailable(self._url, self._model, reason) from exc
