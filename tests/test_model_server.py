@@ -30,6 +30,7 @@ from claude_local.model_server import (
     ModelServer,
     PortUnavailable,
     ServerExited,
+    ServerModelUnknown,
     ServerNotReady,
 )
 
@@ -264,6 +265,19 @@ def test_the_handle_reports_the_model_id_the_server_actually_serves() -> None:
         assert handle.served_model_id() == "substitute/store-path"
 
 
+def test_the_named_server_faults_stay_in_the_stdlib_families_a_caller_reaches_for() -> None:
+    """Oracle: each type's declared family, read off its contract rather than off a run.
+
+    A caller waiting for readiness catches `TimeoutError`; one asking which model is served
+    catches `LookupError`. Naming a fault is only an improvement if it stays inside the family
+    the caller already reaches for, so the base class IS the contract, not an implementation
+    detail. Swapping either base for a bare `Exception` leaves every raise-site test below green
+    while silently breaking every caller that catches the family.
+    """
+    assert issubclass(ServerNotReady, TimeoutError)
+    assert issubclass(ServerModelUnknown, LookupError)
+
+
 def test_a_server_advertising_no_models_is_named_rather_than_indexed_into() -> None:
     """A server that is up but serving nothing fails with the endpoint named, not an IndexError.
 
@@ -275,7 +289,7 @@ def test_a_server_advertising_no_models_is_named_rather_than_indexed_into() -> N
 
     with (
         _substitute(port, body=_NO_MODELS_BODY).running(timeout_s=30.0) as handle,
-        pytest.raises(LookupError, match=r"/v1/models"),
+        pytest.raises(ServerModelUnknown, match=r"/v1/models"),
     ):
         handle.served_model_id()
 
@@ -395,7 +409,7 @@ def test_a_served_models_answer_of_the_wrong_shape_names_the_server_and_what_it_
 
     with (
         _substitute(port, body='{"object": "list"}').running(timeout_s=30.0) as handle,
-        pytest.raises(LookupError) as answer,
+        pytest.raises(ServerModelUnknown) as answer,
     ):
         handle.served_model_id()
 

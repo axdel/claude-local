@@ -103,6 +103,16 @@ class ServerNotReady(TimeoutError):
     """The server stayed alive but never answered its readiness endpoint in time."""
 
 
+class ServerModelUnknown(LookupError):
+    """The server answered its readiness endpoint but named no model a request can address.
+
+    A ``LookupError`` subclass for the same reason ``ServerNotReady`` subclasses ``TimeoutError``:
+    the stdlib base is the semantically right family, so a caller reaching for it still catches
+    this. Raising the bare base instead would make ``except LookupError`` around a call also
+    swallow any stray ``KeyError`` or ``IndexError`` from the caller's own code.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ServerHandle:
     """A model server that is up and answering, for the duration of the ``running`` block."""
@@ -124,14 +134,16 @@ class ServerHandle:
 
         Raises:
             httpx.HTTPError: The server did not answer.
-            LookupError: The server answered, but advertises no model this can address — either
-                an empty served-models list, or a body that is not one at all.
+            ServerModelUnknown: The server answered, but advertises no model this can address —
+                either an empty served-models list, or a body that is not one at all.
         """
         served_models_url = f"{self.base_url}{_READINESS_PATH}"
         answer = httpx.get(served_models_url, timeout=_SERVED_MODELS_TIMEOUT_S).text
         advertised = _advertised_models(served_models_url, answer)
         if not advertised:
-            raise LookupError(f"the model server at {served_models_url} advertises no model")
+            raise ServerModelUnknown(
+                f"the model server at {served_models_url} advertises no model"
+            )
         return str(advertised[0]["id"])
 
 
@@ -146,7 +158,7 @@ def _advertised_models(served_models_url: str, answer: str) -> list[dict[str, ob
     try:
         return list(json.loads(answer)["data"])
     except (json.JSONDecodeError, TypeError, KeyError) as exc:
-        raise LookupError(
+        raise ServerModelUnknown(
             f"the model server at {served_models_url} did not answer with a served-models list. "
             f"It said: {answer[:_ANSWER_EXCERPT_CHARS]}"
         ) from exc
