@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, assert_never
 
 from claude_local.backend import BackendUnavailable
 from claude_local.entrypoint import implement
+from claude_local.model_registry import generation_params_from_json
 from claude_local.paths import KeepOnlyViolation
 from claude_local.runner import OracleError
 from claude_local.sandbox import SandboxUnavailable
@@ -141,7 +142,13 @@ def _run(args: argparse.Namespace) -> int:
     base_url = _required_setting(args.base_url, _BASE_URL_ENV, "--base-url")
     model = _required_setting(args.model, _MODEL_ENV, "--model")
     try:
-        outcome = implement(spec, base_url=base_url, model=model, worktree=args.worktree)
+        outcome = implement(
+            spec,
+            base_url=base_url,
+            model=model,
+            worktree=args.worktree,
+            generation_params=args.generation_params,
+        )
     except (ValueError, KeepOnlyViolation) as exc:
         # Both are refusals, not faults, and both are statements about the caller's impl_path.
         # ``implement`` documents exactly one ValueError -- a flat path would put the
@@ -197,6 +204,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--model",
         default=None,
         help=f"The model name to request from that server. Defaults to ${_MODEL_ENV}.",
+    )
+    parser.add_argument(
+        "--generation-params",
+        type=generation_params_from_json,
+        default={},
+        metavar="JSON",
+        help=(
+            "JSON object of request-body fields sent with every generation, e.g. "
+            "'{\"enable_thinking\": false}'. Take it from the model registry's PARAMS column: "
+            "it is the only lever that reaches a chat template whose own default no server flag "
+            "can countermand, and the server this CLI talks to was started by someone else."
+        ),
     )
     parser.add_argument(
         "--worktree",

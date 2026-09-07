@@ -15,6 +15,7 @@ A leaf: imports nothing from the package, so every consumer can depend inward on
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from collections.abc import Iterator, Mapping
@@ -51,6 +52,32 @@ Named here because it is the one generation parameter this layer must recognise 
 merely forward: it is the only one the server refuses to run in some configurations, so a
 resolved row carrying it needs checking against the rest of the row.
 """
+
+
+def generation_params_from_json(declared: str) -> dict[str, object]:
+    """Read a command line's ``--generation-params`` value as the request-body fields it declares.
+
+    The second surface form of the fact the PARAMS cell below declares, and it lives beside that
+    one so the two cannot drift into disagreeing about what a declaration means. They differ only
+    in who is writing: a registry row is hand-written into a ``|``-delimited cell, where bare
+    ``key=value`` reads better than quoted JSON, while a command line is usually assembled by
+    another process out of an already-parsed mapping — which is what ``json.dumps`` is for. A
+    second ``key=value`` reader at that boundary would be one format with two parsers, free to
+    disagree on the next quoting question.
+
+    Raises:
+        argparse.ArgumentTypeError: the value is not a JSON object. A request body is an object,
+            so a list or a scalar names no fields — and it has to fail here, because a server drops
+            an unrecognised body field silently and would report a whole run as configured when it
+            was not.
+    """
+    try:
+        params = json.loads(declared)
+    except ValueError as malformed:
+        raise argparse.ArgumentTypeError(f"not a JSON object: {malformed}") from malformed
+    if not isinstance(params, dict):
+        raise argparse.ArgumentTypeError(f"not a JSON object but a {type(params).__name__}")
+    return params
 
 
 def _generation_params(declared: str, model: str) -> Mapping[str, object]:

@@ -96,7 +96,15 @@ def main(argv: list[str] | None = None) -> int:
     with server.running(timeout_s=args.startup_timeout) as handle:
         served = handle.served_model_id()
         with httpx.Client(timeout=args.generation_timeout) as http:
-            backend = HttpxBackend(base_url=handle.base_url, client=http, model=served)
+            # The row's PARAMS too, not just its FLAGS: a probe that answers "what did the model
+            # actually say" has to ask under the configuration the model is actually run with, or
+            # it answers a question nobody asked.
+            backend = HttpxBackend(
+                base_url=handle.base_url,
+                client=http,
+                model=served,
+                generation_params=resolved.generation_params,
+            )
             # The same prefix implement() sends — read from the builder and the bundled card,
             # never restated here, so a probe cannot answer a question about a prompt the loop
             # does not actually send.

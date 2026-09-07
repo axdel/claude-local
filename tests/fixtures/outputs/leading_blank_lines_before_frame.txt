@@ -1,0 +1,15 @@
+
+
+FILE: src/quicksort.py
+"""Ascending integer sort implemented as a pure function using quicksort."""
+
+
+def quicksort(values: list[int]) -> list[int]:
+    """Return a new list holding the same integers as values, ordered ascending."""
+    if len(values) <= 1:
+        return list(values)
+    pivot = values[len(values) // 2]
+    left = [v for v in values if v < pivot]
+    middle = [v for v in values if v == pivot]
+    right = [v for v in values if v > pivot]
+    return quicksort(left) + middle + quicksort(right)

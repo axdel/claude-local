@@ -42,7 +42,6 @@ to read what the model actually wrote for that case::
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import tempfile
@@ -59,6 +58,7 @@ from benchmarks.harness import (
     write_produced_code,
 )
 from benchmarks.harness.style import collect_style_findings
+from claude_local import generation_params_from_json
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -73,28 +73,6 @@ _HERE = Path(__file__).parent
 _BENCHMARK = _HERE / "schedule_manager"
 _CASES = _BENCHMARK / "cases"
 _GOLDEN_APP = _BENCHMARK / "golden" / "app"
-
-
-def _generation_params(declared: str) -> dict[str, object]:
-    """Read the ``--generation-params`` value as the request-body fields it declares.
-
-    JSON rather than repeated ``key=value`` flags, deliberately: the model registry already owns
-    that syntax, and a second parser for it here would be one format with two readers, free to
-    disagree on the next quoting question. This layer only has to carry an already-parsed mapping
-    across a process boundary, which is what JSON is for.
-
-    Raises:
-        argparse.ArgumentTypeError: the value is not a JSON object. A body is an object, so a list
-            or a scalar names no fields — and it has to fail here, because a server drops an
-            unrecognised body field silently and would report a whole run as normally configured.
-    """
-    try:
-        params = json.loads(declared)
-    except ValueError as malformed:
-        raise argparse.ArgumentTypeError(f"not a JSON object: {malformed}") from malformed
-    if not isinstance(params, dict):
-        raise argparse.ArgumentTypeError(f"not a JSON object but a {type(params).__name__}")
-    return params
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -149,7 +127,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--generation-params",
-        type=_generation_params,
+        type=generation_params_from_json,
         default={},
         metavar="JSON",
         help=(

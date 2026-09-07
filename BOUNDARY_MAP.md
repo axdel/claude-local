@@ -6,6 +6,7 @@
 |-|-|-|-|-|-|
 | __init__ | entrypoint | may-import | Public front door re-exports implement and Outcome. | active |  |
 | __init__ | loop | may-import | Public front door re-exports AttemptProgress, the live event implement's on_attempt observer receives. | active |  |
+| __init__ | model_registry | may-import | Public front door re-exports generation_params_from_json, the declaration reader every out-of-package front door needs: the CLI, the bundled example, and the benchmark each take --generation-params, and a parser at each would be one format with three readers. | active |  |
 | __init__ | session | may-import | Public front door re-exports model_session, the interactive surface. | active |  |
 | __init__ | types | may-import | Public front door re-exports task value objects. | active |  |
 | __main__ | cli | may-import | The python -m shim resolves the same front door as the installed console script. | active |  |
@@ -16,6 +17,7 @@
 | claude_local | benchmarks | must-not-import | Reusable loop never depends on benchmark subjects or harness code. | active |  |
 | cli | backend | may-import | Catches BackendUnavailable so a broken host exits apart from a failed task. | active |  |
 | cli | entrypoint | may-import | Adapts one invocation to a TaskSpec; implement stays the composition root. | active |  |
+| cli | model_registry | may-import | Reads generation_params_from_json only, to parse its --generation-params flag. This does NOT soften the never-serve rule above it: the registry resolves names and declarations, it starts nothing, and the CLI still takes its server from --base-url alone. | active |  |
 | cli | model_server | must-not-import | The CLI never serves. A dispatched child runs under a profile granting outbound loopback but not network-bind, so it cannot listen; --base-url must name an already-running server. The layers contract would permit this import, so only this rule bars it. | active |  |
 | cli | runner | may-import | Catches OracleError; a broken oracle produced no verdict, so no task outcome exists. | active |  |
 | cli | sandbox | may-import | Catches SandboxUnavailable; a host without the kernel sandbox is a fault, not a status. | active |  |

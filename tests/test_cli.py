@@ -64,14 +64,20 @@ class RecordingImplement:
 
     Records the specs it was handed, so a test can assert the budget was never burned on a task
     the CLI should have refused — an absence of work, which is behavior, not call shape.
+
+    It records the run settings beside them for the same reason. Those are not incidental call
+    shape either: ``implement`` is claude-local's one typed seam, and the CLI's whole job is
+    adapting an invocation to it, so what the adapter hands across that seam IS its contract.
     """
 
     def __init__(self, status: Status = Status.DONE) -> None:
         self.status = status
         self.specs: list[TaskSpec] = []
+        self.settings: list[dict[str, object]] = []
 
-    def __call__(self, spec: TaskSpec, **_: object) -> Outcome:
+    def __call__(self, spec: TaskSpec, **settings: object) -> Outcome:
         self.specs.append(spec)
+        self.settings.append(settings)
         return Outcome(
             status=self.status,
             code=None,
@@ -380,6 +386,77 @@ def test_missing_server_coordinates_are_refused_rather_than_guessed(
 
     assert exit_code == EXIT_REJECTED_TASK
     assert runner.specs == []
+
+
+def test_generation_params_declared_on_the_command_line_reach_the_loop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A model's required request-body fields have a way in, or the model cannot be dispatched to.
+
+    Oracle: the JSON specification — ``false`` is the boolean, never the string ``"false"`` — and
+    the model registry, whose PARAMS column declares exactly these fields per model. The two must
+    agree because the registry is where the value comes from: the dispatching parent reads a row
+    and serialises it onto this flag.
+
+    Measured, not supposed. Served with its thinking channel left on, Qwen3.8-27B-abliterated
+    spends most of a generation deliberating and frames the result differently — 851 completion
+    tokens for 515 characters of reply on the bundled example, which the loop then refused. The
+    registry row carries ``enable_thinking=false`` for that reason, and before this flag existed
+    the row had no way to reach a dispatched run: the CLI took a base URL and a model name and
+    nothing else, so the one lever that fixes the flagship model was unreachable from the front
+    door claude-protocol actually uses.
+    """
+    runner = RecordingImplement()
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps(build_envelope()), encoding="utf-8")
+    monkeypatch.setattr(cli, "implement", runner)
+
+    exit_code = main(
+        [
+            "--task",
+            str(task_file),
+            "--worktree",
+            str(tmp_path),
+            "--generation-params",
+            '{"enable_thinking": false, "thinking_budget": 256}',
+        ]
+    )
+
+    assert exit_code == 0
+    assert runner.settings[0]["generation_params"] == {
+        "enable_thinking": False,
+        "thinking_budget": 256,
+    }
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        pytest.param("[1, 2]", id="json-array"),
+        pytest.param('"enable_thinking=false"', id="json-string"),
+        pytest.param("not json at all", id="not-json"),
+    ],
+)
+def test_generation_params_that_name_no_fields_are_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, declared: str
+) -> None:
+    """A request body is an object, so anything else declares no fields and must not run.
+
+    It has to fail here rather than later: a server drops an unrecognised body field silently, so a
+    malformed declaration accepted at this layer would report a whole dispatched run as normally
+    configured while the lever it named was never applied. Exit 2 is argparse's own usage code,
+    which the CLI leaves to the runtime rather than claiming for a task status.
+    """
+    runner = RecordingImplement()
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps(build_envelope()), encoding="utf-8")
+    monkeypatch.setattr(cli, "implement", runner)
+
+    with pytest.raises(SystemExit) as refused:
+        main(["--task", str(task_file), "--generation-params", declared])
+
+    assert refused.value.code == 2
+    assert runner.specs == []  # the budget was never burned on a misconfigured run
 
 
 def test_the_envelope_becomes_the_task_the_loop_runs(

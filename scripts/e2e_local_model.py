@@ -61,8 +61,14 @@ def main(argv: list[str] | None = None) -> int:
 
         # The documented consumer path, invoked exactly as the README prints it — not an
         # in-process call to implement(), which would skip the surface a user actually drives.
+        # The row's PARAMS ride along as JSON: the registry declares them, so this chain has to
+        # carry them rather than let the example guess. Serving a model with its FLAGS while
+        # dropping its PARAMS is a half-configured run that looks fully configured.
+        example = [sys.executable, str(_EXAMPLE), "--base-url", handle.base_url, "--model", served]
+        if resolved.generation_params:
+            example += ["--generation-params", json.dumps(dict(resolved.generation_params))]
         done = subprocess.run(  # noqa: S603
-            [sys.executable, str(_EXAMPLE), "--base-url", handle.base_url, "--model", served],
+            example,
             cwd=_REPO_ROOT,
             capture_output=True,
             text=True,

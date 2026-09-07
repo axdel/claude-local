@@ -56,6 +56,11 @@ def extract_file(text: str) -> WholeFileReply | None:
     reply rather than half-reading it. The blank line the rules card asks for is consumed when
     present but never required: models write the file on the very next line, and refusing that
     costs a whole attempt while the header ends where the line ends either way (D-EDITS-004).
+    Blank lines BEFORE the header are dropped for the same reason and at the same cost: a reasoning
+    channel leaves newlines ahead of a complete frame, and refusing those bytes burns the attempt
+    with nothing in the feedback tail to repair from (D-EDITS-005). Only newlines are dropped, so
+    every refusal that carries meaning still holds — a leading word stays a leading word, an
+    indented header stays indented, and a leading carriage return still names CRLF.
     Everything after it is the file, byte for byte, with no delimiter to find at the end — source
     may contain any textual terminator, which is why D-EDITS-002 keeps rejecting one. The one
     exception is a fence wrapping the payload end to end, which ``_unwrap_fence`` removes.
@@ -66,7 +71,7 @@ def extract_file(text: str) -> WholeFileReply | None:
     Returns:
         The framed whole-file reply, or ``None`` when the reply is not one well-formed frame.
     """
-    header, separator, payload = text.partition(_LINE_BREAK)
+    header, separator, payload = text.lstrip(_LINE_BREAK).partition(_LINE_BREAK)
     if not separator or _CARRIAGE_RETURN in header or not header.startswith(_FILE_PREFIX):
         return None
     path = header.removeprefix(_FILE_PREFIX)

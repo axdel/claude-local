@@ -218,6 +218,9 @@ def test_an_unbalanced_fence_is_left_in_the_file(payload: str) -> None:
         pytest.param("FILE: src/\ud800.py\n\n", id="unencodable-path"),
         pytest.param("FILE:src/claude_local/foo.py\n\nX", id="file-space"),
         pytest.param("FILE: src/claude_local/foo.py\r\n\r\nX", id="crlf"),
+        pytest.param("\n\nXFILE: src/claude_local/foo.py\n\n", id="blank-lines-then-prose"),
+        pytest.param("\n\n  FILE: src/claude_local/foo.py\n\nX", id="blank-lines-then-indented"),
+        pytest.param("\r\nFILE: src/claude_local/foo.py\n\nX", id="leading-carriage-return"),
     ],
 )
 def test_invalid_or_ambiguous_reply_is_blocked(reply: str) -> None:
@@ -247,6 +250,34 @@ def test_the_blank_line_after_the_header_is_optional() -> None:
     assert extract_file(tight) == WholeFileReply(
         path="src/claude_local/foo.py", payload=b"VALUE = 1\n"
     )
+
+
+def test_blank_lines_before_the_header_do_not_refuse_the_frame() -> None:
+    """The mirror of the optional blank line after the header, and the same trade decides it.
+
+    Oracle: measured against a real model, and the reply is kept as a fixture rather than
+    described. Qwen3.8-27B-abliterated, served with its thinking channel left on, emitted a
+    complete and well-formed frame preceded by two newlines — the residue of the reasoning channel
+    — and the whole attempt was refused for those two bytes, with ``finish_reason: stop`` and no
+    derail. That is the same BLOCKED-with-nothing-to-repair-from outcome D-EDITS-004 weighed, at
+    the other end of the header.
+
+    Leading blank lines carry no information: nothing in the wire schema makes them ambiguous, and
+    the refusal that IS load-bearing survives untouched, because dropping newlines leaves a leading
+    WORD exactly where it was and an indented header still indented. Both are pinned as refusals
+    alongside the prose case.
+    """
+    captured = load_output("leading_blank_lines_before_frame.txt")
+
+    reply = extract_file(captured)
+
+    assert reply is not None
+    assert reply.path == "src/quicksort.py"
+    # The file is every byte after the header line — read off the capture, not off a parse of it.
+    assert reply.payload.startswith(b'"""Ascending integer sort')
+    assert reply.payload.endswith(b"return quicksort(left) + middle + quicksort(right)")
+    # And it is that suffix verbatim: a payload that is not a tail of the reply has been mangled.
+    assert captured.encode("utf-8").endswith(reply.payload)
 
 
 def test_only_one_blank_line_is_separator_and_the_rest_is_the_file() -> None:

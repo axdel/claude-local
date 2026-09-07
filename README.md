@@ -66,6 +66,25 @@ must satisfy elsewhere.
    uv run python examples/quicksort/run.py --model <model-name> > quicksort.py
    ```
 
+   **Pass the model's `PARAMS` if its registry row declares any**, as `--generation-params`
+   (a JSON object). They are not decoration: several models answer with a file only once their
+   thinking channel is switched off in the request, and a server flag cannot do it — the flag's
+   absence leaves the template variable undefined, which the template reads as *on*. Serving a
+   model with its `FLAGS` and none of its `PARAMS` is a half-configured run that looks fully
+   configured, and it fails as a `BLOCKED` with nothing to repair from.
+
+   ```bash
+   uv run python examples/quicksort/run.py --model <model-name> \
+     --generation-params '{"enable_thinking": false, "thinking_budget": 256}'
+   ```
+
+   Steps 2 and 3 together, for a catalogued model, are one command that reads the row for you and
+   tears the server down either way:
+
+   ```bash
+   scripts/e2e_local_model.py <model-name>
+   ```
+
 ### Talking to a model interactively
 
 To try prompts against a catalogued model — tuning a rules card, checking how one answers before

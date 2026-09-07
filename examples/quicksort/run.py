@@ -19,7 +19,13 @@ import os
 import sys
 from pathlib import Path
 
-from claude_local import Budget, Status, TaskSpec, implement
+from claude_local import (
+    Budget,
+    Status,
+    TaskSpec,
+    generation_params_from_json,
+    implement,
+)
 
 _HERE = Path(__file__).parent
 _IMPL_PATH = "src/quicksort.py"
@@ -54,6 +60,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=os.environ.get("CLAUDE_LOCAL_MODEL"),
         help="Model name the server should serve (env: CLAUDE_LOCAL_MODEL).",
     )
+    parser.add_argument(
+        "--generation-params",
+        type=generation_params_from_json,
+        default={},
+        metavar="JSON",
+        help=(
+            "JSON object of request-body fields sent with every generation, e.g. "
+            "'{\"enable_thinking\": false}'. Copy it from the model registry's PARAMS column for "
+            "the model being served — several models need it to answer with a file at all."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -74,7 +91,12 @@ def main(argv: list[str] | None = None) -> int:
         print("error: no model given (pass --model or set CLAUDE_LOCAL_MODEL)", file=sys.stderr)
         return 2
 
-    outcome = implement(_build_spec(), base_url=args.base_url, model=args.model)
+    outcome = implement(
+        _build_spec(),
+        base_url=args.base_url,
+        model=args.model,
+        generation_params=args.generation_params,
+    )
 
     record = outcome.record
     estimated = "  (tokens estimated)" if record.tokens_estimated else ""
