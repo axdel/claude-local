@@ -8,10 +8,10 @@ different systems, and which card wins is not the same answer for every model.
 
     scripts/compare-sweeps.py
 
-Reads only committed artifacts, so it needs no model, no server and no GPU, and it re-derives the
-whole table from scorecards written long before it existed. Style findings come from
-``collect_style_findings`` — the same function ``score-style.py`` calls, so the two reports can
-never disagree about what a finding is.
+Reads only the committed scorecards, so it needs no model, no server and no GPU, and it
+re-derives the whole table from runs recorded long before it existed. Each scorecard is a complete
+record: the style count is written into it at scoring time, so the comparison never has to find the
+code a run produced — that code is optional run output and lives outside this repository.
 
 Only the LATEST run of each (model, card) pair is reported. A re-run supersedes: an older
 measurement of the same configuration is a strictly worse estimate of it, and averaging the two
@@ -36,20 +36,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-# The repo root itself, not `src`: this script imports the benchmark package, and Python seeds
-# sys.path with the script's own directory rather than the working directory.
-sys.path.insert(0, str(_REPO_ROOT))
-
-from benchmarks.harness.style import collect_style_findings  # noqa: E402
-
 _SCORECARDS = _REPO_ROOT / "benchmarks" / "scorecards"
 _USAGE_ERROR = 2
-
-# A run now stamps both its artifacts from one clock read, so their names match exactly. Every
-# scorecard written before that fix landed came from two independent reads and pairs a millisecond
-# or two off, and those runs are most of the comparison — so the join stays a nearest-match. One
-# second is far wider than that historical gap and far narrower than the minutes between runs.
-_PAIRING_TOLERANCE_MS = 1000
 
 # What a scorecard written before the rules card became a benchmark variable reports as its card.
 # Such runs are shown but never used in a verdict — see _print_card_verdicts.
@@ -91,7 +79,6 @@ def _load_scorecards(scorecards: Path = _SCORECARDS) -> list[SweepResult]:
     scored the old, shorter ladder drop out rather than being compared as though 7 of 9 were their
     result.
     """
-    code_directories = sorted(scorecards.glob("code-*"))
     documents = [
         (path, json.loads(path.read_text(encoding="utf-8")))
         for path in sorted(scorecards.glob("scorecard-*.json"))
@@ -119,44 +106,12 @@ def _load_scorecards(scorecards: Path = _SCORECARDS) -> list[SweepResult]:
                 completion_tokens=loaded["total_completion_tokens"],
                 model_seconds=loaded["total_model_seconds"],
                 attempts=sum(case["attempts"] for case in loaded["cases"]),
-                style_findings=_style_count(
-                    _paired_code_directory(path, stamp_ms, code_directories)
-                ),
+                # None and 0 are different answers and the table prints them differently: one
+                # means the run predates the field, the other means its code was linted and clean.
+                style_findings=loaded.get("style_findings"),
             )
         )
     return results
-
-
-def _paired_code_directory(scorecard: Path, stamp_ms: int, candidates: list[Path]) -> Path | None:
-    """The produced-code directory written by the same run, or ``None`` if it is gone.
-
-    Matched on the model slug plus the nearest timestamp within the tolerance, because the two
-    artifacts do not in fact share a stamp. Returning ``None`` rather than raising is deliberate:
-    an old scorecard whose code was cleaned up is still a valid correctness measurement, and
-    losing its row would hide a result to protect a secondary column.
-    """
-    slug = scorecard.stem[len("scorecard-") : scorecard.stem.rindex("-")]
-    prefix = f"code-{slug}-"
-    nearest: Path | None = None
-    nearest_gap = _PAIRING_TOLERANCE_MS
-    for candidate in candidates:
-        if not candidate.name.startswith(prefix):
-            continue
-        gap = abs(int(candidate.name.rsplit("-", 1)[1]) - stamp_ms)
-        if gap <= nearest_gap:
-            nearest, nearest_gap = candidate, gap
-    return nearest
-
-
-def _style_count(code_directory: Path | None) -> int | None:
-    """How many style findings the run's produced code carries; ``None`` when it is unavailable.
-
-    ``None`` and ``0`` are different answers and the table prints them differently — one means
-    the code was not found, the other means it was found and was clean.
-    """
-    if code_directory is None:
-        return None
-    return len(collect_style_findings(code_directory))
 
 
 def _output_fingerprint(result: SweepResult) -> tuple[str, int, int, int, int]:

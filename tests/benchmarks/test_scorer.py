@@ -244,6 +244,9 @@ def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
         "total_completion_tokens": 400,
         "total_model_seconds": 8.0,
         "mean_tokens_per_second": 50.0,
+        # Not measured: score_cases reduces records already in memory, while counting style
+        # findings means linting files on disk. The benchmark runner supplies it.
+        "style_findings": None,
         "cases": [
             {"case_id": "01_scaffold", "status": "done", "attempts": 1, "length_capped": 0},
             {"case_id": "02_schemas", "status": "done", "attempts": 2, "length_capped": 0},

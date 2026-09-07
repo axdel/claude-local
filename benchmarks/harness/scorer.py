@@ -54,6 +54,11 @@ class Scorecard:
     mirroring ``LocalEconomyRecord``'s per-task mean (shared formula, not a shared owner: Rule of
     Three notes the second occurrence, extract at the third). ``cases_passed`` and ``cases_total``
     are derived from ``cases``, never stored, so the pass count can never drift from the table.
+
+    ``style_findings`` counts the style problems in the code this run produced. It is supplied by
+    the caller rather than derived here, because counting it means running a linter over files on
+    disk and this module reduces results that are already in memory. ``None`` means not measured —
+    a different answer from ``0``, which means measured and clean.
     """
 
     model: str
@@ -62,6 +67,7 @@ class Scorecard:
     total_completion_tokens: int
     total_model_seconds: float
     mean_tokens_per_second: float | None
+    style_findings: int | None = None
 
     @property
     def cases_passed(self) -> int:
@@ -102,6 +108,7 @@ class Scorecard:
             "total_completion_tokens": self.total_completion_tokens,
             "total_model_seconds": self.total_model_seconds,
             "mean_tokens_per_second": self.mean_tokens_per_second,
+            "style_findings": self.style_findings,
             "cases": [self._case_as_dict(case) for case in self.cases],
         }
 

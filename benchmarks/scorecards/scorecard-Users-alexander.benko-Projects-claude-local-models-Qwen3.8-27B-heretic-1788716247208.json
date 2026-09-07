@@ -1,0 +1,54 @@
+{
+  "model": "/Users/alexander.benko/Projects/claude-local/models/Qwen3.8-27B-heretic",
+  "rules_card_digest": "1a2694b6136d",
+  "cases_passed": 6,
+  "cases_total": 7,
+  "total_completion_tokens": 6649,
+  "total_model_seconds": 661.2901291248854,
+  "mean_tokens_per_second": 10.05458830725164,
+  "cases": [
+    {
+      "case_id": "01_scaffold",
+      "status": "exhausted",
+      "attempts": 4,
+      "length_capped": 0
+    },
+    {
+      "case_id": "02_schemas",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "03_repositories",
+      "status": "done",
+      "attempts": 2,
+      "length_capped": 0
+    },
+    {
+      "case_id": "04_auth_service",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "05_rbac",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "06_schedule_service",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "07_routers",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    }
+  ],
+  "style_findings": 3
+}

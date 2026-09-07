@@ -1,0 +1,18 @@
+{
+  "model": "/Users/alexander.benko/Projects/claude-local/models/Qwen3.8-27B-abliterated",
+  "rules_card_digest": "1a2694b6136d",
+  "cases_passed": 1,
+  "cases_total": 1,
+  "total_completion_tokens": 173,
+  "total_model_seconds": 29.594697499996983,
+  "mean_tokens_per_second": 5.845641774173148,
+  "cases": [
+    {
+      "case_id": "05_rbac",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    }
+  ],
+  "style_findings": 0
+}

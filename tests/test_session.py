@@ -216,7 +216,7 @@ def test_for_model_resolves_without_spawning(
     """Construction and lifetime are split: building a specification starts no process."""
     _store_with(monkeypatch, tmp_path, "gpt-oss-20b")
     spawned: list[object] = []
-    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: spawned.append(a))
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **_kwargs: spawned.append(args))
 
     spec = ModelSession.for_model("gpt-oss-20b")
 
@@ -229,7 +229,7 @@ def test_an_uncatalogued_name_is_refused_before_anything_is_spawned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spawned: list[object] = []
-    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: spawned.append(a))
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **_kwargs: spawned.append(args))
 
     with pytest.raises(UnknownModel):
         ModelSession.for_model("no-such-model-in-any-catalog")
@@ -243,7 +243,7 @@ def test_a_catalogued_model_with_no_weights_is_refused_never_fetched(
     """Nothing here ever downloads a model: an absent store entry is an error, not a fetch."""
     monkeypatch.setenv("CLAUDE_LOCAL_MODELS", str(tmp_path))  # empty store
     spawned: list[object] = []
-    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: spawned.append(a))
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **_kwargs: spawned.append(args))
 
     with pytest.raises(ModelNotPresent):
         ModelSession.for_model("gpt-oss-20b")

@@ -82,6 +82,11 @@ line-length = 99
 # is the measurement — evidence of what a model wrote, read by a human to judge it — so linting it
 # would report a weak model's style as this repository's own findings. Excluded here rather than
 # left to .gitignore because a formatter or type checker is free to walk ignored paths.
+#
+# EVERY whole-repo analyzer needs this exclusion, not just this one: ruff here, basedpyright and
+# vulture below. A new analyzer that walks the tree gets it too. The failure is not cosmetic —
+# some produced files are not valid Python at all (an unclosed fence, a mangled def), so an
+# analyzer without the exclusion reports a syntax error in a file this repository never wrote.
 exclude = ["benchmarks/scorecards"]
 
 [tool.ruff.lint]
@@ -119,6 +124,12 @@ exclude = [
   "examples/**/*_oracle.py",
   "benchmarks/scorecards",
 ]
+
+[tool.vulture]
+# The third whole-repo analyzer, and the one the exclusion above was originally written for
+# without being applied to: vulture parses every .py it walks, so the produced code that is not
+# valid Python fails it outright — reporting a weak model's unclosed fence as a finding here.
+exclude = ["benchmarks/scorecards"]
 
 [tool.deptry]
 # Scanned from the repo root, deptry cannot infer that this src-layout package is first-party,

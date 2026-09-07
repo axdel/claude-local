@@ -187,72 +187,35 @@ def test_short_model_strips_the_weights_path_a_local_model_id_carries() -> None:
     assert row.short_model == "Qwen3.8-27B-abliterated"
 
 
-def test_code_directory_pairs_with_the_scorecard_written_milliseconds_apart(
-    tmp_path: Path,
-) -> None:
-    """Historical runs did not share a stamp between their two artifacts, so the join tolerates it.
+def test_the_style_count_is_read_from_the_scorecard_itself(tmp_path: Path) -> None:
+    """The style column comes out of the scorecard, not out of the code a run produced.
 
-    Oracle: every scorecard written before ``run.py`` was changed to read the clock once came from
-    two separate reads, which is why the pair observed on disk is ``…723.json`` beside ``…724``.
-    Those runs are most of the corpus, so an exact-match join would silently drop their style
-    column. Runs written since do match exactly, and the same nearest-match join accepts them.
+    Oracle: the value asserted is the one written into the document, so nothing here depends on
+    any file the run may or may not have kept. This replaced a nearest-timestamp join against a
+    produced-code directory, which made a run's style column depend on whether 2 MB of model
+    output — frequently not valid Python — was still sitting in the repository.
     """
     module = _script()
-    scorecard = tmp_path / "scorecard-local-candidate-1788709222723.json"
-    scorecard.write_text("{}", encoding="utf-8")
-    code = tmp_path / "code-local-candidate-1788709222724"
-    code.mkdir()
+    _write_scorecard(tmp_path, 1_000, cases=7, rules_card_digest="aaaaaaaaaaaa", style_findings=3)
 
-    paired = module._paired_code_directory(scorecard, 1788709222723, [code])
+    (result,) = module._load_scorecards(tmp_path)
 
-    assert paired == code
+    assert result.style_findings == 3
 
 
-def test_code_directory_pairs_when_the_two_stamps_are_identical(tmp_path: Path) -> None:
-    """The nearest-match join accepts a zero gap, which is what every run now produces.
+def test_a_scorecard_predating_the_style_field_reports_it_as_unknown(tmp_path: Path) -> None:
+    """``None`` and ``0`` are different answers: not measured, versus measured and clean.
 
-    Oracle: ``run.py`` reads the clock once and hands the same stamp to both writers, so a current
-    run's two names differ only by their prefix. A join written purely around the historical
-    millisecond gap — one that required a nonzero difference — would pair every old run and no new
-    one, which is the regression this pins.
+    Oracle: seven scorecards in the corpus were written when the produced code had already been
+    cleaned up, so no style count could be derived for them. Reporting those as ``0`` would claim
+    they were linted and clean, which is a stronger and false statement.
     """
     module = _script()
-    scorecard = tmp_path / "scorecard-local-candidate-1788709222723.json"
-    scorecard.write_text("{}", encoding="utf-8")
-    code = tmp_path / "code-local-candidate-1788709222723"
-    code.mkdir()
+    _write_scorecard(tmp_path, 1_000, cases=7, rules_card_digest="aaaaaaaaaaaa")
 
-    assert module._paired_code_directory(scorecard, 1788709222723, [code]) == code
+    (result,) = module._load_scorecards(tmp_path)
 
-
-def test_a_code_directory_from_a_different_run_is_not_paired(tmp_path: Path) -> None:
-    """Oracle: runs are minutes apart, so a candidate outside the tolerance belongs to another run.
-
-    Attributing one run's style findings to another is worse than reporting none: the number looks
-    authoritative and describes different code.
-    """
-    module = _script()
-    scorecard = tmp_path / "scorecard-local-candidate-1788709222723.json"
-    scorecard.write_text("{}", encoding="utf-8")
-    other_run = tmp_path / "code-local-candidate-1788709900000"
-    other_run.mkdir()
-
-    assert module._paired_code_directory(scorecard, 1788709222723, [other_run]) is None
-
-
-def test_a_code_directory_for_a_different_model_is_not_paired(tmp_path: Path) -> None:
-    """Oracle: the slug identifies the model, so another model's same-instant run is not this one.
-
-    A sweep serves one model at a time, but nothing prevents two runs sharing a millisecond, and
-    the timestamp alone cannot tell them apart.
-    """
-    module = _script()
-    scorecard = tmp_path / "scorecard-local-candidate-1788709222723.json"
-    scorecard.write_text("{}", encoding="utf-8")
-    other_model = tmp_path / "code-other-model-1788709222724"
-    other_model.mkdir()
-
-    assert module._paired_code_directory(scorecard, 1788709222723, [other_model]) is None
+    assert result.style_findings is None
 
 
 def _write_scorecard(directory: Path, stamp: int, cases: int, **extra: object) -> None:

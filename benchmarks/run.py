@@ -43,14 +43,18 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from benchmarks.harness import load_cases, run_cases, score_cases, write_produced_code
+from benchmarks.harness.style import collect_style_findings
 from claude_local import BackendUnavailable, OracleError, SandboxUnavailable
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from typing import TextIO
 
     import httpx
@@ -106,6 +110,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Directory to also write the scorecard JSON into (created if absent).",
+    )
+    parser.add_argument(
+        "--code-out",
+        type=Path,
+        default=None,
+        help=(
+            "Directory to keep the code each case produced (created if absent). Off by default, "
+            "and point it OUTSIDE this repository: the produced code is model output, often not "
+            "valid Python, and any whole-repo analyzer walking the tree will parse it and report "
+            "it as this project's own findings. The scorecard records the style count either way."
+        ),
     )
     parser.add_argument(
         "--stream",
@@ -311,20 +326,39 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
         print(f"error: benchmark harness fault: {fault}", file=sys.stderr)
         return 3
     scorecard = score_cases(results)
+    # The scorecard says how many oracle tests passed; only the code says whether what passed them
+    # is worth keeping. Counting the style findings HERE, into the scorecard, is what makes the
+    # code itself optional: the judgement survives as a number even when the files it came from
+    # do not, so a scorecard is a whole record rather than half of a pair that must stay together.
+    # One clock read serves both writers below, so their names carry the same stamp.
+    stamp_ms = int(time.time() * 1000)
+    scorecard = replace(
+        scorecard, style_findings=_count_style_findings(results, scorecard, stamp_ms)
+    )
     _print_scorecard(scorecard)
+    if args.code_out is not None:
+        code_directory = write_produced_code(results, scorecard.model, args.code_out, stamp_ms)
+        print(f"produced code written to {code_directory}", file=sys.stderr)
     if args.out is not None:
-        # One clock read for both artifacts. Their names are how a verdict is matched to the code
-        # behind it, so reading the clock separately in each writer would leave the two stamps a
-        # millisecond or two apart and quietly demote that pairing to an mtime correlation.
-        stamp_ms = int(time.time() * 1000)
         written = scorecard.write(args.out, stamp_ms)
         print(f"scorecard written to {written}", file=sys.stderr)
-        # The scorecard says how many oracle tests passed; only the code says whether what passed
-        # them is worth keeping. Both are written, because a run that discards the implementation
-        # leaves no way to judge naming, structure, or how narrowly a case missed.
-        code_directory = write_produced_code(results, scorecard.model, args.out, stamp_ms)
-        print(f"produced code written to {code_directory}", file=sys.stderr)
     return 0 if scorecard.cases_passed == scorecard.cases_total else 1
+
+
+def _count_style_findings(
+    results: Sequence[CaseResult], scorecard: Scorecard, stamp_ms: int
+) -> int | None:
+    """Lint the code this run produced; return the count, or ``None`` when it produced none.
+
+    The files are written to a temporary directory purely to be linted — ruff reads a tree, not
+    strings in memory — and that directory is discarded. Persisting them is a separate, opt-in
+    choice (``--code-out``), so the measurement never depends on the caller having made it.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        directory = write_produced_code(results, scorecard.model, Path(scratch), stamp_ms)
+        if not any(directory.iterdir()):
+            return None
+        return len(collect_style_findings(directory))
 
 
 if __name__ == "__main__":

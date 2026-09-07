@@ -143,9 +143,14 @@ def test_a_run_stamps_its_scorecard_and_its_code_directory_identically(
     That advancing clock is what makes the assertion bite. Left real, both reads land in the same
     millisecond on a replay run and two independent reads pass by luck, so the test would be green
     against the very bug it exists to catch.
+
+    The two artifacts are written to SEPARATE directories, which is how the runner is meant to be
+    driven: produced code is model output that a whole-repo analyzer must never walk, so it does
+    not live beside the committed scorecards. The stamp is what still pairs them.
     """
     ticks = itertools.count(1_700_000_000.0)
     monkeypatch.setattr(time, "time", lambda: next(ticks))
+    code_out = tmp_path / "produced"
     sources = _golden_sources()
 
     with replay_cases_http_client(sources) as http_client:
@@ -159,13 +164,15 @@ def test_a_run_stamps_its_scorecard_and_its_code_directory_identically(
                 "01_scaffold",
                 "--out",
                 str(tmp_path),
+                "--code-out",
+                str(code_out),
             ],
             http_client=http_client,
         )
 
     assert exit_code == 0
     (scorecard_path,) = tmp_path.glob("scorecard-*.json")
-    (code_directory,) = (path for path in tmp_path.glob("code-*") if path.is_dir())
+    (code_directory,) = (path for path in code_out.glob("code-*") if path.is_dir())
     assert scorecard_path.stem.rsplit("-", 1)[1] == code_directory.name.rsplit("-", 1)[1]
 
 
