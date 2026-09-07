@@ -460,6 +460,39 @@ def test_the_terminal_status_travels_out_as_the_process_exit_code(
     assert run_envelope(monkeypatch, tmp_path, build_envelope(), runner) == exit_code_for(status)
 
 
+def test_a_green_verdict_discloses_that_it_was_judged_by_the_code_it_judges(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Oracle: D-ORACLE-004 — the verdict is computed inside the process that ran the impl.
+
+    Zero is the one exit code that causes a parent to admit model-authored code into a real tree,
+    and it rests on a verdict that model-authored top-level code can forge. Nothing in the machine
+    channel can carry that caveat: the parent reads only the exit code and the filesystem delta,
+    and sends both streams to DEVNULL by its own choice. So the disclosure is aimed at the operator
+    reading a hand-run, who is the only party in a position to weigh it.
+    """
+    assert run_envelope(monkeypatch, tmp_path, build_envelope(), RecordingImplement()) == 0
+
+    assert "same process" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("status", [s for s in Status if s is not Status.DONE])
+def test_only_a_green_verdict_carries_the_caveat_about_judging_itself(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status: Status,
+) -> None:
+    """A non-green outcome admits nothing, so the caveat would be noise attached to a refusal.
+
+    Parametrized over every non-DONE member so a status added later cannot quietly inherit a
+    disclosure that only the delta-admitting exit code needs.
+    """
+    assert run_envelope(monkeypatch, tmp_path, build_envelope(), RecordingImplement(status)) != 0
+
+    assert "same process" not in capsys.readouterr().err
+
+
 def test_a_broken_host_is_reported_apart_from_a_failed_task(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

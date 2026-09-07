@@ -150,6 +150,14 @@ Three deliberate choices make weak models usable:
   loop (it writes only the impl path), not requested politely.
 - **Status comes from the oracle, not the model.** A weak model cannot be trusted to report
   "done." The loop decides: the frontier's test passes, or it does not.
+- **That guarantee is scoped, and the scope is worth knowing.** The oracle defeats a model that is
+  *wrong*; it does not defeat one that is *hostile*. The verdict is computed inside the same
+  process that imports and executes the model's file, so top-level code in that file could forge a
+  green — and the catalogue carries safety-ablated rows, the model class for which "not hostile" is
+  the weakest assumption. Making the verdict adversary-proof means computing it somewhere the impl
+  cannot reach, which is a different design; this one takes the trade knowingly and says so, on
+  stderr at every green and in `D-ORACLE-004` / `D-ORACLE-006`. Treat a local green as *supervised
+  evidence a test passed*, never as a substitute for reading the diff.
 
 ## Does It Actually Pay? (The Measurement)
 

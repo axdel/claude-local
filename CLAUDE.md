@@ -11,7 +11,9 @@ spec, any optional ordered, read-only neighbor files, and a frontier-authored **
 model may never write**. The model returns a complete implementation file as raw text; the loop
 applies it to the one permitted impl path — never a context file — runs the test, and feeds the
 failure back under a hard token budget and a derail guard. The test is the oracle: green means
-done. Every task is metered, so the system can tell — per task
+done — against a model that is wrong, not one that is hostile, because the verdict is computed in
+the same process that runs the model's file (D-ORACLE-004, D-ORACLE-006). Every task is metered,
+so the system can tell — per task
 class — whether offloading to a free local model saved net frontier tokens.
 
 ## Stack

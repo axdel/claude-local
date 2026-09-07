@@ -64,6 +64,20 @@ EXIT_REJECTED_TASK = 7
 EXIT_HARNESS_FAULT = 8
 """The host is broken, not the task: no reachable server, no kernel sandbox, or a broken oracle."""
 
+SELF_JUDGED_VERDICT = (
+    "claude-local: this verdict was computed in the same process that executed the model's code, "
+    "which can forge it (D-ORACLE-004). Sound against a weak model, not against a hostile one."
+)
+"""Printed on the one exit code that admits model-authored code into a real working tree.
+
+Aimed at an operator, deliberately — not at the parent. The parent reads only the exit code and
+the filesystem delta and sends both streams to ``DEVNULL``, so no machine channel can carry this
+caveat alongside a zero exit; a human running the command by hand is the only party positioned to
+weigh it. That is also why the disclosure is prose here rather than a technical control: the
+verdict cannot be made trustworthy without moving its computation out of the process that runs
+the impl, which D-ORACLE-004 accepted the cost of not doing.
+"""
+
 
 class TaskRejected(ValueError):
     """The task envelope (or the configuration that must accompany it) cannot be run."""
@@ -139,6 +153,8 @@ def _run(args: argparse.Namespace) -> int:
         # the only one that reaches here is the store refusing the caller's own impl_path.
         raise TaskRejected(str(exc)) from exc
     print(outcome.summary, file=sys.stderr)
+    if outcome.status is Status.DONE:
+        print(SELF_JUDGED_VERDICT, file=sys.stderr)
     if args.record_dir is not None:
         outcome.record.write(args.record_dir)
     return exit_code_for(outcome.status)
