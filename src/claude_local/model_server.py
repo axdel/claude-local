@@ -32,13 +32,24 @@ from typing import BinaryIO
 
 import httpx
 
-from claude_local.model_registry import ResolvedModel
+from claude_local.model_registry import ResolvedModel, UnservableCombination
 
 _SERVER_MODULE = "mlx_vlm.server"
 """Provided by the opt-in `serve` dependency group; absent, the spawn fails as ModuleNotFound."""
 
 _LOOPBACK = "127.0.0.1"
 """Explicit because mlx_vlm defaults --host to 0.0.0.0 — every interface, not just this host."""
+
+_BUILDER_OWNED_OPTIONS = frozenset(
+    {"--host", "--port", "--model", "--max-tokens", "--draft-model", "--draft-kind"}
+)
+"""Options ``for_model`` supplies itself, which a catalog FLAGS cell may therefore not declare.
+
+The server parses argv with argparse, which resolves a repeated option to its LAST value, and
+FLAGS is appended after these. Ordering is what would otherwise keep the bind on loopback, and
+argparse breaks that tie the other way — so a row adding ``--host 0.0.0.0`` would publish an
+unauthenticated inference server to every interface from a data-only edit.
+"""
 
 _READINESS_PATH = "/v1/models"
 """The endpoint that answers once weights are loaded; a bound port alone is not readiness."""
@@ -103,6 +114,32 @@ class ServerHandle:
         return str(advertised[0]["id"])
 
 
+def _redeclared_builder_options(flags: tuple[str, ...]) -> tuple[str, ...]:
+    """The builder-owned options ``flags`` would reach, sorted; empty when the row is servable.
+
+    Matching is argparse's, not string equality, because argparse is what will read these. It
+    splits ``--opt=value`` at the first ``=`` and accepts any unambiguous prefix of a long option,
+    so ``--host``, ``--host=0.0.0.0`` and ``--hos`` all reach the same option while a blocklist of
+    exact tokens catches only the first. Asking whether an owned option *starts with* the supplied
+    name is that rule, and it stays scoped: ``--port-range`` is not a prefix of ``--port``, so it
+    is left servable — argparse does not match it either.
+
+    Args:
+        flags: The catalog FLAGS cell, already split on whitespace into argv tokens.
+
+    Returns:
+        The owned options the cell would reach, sorted for a stable message. Empty means none.
+    """
+    supplied = {flag.split("=", 1)[0] for flag in flags if flag.startswith("--")}
+    return tuple(
+        sorted(
+            owned
+            for owned in _BUILDER_OWNED_OPTIONS
+            if any(owned.startswith(name) for name in supplied)
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ModelServer:
     """The launch specification for one model server, separate from any running process.
@@ -121,10 +158,9 @@ class ModelServer:
         cls,
         resolved: ResolvedModel,
         *,
-        host: str = _LOOPBACK,
         max_tokens: int = _DEFAULT_MAX_TOKENS,
     ) -> ModelServer:
-        """Build the launch specification for a catalogued model.
+        """Build the launch specification for a catalogued model, bound to loopback.
 
         The model is named by its **store path**, never by its repo id. mlx_vlm resolves the
         argument with ``Path(arg)`` and falls through to ``snapshot_download`` when it does not
@@ -135,11 +171,25 @@ class ModelServer:
         the catalog names one for a model whose draft was never pulled, and passing that id would
         download it.
 
+        The bind address is not a parameter, mirroring ``sandboxed_spawn``: this exposes no knob
+        that widens the exposure of an unauthenticated inference server, so loopback holds by
+        construction rather than by every caller remembering to leave a default alone.
+
         Args:
             resolved: A catalogued model whose weights the registry confirmed are present.
-            host: Bind address; loopback unless a caller has a reason to widen it.
             max_tokens: Server-side generation ceiling.
+
+        Raises:
+            UnservableCombination: the row's FLAGS cell declares an option this builder supplies,
+                which argparse would resolve in the cell's favour.
         """
+        redeclared = _redeclared_builder_options(resolved.flags)
+        if redeclared:
+            raise UnservableCombination(
+                f"model {resolved.name!r} declares {', '.join(redeclared)} in its FLAGS cell, "
+                f"which this builder supplies itself. argparse takes the last occurrence of a "
+                f"repeated option, so the row would silently override it."
+            )
         draft_arguments: tuple[str, ...] = ()
         if resolved.draft_path is not None:
             draft_arguments = ("--draft-model", str(resolved.draft_path), "--draft-kind", "mtp")
@@ -149,7 +199,7 @@ class ModelServer:
                 "-m",
                 _SERVER_MODULE,
                 "--host",
-                host,
+                _LOOPBACK,
                 "--port",
                 str(resolved.port),
                 "--model",
@@ -159,7 +209,7 @@ class ModelServer:
                 *draft_arguments,
                 *resolved.flags,
             ),
-            host=host,
+            host=_LOOPBACK,
             port=resolved.port,
         )
 

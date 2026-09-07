@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from claude_local.model_registry import ResolvedModel
+from claude_local.model_registry import ResolvedModel, UnservableCombination
 from claude_local.model_server import (
     ModelServer,
     PortUnavailable,
@@ -137,11 +137,61 @@ def test_the_command_binds_loopback_rather_than_every_interface(tmp_path: Path) 
 
     A local model server is for this machine, so the bind address must be passed explicitly.
     Drop the explicit host and the default takes over — this is the assertion that catches it.
+
+    Counting the occurrences is load-bearing, not belt-and-braces. argparse resolves a repeated
+    option to its LAST value, so a second ``--host`` appended anywhere later widens the bind while
+    ``index()`` — which returns the FIRST match — still reads 127.0.0.1 and reports success.
     """
     command = ModelServer.for_model(_resolved(tmp_path)).command
 
-    assert "--host" in command
+    assert command.count("--host") == 1
     assert command[command.index("--host") + 1] == "127.0.0.1"
+
+
+# S104 flags the all-interfaces literal, which here is the payload proved unreachable rather than
+# an address anything binds. Kept verbatim because it is mlx_vlm's own --host default and so the
+# exact string this refusal exists to stop; a stand-in address would test the same code path while
+# no longer documenting the attack.
+@pytest.mark.parametrize(
+    "smuggled",
+    [
+        pytest.param(("--host", "0.0.0.0"), id="separate-tokens"),  # noqa: S104
+        pytest.param(("--host=0.0.0.0",), id="equals-form"),
+        pytest.param(("--hos", "0.0.0.0"), id="argparse-abbreviation"),  # noqa: S104
+    ],
+)
+def test_a_flags_cell_may_not_redeclare_an_option_the_builder_supplies(
+    tmp_path: Path, smuggled: tuple[str, ...]
+) -> None:
+    """Oracle: argparse's own resolution rules, which decide what the server actually binds.
+
+    FLAGS is unvalidated catalog text, split on whitespace and appended after the options this
+    builder supplies — so ordering alone is what keeps the bind on loopback, and argparse breaks
+    ties the other way. All three spellings below reach ``--host`` in argparse and were confirmed
+    against it directly: a repeated option takes the last value, ``--host=`` is the same option in
+    one token, and a long option matches on any unambiguous prefix. A blocklist of exact tokens
+    would catch only the first. The rule is therefore argparse's rule — a supplied name that is a
+    prefix of an option the builder owns — which is why ``--port-range`` stays servable: argparse
+    does not match it to ``--port`` either.
+
+    Refusing beats ordering around it. Ordering is a property of the argv this module happens to
+    build today, while the refusal is a property of the row, so it cannot be re-broken downstream.
+    """
+    with pytest.raises(UnservableCombination, match="host"):
+        ModelServer.for_model(_resolved(tmp_path, flags=smuggled))
+
+
+def test_serving_flags_the_builder_does_not_own_stay_servable(tmp_path: Path) -> None:
+    """The refusal is scoped to conflicts: every real catalog flag must still pass through.
+
+    Oracle: the FLAGS cells the shipped catalog actually carries. A refusal that also rejected
+    these would be a fail-closed check that closed the feature.
+    """
+    flags = ("--enable-thinking", "--kv-bits", "8", "--quantized-kv-start", "0")
+
+    command = ModelServer.for_model(_resolved(tmp_path, flags=flags)).command
+
+    assert command[-len(flags) :] == flags
 
 
 def test_serving_flags_from_the_registry_row_reach_the_command_as_separate_arguments(
