@@ -383,3 +383,89 @@ def test_no_mode_verdict_is_offered_for_a_configuration_measured_in_one_mode_onl
     module._print_mode_verdicts([_result(module, plan_first=False)])
 
     assert "measured in both modes" in capsys.readouterr().out
+
+
+def test_a_scorecard_predating_the_lever_field_reports_it_as_unrecorded(tmp_path: Path) -> None:
+    """``None`` and ``False`` are different answers: never recorded, versus recorded as off.
+
+    Oracle: the same rule the style count already follows one field down. Reading an absent lever
+    as baseline is an inference, and it stopped being a safe one the day --plan-first reached the
+    two benchmark runners while the scorecard field was still a day away — a run in that window
+    could plan and record nothing.
+    """
+    module = _script()
+    _write_scorecard(tmp_path, 1_000, cases=7, rules_card_digest="aaaaaaaaaaaa")
+
+    (scorecard,) = module._load_scorecards(tmp_path)
+
+    assert scorecard.plan_first is None
+    assert module._mode(scorecard) == "unrecorded"
+
+
+def test_a_run_predating_the_lever_field_is_not_the_same_configuration_as_a_recorded_baseline(
+    tmp_path: Path,
+) -> None:
+    """Oracle: an unknown mode and a known-off mode are two configurations, so two rows survive.
+
+    Coercing the absent field to ``False`` put both on one drop key, and the rule then chose
+    between them by stamp — a coin toss wearing a rule's clothes. The corpus holds exactly this
+    pair: a 7/7 @4436 run whose lever predates the field, and the re-run under the fixed writer
+    that recorded it. Today they agree only because the re-run happens to carry the later stamp.
+    """
+    module = _script()
+    _write_scorecard(tmp_path, 1_000, cases=7, rules_card_digest="aaaaaaaaaaaa")
+    _write_scorecard(tmp_path, 2_000, cases=7, rules_card_digest="aaaaaaaaaaaa", plan_first=False)
+
+    rows = module._latest_per_configuration(module._load_scorecards(tmp_path))
+
+    assert [row.plan_first for row in sorted(rows, key=lambda r: r.stamp_ms)] == [None, False]
+
+
+def test_the_mode_verdict_ignores_a_run_whose_lever_was_never_recorded(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Oracle: here the lever is the verdict's SUBJECT, and no verdict can name an unknown.
+
+    Counted as an arm, an unrecorded run satisfies the both-modes test against a genuine one and
+    publishes "planning does not pay" out of a comparison whose other side may itself have
+    planned. That is the failure the field exists to prevent, reintroduced by the reader.
+    """
+    module = _script()
+
+    module._print_mode_verdicts(
+        [
+            _result(module, plan_first=None, completion_tokens=4_436),
+            _result(module, plan_first=True, completion_tokens=9_858),
+        ]
+    )
+
+    assert "measured in both modes" in capsys.readouterr().out
+
+
+def test_the_card_verdict_keeps_unrecorded_runs_and_names_the_axis_it_could_not_hold(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Oracle: here the lever is the CONTROL and the card is the subject, so the verdict stands.
+
+    The mirror of the rule above, and the reason the two differ. A named card can still be
+    declared the winner when the control is unknown — what is owed is disclosure, not silence, so
+    the mode column prints ``unrecorded`` instead of the ``off`` it used to assert. Eight models
+    in the corpus are compared across two cards on exactly these terms; dropping them would
+    discard the two-card finding to avoid admitting one caveat.
+    """
+    module = _script()
+
+    module._print_card_verdicts(
+        [
+            _result(
+                module, rules_card_digest="aaaaaaaaaaaa", plan_first=None, completion_tokens=4_436
+            ),
+            _result(
+                module, rules_card_digest="bbbbbbbbbbbb", plan_first=None, completion_tokens=5_732
+            ),
+        ]
+    )
+
+    printed = capsys.readouterr().out
+    assert "unrecorded" in printed
+    assert "best: aaaaaaaaaaaa" in printed

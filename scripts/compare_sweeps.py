@@ -56,7 +56,7 @@ class LoadedScorecard:
 
     model: str
     rules_card_digest: str
-    plan_first: bool
+    plan_first: bool | None
     stamp_ms: int
     cases_passed: int
     cases_total: int
@@ -107,11 +107,13 @@ def _load_scorecards(scorecard_directory: Path = _SCORECARDS) -> list[LoadedScor
                 # card that was bundled at the time, and excluding them would discard every
                 # measurement taken before the axis existed.
                 rules_card_digest=loaded.get("rules_card_digest", _UNSTAMPED),
-                # Absent means baseline, and that is a reading rather than an assumption: the
-                # lever is opt-in on both benchmark runners over a False default, and the sweep
-                # driver that produced every scorecard predating this field
-                # (scripts/benchmark_all_models.py) has no way to pass it.
-                plan_first=bool(loaded.get("plan_first", False)),
+                # Absent means UNRECORDED, never False. Reading it as baseline was an inference
+                # standing in for a fact, and it stopped being safe the day --plan-first reached
+                # benchmarks/run.py and scripts/benchmark_model.py while the scorecard field was
+                # still a day away: a run in that window could plan and say nothing. None keeps
+                # such a row from colliding with a recorded baseline on the key below, which is
+                # the whole failure this field exists to prevent (D-TELEMETRY-003).
+                plan_first=bool(loaded["plan_first"]) if "plan_first" in loaded else None,
                 stamp_ms=stamp_ms,
                 cases_passed=loaded["cases_passed"],
                 cases_total=loaded["cases_total"],
@@ -126,7 +128,9 @@ def _load_scorecards(scorecard_directory: Path = _SCORECARDS) -> list[LoadedScor
     return scorecards
 
 
-def _output_fingerprint(scorecard: LoadedScorecard) -> tuple[str, bool, int, int, int, int]:
+def _output_fingerprint(
+    scorecard: LoadedScorecard,
+) -> tuple[str, bool | None, int, int, int, int]:
     """What a deterministic loop reproduces exactly: the model, its score, and what it burned.
 
     Wall-clock is deliberately absent — it is the one number that moves between identical runs,
@@ -138,7 +142,9 @@ def _output_fingerprint(scorecard: LoadedScorecard) -> tuple[str, bool, int, int
     inference this fingerprint serves is "these two rows are one measurement listed twice" — and
     that can only hold within one configuration. Two runs that tie on totals across the lever are
     two measurements, and the tie is what makes them worth telling apart rather than what makes
-    them the same.
+    them the same. An unrecorded lever is a third value here, not a match for the baseline: a row
+    that ties a known-baseline run on every total still cannot be called the same measurement,
+    because what it did is unknown rather than known to agree.
     """
     return (
         scorecard.model,
@@ -183,7 +189,7 @@ def _latest_per_configuration(scorecards: list[LoadedScorecard]) -> list[LoadedS
     any one out silently discards an arm of the A/B that varied it and reports the survivor as
     that model's scorecard — what a plan-first benchmark-run did to the baseline run it followed.
     """
-    latest: dict[tuple[str, str, bool], LoadedScorecard] = {}
+    latest: dict[tuple[str, str, bool | None], LoadedScorecard] = {}
     for scorecard in scorecards:
         key = (scorecard.model, scorecard.rules_card_digest, scorecard.plan_first)
         if key not in latest or scorecard.stamp_ms > latest[key].stamp_ms:
@@ -194,14 +200,28 @@ def _latest_per_configuration(scorecards: list[LoadedScorecard]) -> list[LoadedS
     )
 
 
-def _mode(scorecard: LoadedScorecard) -> str:
-    """How the row's run was configured, in one column-width word.
+def _mode_label(plan_first: bool | None) -> str:
+    """How a run was configured, in one column-width word.
 
     The lever's canonical name when it is on; ``off`` when it is not. Naming the off state after
     the same lever rather than inventing a second term keeps this to the one concept the glossary
     declares — there is no such thing as a run in "direct mode", only a run that did not plan.
+
+    ``unrecorded`` is a third answer and not a synonym for ``off``: the run predates the field, so
+    what it did is unknown rather than known to be nothing.
+
+    Takes the lever rather than a row because the card verdict labels a GROUP, which holds the
+    lever and no particular row. Two spellings of this mapping is how the third case gets added
+    to one of them and not the other.
     """
-    return "plan-first" if scorecard.plan_first else "off"
+    if plan_first is None:
+        return "unrecorded"
+    return "plan-first" if plan_first else "off"
+
+
+def _mode(scorecard: LoadedScorecard) -> str:
+    """The mode label for one row — the same label its verdict group prints."""
+    return _mode_label(scorecard.plan_first)
 
 
 def _print_table(rows: list[LoadedScorecard]) -> None:
@@ -227,7 +247,7 @@ def _print_card_verdicts(rows: list[LoadedScorecard]) -> None:
     The per-model verdict is the point: a card that helps a weak model can cost a strong one, so
     a single overall winner would average away the only finding that changes what to run.
     """
-    by_model_and_mode: dict[tuple[str, bool], list[LoadedScorecard]] = {}
+    by_model_and_mode: dict[tuple[str, bool | None], list[LoadedScorecard]] = {}
     for row in rows:
         # Unstamped rows stay in the table above — they are real measurements — but they cannot
         # appear in a verdict. A difference can only be ATTRIBUTED to a card that can be named,
@@ -239,6 +259,12 @@ def _print_card_verdicts(rows: list[LoadedScorecard]) -> None:
         # Keyed with the mode, not the model alone: a verdict may only vary the axis it names, so
         # two rows differing in the LEVER are not a card comparison. Grouped on the model alone
         # they would be paired anyway and a winner announced between a card and itself.
+        #
+        # An unrecorded lever is its own group rather than an exclusion, because here the lever is
+        # the CONTROL and the card is the subject. The subject is named, so the verdict is still
+        # statable; what is unknown is whether the control held, and printing "unrecorded" in the
+        # mode column says exactly that. Contrast the unstamped digest above, where the subject
+        # itself has no name and no verdict can be stated at all.
         by_model_and_mode.setdefault((row.short_model, row.plan_first), []).append(row)
 
     compared = {group: runs for group, runs in by_model_and_mode.items() if len(runs) > 1}
@@ -253,8 +279,10 @@ def _print_card_verdicts(rows: list[LoadedScorecard]) -> None:
             f"{r.rules_card_digest} {r.cases_passed}/{r.cases_total} @{r.completion_tokens}tok"
             for r in sorted(runs, key=lambda r: r.rules_card_digest)
         )
-        mode = "plan-first" if plan_first else "off"
-        print(f"  {model:<30} {mode:<10} best: {best.rules_card_digest}   [{others}]")
+        print(
+            f"  {model:<30} {_mode_label(plan_first):<10} "
+            f"best: {best.rules_card_digest}   [{others}]"
+        )
 
 
 def _print_mode_verdicts(rows: list[LoadedScorecard]) -> None:
@@ -268,7 +296,12 @@ def _print_mode_verdicts(rows: list[LoadedScorecard]) -> None:
     """
     by_configuration: dict[tuple[str, str], list[LoadedScorecard]] = {}
     for row in rows:
-        if row.rules_card_digest == _UNSTAMPED:
+        # Here the lever is the SUBJECT, not the control, so an unrecorded one is excluded on the
+        # same grounds an unstamped card is: a verdict cannot name a mode the run never recorded.
+        # Kept in, such a row would satisfy the both-modes test below against a genuine one and
+        # publish "planning does not pay" out of a comparison with a run that may itself have
+        # planned.
+        if row.rules_card_digest == _UNSTAMPED or row.plan_first is None:
             continue
         by_configuration.setdefault((row.short_model, row.rules_card_digest), []).append(row)
 
@@ -286,7 +319,10 @@ def _print_mode_verdicts(rows: list[LoadedScorecard]) -> None:
         best = min(runs, key=lambda r: (-r.cases_passed, r.completion_tokens))
         others = ", ".join(
             f"{_mode(r)} {r.cases_passed}/{r.cases_total} @{r.completion_tokens}tok"
-            for r in sorted(runs, key=lambda r: r.plan_first)
+            # Sorted by the printed label, not the raw lever: every row here has a recorded one,
+            # but the label is what the reader compares and it orders off before plan-first
+            # anyway, so the sort key is the thing on the page rather than a parallel rule.
+            for r in sorted(runs, key=_mode)
         )
         print(f"  {model:<30} {card:<13} best: {_mode(best):<10} [{others}]")
 
