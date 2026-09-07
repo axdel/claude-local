@@ -1,26 +1,24 @@
-"""What ships to the user works on their first real run — defaults and entry points alike.
+"""What ships to the user works on their first real run — entry points and their argv alike.
 
 Two shipped surfaces, one failure mode: something correct in every in-process test that breaks
-the moment a person runs the documented command. ``HttpxBackend`` owns the OpenAI path suffix
-(``/v1/chat/completions``), so a shipped default that itself carried ``/v1`` would build
-``.../v1/v1/chat/completions`` and 404 — and every replay transport in the loop and benchmark
-tests routes by request body, not URL path, so the doubling never surfaces there. An executable
-script is the same shape: its shebang picks the interpreter, and nothing that imports the module
-in-process ever exercises that choice.
+the moment a person runs the documented command. Every replay transport in the loop and benchmark
+tests routes by request BODY, not URL path, so nothing else here can notice which server an entry
+point actually dialled — a guessed default reaches whatever is listening and no in-process test
+objects. An executable script is the same shape: its shebang picks the interpreter, and nothing
+that imports the module in-process ever exercises that choice.
 
-This is the one place that runs the exact values and the exact commands users run with.
+This is the one place that runs the exact commands users run with.
 """
 
 import os
 import subprocess  # nosec B404 (argv is a discovered script path, never shell-interpreted)
+from collections.abc import Callable
 from pathlib import Path
 
-import httpx
 import pytest
 
-from benchmarks.run import _DEFAULT_BASE_URL as _BENCHMARK_DEFAULT
-from claude_local.backend import HttpxBackend
-from examples.quicksort.run import _DEFAULT_BASE_URL as _EXAMPLE_DEFAULT
+from benchmarks.run import main as benchmark_main
+from examples.quicksort.run import main as example_main
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPTS = _REPO_ROOT / "scripts"
@@ -56,26 +54,36 @@ def _plain_shell_environment() -> dict[str, str]:
     return environment
 
 
+_USAGE_ERROR = 2
+"""Both entry points document exit 2 for a usage error — read off the docstrings, not the code."""
+
+
 @pytest.mark.parametrize(
-    ("label", "base_url"),
-    [("benchmark", _BENCHMARK_DEFAULT), ("example", _EXAMPLE_DEFAULT)],
+    ("label", "entry_point"),
+    [("benchmark", benchmark_main), ("example", example_main)],
 )
-def test_shipped_default_base_url_yields_one_versioned_openai_endpoint(
-    label: str, base_url: str
+def test_a_missing_base_url_is_refused_rather_than_defaulted(
+    label: str,
+    entry_point: Callable[[list[str]], int],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The backend appends exactly one OpenAI version+endpoint segment to each shipped default.
+    """With no server named, each entry point refuses instead of dialling a guessed port.
 
-    Oracle: the OpenAI chat-completions endpoint is ``/v1/chat/completions`` exactly once
-    (a specification fact the backend appends), so a correct default is the bare root and the
-    constructed URL carries the version segment once — never the doubled ``/v1/v1`` a
-    ``/v1``-suffixed default would produce.
+    Oracle: D-CLI-002, already ratified for the machine CLI — "a missing value is refused rather
+    than defaulted... Rejected a localhost default: it would silently send the task to whatever
+    happened to be listening." These two shipped surfaces carry the identical hazard, so the
+    identical rule binds them; exit 2 is the usage code both docstrings declare.
+
+    Not hypothetical: every catalogued model serves on 8081-8093, and the registry documents 8080
+    as deliberately unassignable because Docker Desktop binds it. The default that used to sit here
+    could therefore only ever reach a foreign process or nothing — never a model this project
+    serves.
     """
-    with httpx.Client() as client:
-        backend = HttpxBackend(base_url, client, "model-under-test")
+    monkeypatch.delenv("CLAUDE_LOCAL_BASE_URL", raising=False)
 
-    assert "/v1/v1" not in backend._url, f"{label} default doubles the version prefix"
-    assert backend._url.count("/v1") == 1  # exactly one version segment (a /v1 default → 2)
-    assert backend._url.endswith("/v1/chat/completions")
+    assert entry_point(["--model", "any-resident-model"]) == _USAGE_ERROR, (
+        f"the {label} entry point reached a server nobody named"
+    )
 
 
 @pytest.mark.parametrize("script", _executable_scripts(), ids=lambda path: path.name)

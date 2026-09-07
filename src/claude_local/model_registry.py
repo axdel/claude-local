@@ -175,7 +175,7 @@ class ModelRegistry:
         repo_root = Path(__file__).resolve().parents[2]
         override = os.environ.get(_STORE_ROOT_ENV, "").strip()
         return cls(
-            registry_path=repo_root / "models" / "models.tsv",
+            registry_path=repo_root / "models" / "models.psv",
             store_root=Path(override) if override else repo_root / "models",
         )
 

@@ -24,7 +24,6 @@ from claude_local import Budget, Status, TaskSpec, implement
 _HERE = Path(__file__).parent
 _IMPL_PATH = "src/quicksort.py"
 _EXPECTED_TESTS = 7
-_DEFAULT_BASE_URL = "http://localhost:8080"
 _BUDGET = Budget(
     max_attempts=5, max_tokens=4096, generation_timeout_s=300.0, oracle_timeout_s=120.0
 )
@@ -47,7 +46,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("CLAUDE_LOCAL_BASE_URL", _DEFAULT_BASE_URL),
+        default=os.environ.get("CLAUDE_LOCAL_BASE_URL"),
         help="OpenAI-compatible server base URL (env: CLAUDE_LOCAL_BASE_URL).",
     )
     parser.add_argument(
@@ -65,6 +64,12 @@ def main(argv: list[str] | None = None) -> int:
     other terminal status, 2 for a usage error (no model named).
     """
     args = _parse_args(argv)
+    if not args.base_url:
+        print(
+            "error: no server given (pass --base-url or set CLAUDE_LOCAL_BASE_URL)",
+            file=sys.stderr,
+        )
+        return 2
     if not args.model:
         print("error: no model given (pass --model or set CLAUDE_LOCAL_MODEL)", file=sys.stderr)
         return 2

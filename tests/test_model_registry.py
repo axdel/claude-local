@@ -41,7 +41,7 @@ _REGISTRY_FIXTURE = "\n".join(
 
 def _registry(tmp_path: Path, *, present: tuple[str, ...] = ()) -> ModelRegistry:
     """Build a registry over a fixture catalog and a store holding ``present`` models."""
-    registry_path = tmp_path / "models.tsv"
+    registry_path = tmp_path / "models.psv"
     registry_path.write_text(_REGISTRY_FIXTURE)
     store_root = tmp_path / "store"
     store_root.mkdir()
@@ -100,7 +100,7 @@ def test_a_generation_parameter_without_a_value_is_refused(tmp_path: Path) -> No
     request schema has no slot for — and silently, since an unknown body field is simply ignored.
     The refusal names the offending token, which is what an author needs to repair the row.
     """
-    registry_path = tmp_path / "models.tsv"
+    registry_path = tmp_path / "models.psv"
     registry_path.write_text(
         "NAME|REPO|DRAFT|PORT|SIZE|FLAGS|PARAMS|NOTE\n"
         "bad-params|repo|-|8088|1G|-|enable_thinking|Missing the value.\n"
@@ -244,7 +244,7 @@ def test_a_row_with_the_wrong_column_count_is_refused(tmp_path: Path) -> None:
     Failing closed with the file and line is the only outcome that lets the author fix it;
     reading it anyway would resolve a port from the SIZE column.
     """
-    registry_path = tmp_path / "models.tsv"
+    registry_path = tmp_path / "models.psv"
     registry_path.write_text(
         "NAME|REPO|DRAFT|PORT|SIZE|FLAGS|PARAMS|NOTE\ntruncated|repo|-|8088\n"
     )
@@ -253,7 +253,7 @@ def test_a_row_with_the_wrong_column_count_is_refused(tmp_path: Path) -> None:
     with pytest.raises(MalformedRegistry) as refusal:
         registry.resolve("truncated")
 
-    assert "models.tsv:2" in str(refusal.value)
+    assert "models.psv:2" in str(refusal.value)
 
 
 def test_the_shipped_catalog_parses_without_a_store() -> None:
@@ -304,7 +304,7 @@ _BUDGETED_DRAFT_ROW = "\n".join(
 
 def _budgeted_draft_registry(tmp_path: Path, *, present: tuple[str, ...]) -> ModelRegistry:
     """A registry whose one row asks for a thinking budget and names a draft model."""
-    registry_path = tmp_path / "models.tsv"
+    registry_path = tmp_path / "models.psv"
     registry_path.write_text(_BUDGETED_DRAFT_ROW)
     store_root = tmp_path / "store"
     store_root.mkdir()

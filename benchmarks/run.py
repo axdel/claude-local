@@ -24,7 +24,8 @@ attempt resolves, and the case's verdict as it closes — because a full run tak
 and a scorecard printed only at the end leaves a watcher with nothing to watch. ``--stream`` adds
 the model's own raw text as it decodes. The per-case table and benchmark totals still print at the
 end; ``--out DIR`` also writes the scorecard as JSON. The process exits 0 only when every case
-passed, 1 when any case failed, 2 for a usage error (no model named, or an unknown ``--only`` id),
+passed, 1 when any case failed, 2 for a usage error (no server or model named, or an unknown
+``--only`` id),
 and 3 when the benchmark harness itself faults — the prerequisite server is unreachable, the kernel
 sandbox is unavailable, or an oracle is broken. Exit 3 is a broken *host*, distinct from exit 1's
 model that simply failed the task. A fault partway through still scores and writes the cases that
@@ -72,7 +73,6 @@ _HERE = Path(__file__).parent
 _BENCHMARK = _HERE / "schedule_manager"
 _CASES = _BENCHMARK / "cases"
 _GOLDEN_APP = _BENCHMARK / "golden" / "app"
-_DEFAULT_BASE_URL = "http://localhost:8080"
 
 
 def _generation_params(declared: str) -> dict[str, object]:
@@ -103,7 +103,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("CLAUDE_LOCAL_BASE_URL", _DEFAULT_BASE_URL),
+        default=os.environ.get("CLAUDE_LOCAL_BASE_URL"),
         help="OpenAI-compatible server base URL (env: CLAUDE_LOCAL_BASE_URL).",
     )
     parser.add_argument(
@@ -170,6 +170,63 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     return parser.parse_args(argv)
+
+
+class _UsageError(Exception):
+    """An invocation the benchmark declines to run — reported as exit 2, never as a fault.
+
+    The distinction this type carries is the one the exit codes already draw: a usage error is the
+    CALLER holding it wrong, where a harness fault (exit 3) is the host being broken. Raising it
+    from each preparation phase lets ``main`` translate every refusal at one place, the way the
+    layered error contract asks — the phase states what is wrong, the entry point decides how a
+    process reports it.
+    """
+
+
+def _resolve_server(args: argparse.Namespace) -> tuple[str, str]:
+    """The base URL and model name, refusing either when neither argv nor the environment set it.
+
+    Both fall back to an environment variable rather than a literal default, so argparse cannot
+    mark them ``required`` and the check lands here. Refusing rather than guessing is D-CLI-002,
+    already ratified for the machine CLI: a defaulted address silently sends the run at whatever
+    happens to be listening on that port. The machine CLI enforces the same rule through its own
+    failure channel — an exception it maps to an exit code — which is why the guarantee is shared
+    across the front doors while the wording each prints is not.
+
+    Raises:
+        _UsageError: no server, or no model, was named.
+    """
+    if not args.base_url:
+        raise _UsageError("no server given (pass --base-url or set CLAUDE_LOCAL_BASE_URL)")
+    if not args.model:
+        raise _UsageError("no model given (pass --model or set CLAUDE_LOCAL_MODEL)")
+    return args.base_url, args.model
+
+
+def _prepare_cases(args: argparse.Namespace) -> dict[str, BenchmarkCase]:
+    """The cases this run will drive: the committed ladder, under the run mode, narrowed to --only.
+
+    Raises:
+        _UsageError: ``--only`` named a case id the ladder does not have.
+    """
+    cases = load_cases(_CASES, golden_app_root=_GOLDEN_APP)
+    if args.plan_first:
+        # Applied to loaded cases rather than passed down to the loader: the mode is how a case is
+        # run, not what it is, so the compared pair is provably the same fixtures.
+        cases = {case_id: case.planning_first() for case_id, case in cases.items()}
+    if args.only:
+        selected = set(args.only)  # membership is the whole access pattern here
+        unknown = sorted(selected - set(cases))
+        if unknown:
+            # Never narrow to nothing and exit 0: an empty run satisfies passed == total, so a
+            # mistyped id would report a green benchmark that never ran a single case.
+            raise _UsageError(
+                f"unknown case id(s): {', '.join(unknown)} — the ladder is {', '.join(cases)}"
+            )
+        # Rebuilt from the loaded mapping, never from argv, so the ladder order is the committed
+        # one: a case must never be driven from a later case's position in the progression.
+        cases = {case_id: case for case_id, case in cases.items() if case_id in selected}
+    return cases
 
 
 def _attempt_verdict(progress: AttemptProgress) -> str:
@@ -291,8 +348,9 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     The ladder renders live to stderr through ``ConsoleProgress`` as it runs, so a multi-case run
     is watchable rather than silent until the end.
 
-    Returns the process exit code: 0 when every case passed, 1 when any case failed, 2 for a usage
-    error (no model named), and 3 when the benchmark harness itself faults (unreachable server,
+    Returns the process exit code: 0 when every case passed, 1 when any case failed, 2 for any
+    ``_UsageError`` the preparation phases raise, and 3 when the benchmark harness itself faults
+    (unreachable server,
     unavailable sandbox, or broken oracle) — writing a scorecard for the cases that finished before
     the fault, since exit 3 says the run stopped, not that it measured nothing. An injected
     ``http_client`` is shared across the cases
@@ -300,30 +358,12 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     case owns a per-case client against the real server.
     """
     args = _parse_args(argv)
-    if not args.model:
-        print("error: no model given (pass --model or set CLAUDE_LOCAL_MODEL)", file=sys.stderr)
+    try:
+        base_url, model = _resolve_server(args)
+        cases = _prepare_cases(args)
+    except _UsageError as refused:
+        print(f"error: {refused}", file=sys.stderr)
         return 2
-
-    cases = load_cases(_CASES, golden_app_root=_GOLDEN_APP)
-    if args.plan_first:
-        # Applied to loaded cases rather than passed down to the loader: the mode is how a case is
-        # run, not what it is, so the compared pair is provably the same fixtures.
-        cases = {case_id: case.planning_first() for case_id, case in cases.items()}
-    if args.only:
-        selected = set(args.only)  # membership is the whole access pattern here
-        unknown = sorted(selected - set(cases))
-        if unknown:
-            # Never narrow to nothing and exit 0: an empty run satisfies passed == total, so a
-            # mistyped id would report a green benchmark that never ran a single case.
-            print(
-                f"error: unknown case id(s): {', '.join(unknown)} — "
-                f"the ladder is {', '.join(cases)}",
-                file=sys.stderr,
-            )
-            return 2
-        # Rebuilt from the loaded mapping, never from argv, so the ladder order is the committed
-        # one: a case must never be driven from a later case's position in the progression.
-        cases = {case_id: case for case_id, case in cases.items() if case_id in selected}
     # A harness fault is the HOST failing, so it always ends the run at exit 3 — but the cases
     # that finished first are hours of decode already paid for, and scoring them costs nothing.
     # The fault is reported after the scorecard is written, so the last line an operator reads is
@@ -332,8 +372,8 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     try:
         results = run_cases(
             cases,
-            base_url=args.base_url,
-            model=args.model,
+            base_url=base_url,
+            model=model,
             http_client=http_client,
             progress=ConsoleProgress(stream_text=args.stream),
             generation_params=args.generation_params,

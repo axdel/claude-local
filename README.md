@@ -49,13 +49,14 @@ must satisfy elsewhere.
 2. **Serve it over an OpenAI-compatible HTTP API.** Either bring your own — mlx-lm, llama.cpp's
    server, LM Studio, vLLM — or let claude-local run one for a catalogued model
    (`uv sync --group serve`, then `scripts/benchmark_model.py <name>`, which spawns the server,
-   runs the work, and tears it down on success and failure alike). Note the base URL (the example
-   defaults to `http://localhost:8080`) and the model name it serves.
+   runs the work, and tears it down on success and failure alike). Note the base URL and the
+   model name it serves — neither is defaulted, because a guessed port reaches whatever
+   happens to be listening.
 3. **Run the bundled example** — it drives one bounded red→green loop over a quicksort task with
    an immutable multi-case oracle:
 
    ```bash
-   uv run python examples/quicksort/run.py --base-url http://localhost:8080 --model <model-name>
+   uv run python examples/quicksort/run.py --base-url http://localhost:8081 --model <model-name>
    ```
 
    The produced implementation prints to stdout; the outcome and a local-economy line (calls,
@@ -106,7 +107,7 @@ spec = TaskSpec(
     ),
     context_files=(ContextFile(path="src/protocol.py", content="<existing neighbor source>"),),
 )
-outcome = implement(spec, base_url="http://localhost:8080", model="<model-name>")
+outcome = implement(spec, base_url="http://localhost:8081", model="<model-name>")
 assert outcome.status is Status.DONE
 print(outcome.code)  # the produced implementation
 print(outcome.record)  # the local half of the economy record
