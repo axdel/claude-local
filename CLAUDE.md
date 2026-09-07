@@ -30,6 +30,10 @@ class — whether offloading to a free local model saved net frontier tokens.
 - Types: `uv run basedpyright`
 - Commit gate (pre-commit): `lefthook run pre-commit` — the registry's `pre-commit-fast` phase
   (ruff lint + format + gitleaks) plus this project's own basedpyright and bench-aware pytest
+- Branch review / dependency metrics: prefix with `PYTHONPATH=src` —
+  `PYTHONPATH=src claude-protocol quality run --phase branch-review`. The dependency-metrics
+  gate imports `claude_local` **in claude-protocol's own interpreter**, whose `sys.path` never
+  includes the working directory, so without the prefix it reports the package as absent.
 
 ## Architecture overview
 
