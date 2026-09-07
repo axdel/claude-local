@@ -41,11 +41,27 @@ from claude_local.model_server import (
 )
 from claude_local.prompt import PromptBuilder
 from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S
-from claude_local.sse import Delta, decode_sse
+from claude_local.sse import Delta, Finish, Usage, decode_sse
 from claude_local.types import Budget, TaskSpec
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _RULES_CARD = _REPO_ROOT / "src/claude_local/rules_card.md"
+
+_DERAIL_UNMEASURED = "not measured (--raw bypasses the derail guard)"
+"""What ``derail_reason`` is on the raw path — never ``None``, which would claim the guard ran."""
+
+
+def _print_provenance(served: str, fields: dict[str, object]) -> None:
+    """Emit the configuration a transcript must never be read without, ahead of the reply.
+
+    stderr, so redirecting the transcript leaves it clean, and BEFORE the reply rather than after,
+    because a reader holding the configuration while reading is the whole point of emitting it.
+    Both paths print through here so the two cannot drift into two formats, and each names its own
+    fields: the raw path has no derail reason to report, and says so rather than reporting one.
+    """
+    print(f"--- model: {served}", file=sys.stderr)
+    for label, value in fields.items():
+        print(f"--- {label}: {value}", file=sys.stderr)
 
 
 def _spec_from(task_dir: Path, budget: Budget) -> TaskSpec:
@@ -113,18 +129,38 @@ def main(argv: list[str] | None = None) -> int:
                 # Straight off the wire: what the client would normalize away, which is where a
                 # reasoning model shows its working. Deliberately not ModelClient — the whole
                 # point is to see the channels before assistant_content removes them.
-                events = decode_sse(backend.generate(prefix, args.tail, budget))
+                # Materialized because the terminal and trailer frames are read alongside the
+                # deltas; a probe decodes one bounded reply, so holding it costs nothing.
+                events = list(decode_sse(backend.generate(prefix, args.tail, budget)))
                 transcript = "".join(e.text for e in events if isinstance(e, Delta))
+                _print_provenance(
+                    served,
+                    {
+                        "finish_reason": next(
+                            (e.reason for e in events if isinstance(e, Finish)), None
+                        ),
+                        "derail_reason": _DERAIL_UNMEASURED,
+                        "completion_tokens": next(
+                            (e.completion_tokens for e in events if isinstance(e, Usage)), None
+                        ),
+                        "reply chars": len(transcript),
+                    },
+                )
                 sys.stdout.write(transcript)
                 return 0
             generation = ModelClient(backend).generate(prefix, args.tail, budget)
 
-    print(f"--- finish_reason: {generation.finish_reason}", file=sys.stderr)
-    print(f"--- derail_reason: {generation.derail_reason}", file=sys.stderr)
-    print(f"--- completion_tokens: {generation.completion_tokens}", file=sys.stderr)
-    print(f"--- reply chars: {len(generation.text)}", file=sys.stderr)
     reply = extract_file(generation.text)
-    print(f"--- extract_file: {'None' if reply is None else reply.path}", file=sys.stderr)
+    _print_provenance(
+        served,
+        {
+            "finish_reason": generation.finish_reason,
+            "derail_reason": generation.derail_reason,
+            "completion_tokens": generation.completion_tokens,
+            "reply chars": len(generation.text),
+            "extract_file": "None" if reply is None else reply.path,
+        },
+    )
     sys.stdout.write(generation.text)
     return 0
 

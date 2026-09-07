@@ -29,7 +29,11 @@ Thumbs.db
 # Local model store — the ONE place MLX model weights are downloaded/resolved (weights ignored, dir kept)
 models/*
 !models/README.md
-!models/models.tsv
+# The registry itself is committed and hand-edited (D-REGISTRY-005) — it is the source of truth
+# for every model, so it must survive `models/*`. Pipe-separated, never tab: this negation named
+# a `.tsv` that has never existed, and the real file stayed in the tree only because it was
+# already tracked. A delete-and-re-add would have silently dropped it.
+!models/models.psv
 
 # Benchmark scorecards are COMMITTED: each one is a complete, self-contained measurement, and the
 # model/rules-card verdict is derived from the whole corpus rather than from any single run. They

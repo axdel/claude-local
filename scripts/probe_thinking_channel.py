@@ -98,6 +98,7 @@ def _probe(
         **params,
     }
     content, reasoning, other_keys = "", "", set()
+    finish_reason: str | None = None
     with http.stream("POST", f"{base_url}/v1/chat/completions", json=body) as response:
         response.raise_for_status()
         for line in response.iter_lines():
@@ -108,8 +109,14 @@ def _probe(
             other_keys.update(delta.keys())
             content += delta.get("content") or ""
             reasoning += delta.get("reasoning_content") or delta.get("reasoning") or ""
+            finish_reason = choices[0].get("finish_reason") or finish_reason
 
     print(f"\n--- request params: {params or '(none)'}")
+    print(f"    model           : {model}")
+    # Without this the two char counts below are unreadable: zero content under a `length` finish
+    # means the budget went entirely to reasoning, which is the opposite conclusion from zero
+    # content under `stop` — that one says the model emitted no content channel at all.
+    print(f"    finish_reason   : {finish_reason}")
     print(f"    delta keys seen : {sorted(other_keys)}")
     print(f"    reasoning chars : {len(reasoning)}")
     print(f"    content chars   : {len(content)}")
