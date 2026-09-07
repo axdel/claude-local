@@ -3,7 +3,8 @@
 **Put your free local models to work — as measured, test-first code implementers.**
 
 A deterministic red→green loop that drives a local model to make a frontier-authored failing
-test pass. One public entry point — `implement()` — and a runnable example you can drive today.
+test pass. Three front doors — the `implement()` library call, a machine CLI, and an interactive
+session — and a runnable example you can drive today.
 
 ## Why This Exists
 
@@ -210,8 +211,9 @@ right. The measurement exists to find that band empirically rather than guess it
 A weak model is only worth using if it is fast enough to be cheaper than your own attention.
 
 - **Tuned for MoE / fast local models** — fastest decode, least derail.
-- **Non-thinking generation by default, hard thinking cap** — the derail guard bounds decode by
-  construction.
+- **Bounded decode by construction** — the derail guard holds hard token, attempt and wall-clock
+  caps. Whether a model thinks is its own registry row's declaration, never a default applied
+  across models: the same field that zeroes one model's reasoning is inert on another.
 - **Stable-prefix prompting** — card + spec + optional ordered context files + test stay fixed;
   only the tail changes, so the prefill is KV-cache-reused across attempts.
 - **The tail is a repair brief, not a bug report** — it carries the complete file the last attempt
@@ -235,8 +237,10 @@ A weak model is only worth using if it is fast enough to be cheaper than your ow
 
 ## Where It Fits
 
-Claude Local is a Python library with a single public entry point — `implement()` — meant to be
-driven by a frontier orchestrator that can author a failing test. **Claude Code is the intended
+Claude Local is a Python library whose loop has one entry point — `implement()` — meant to be
+driven by a frontier orchestrator that can author a failing test. Two more front doors sit beside
+it and never run the loop: a machine CLI taking one JSON envelope on stdin, and `model_session()`,
+the human one and the only one that serves a model (D-ENTRYPOINT-004). **Claude Code is the intended
 driver:** a bundled skill (`skills/claude-local/`) teaches it the plan → author-oracle →
 implement-local → verify recipe. Any orchestrator that can write a failing test and a tight spec
 can drive the same entry point.

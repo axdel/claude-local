@@ -126,9 +126,11 @@ exclude = [
 ]
 
 [tool.vulture]
-# The third whole-repo analyzer, and the one the exclusion above was originally written for
-# without being applied to: vulture parses every .py it walks, so the produced code that is not
-# valid Python fails it outright — reporting a weak model's unclosed fence as a finding here.
+# The third whole-repo analyzer, excluded for the same reason as the two above and needing its own
+# entry because each tool reads only its own: vulture parses every .py it walks, so produced code
+# that is not valid Python fails it outright — reporting a weak model's unclosed fence as a finding
+# here. --code-out is told to point outside this repository (D-BENCH-015) and code-*/ is git-ignored;
+# this is the belt to those braces, for a caller who points it inside anyway.
 exclude = ["benchmarks/scorecards"]
 
 [tool.deptry]

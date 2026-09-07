@@ -48,7 +48,8 @@ The loop engine decomposes into single-responsibility modules, dependencies flow
 - **loop** — RED (run the immutable test) → REPAIR feedback on failure → best-passing snapshot →
   GREEN, bounded by a hard token/attempt budget.
 - **derail guard** — repetition penalty + hard token cap + repetition-loop detector + graceful
-  timeout; non-thinking by default with a hard thinking cap.
+  timeout. Thinking is not defaulted here or anywhere: each registry row declares its own controls,
+  because one field zeroes one model's reasoning and is inert on another (D-THINKING-001).
 - **rules card** — a static, token-budgeted engineering-rules card injected as a stable system
   prefix (byte-identical across calls, so the prefill is KV-cache-reused).
 - **oracle sandbox** — the kernel profile the immutable test runs under: deny-by-default, with a
@@ -92,7 +93,8 @@ Standing hot-path principles:
   repetition loop or budget overrun mid-generation — not after a full wasted completion.
 - **Bounded, right-typed hot-path structures.** Repetition detection over a fixed ring buffer
   (`deque(maxlen=)`), membership via `set`, no accidental O(n²) in the loop body.
-- **Non-thinking default with hard caps** — bounded decode by construction (the derail guard).
+- **Bounded decode by construction** — hard token, attempt and wall-clock caps (the derail guard).
+  Thinking is a per-model registry declaration, never a cross-model default (D-THINKING-001).
 
 ## Architecture Primitives
 
