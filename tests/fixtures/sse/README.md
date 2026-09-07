@@ -79,7 +79,7 @@ granularity, marker placement, and the usage trailer are preserved exactly.
     model's vocabulary, so each arrives as its own complete delta and never
     straddles a boundary. Convenient, and the opposite of the safe assumption —
     the client joins before parsing regardless, so it does not depend on this.
-  - The server calls it a clean `stop` while returning an unusable reply. Nothing
+  - The server calls it a clean `stop` while returning an unscorable reply. Nothing
     upstream of the client has any signal that the generation failed, which is why
     the loop reported BLOCKED with a correct answer in hand.
 - `reasoning_channel_stream.bytes` — **a real capture**, recorded 2026-09-06 from

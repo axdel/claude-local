@@ -327,7 +327,7 @@ def test_a_refusal_leaves_stdout_empty(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Oracle: the parent's readiness probe strips stdout and compares it to a literal.
+    """Oracle: the parent's contract handshake strips stdout and compares it to a literal.
 
     Every diagnostic therefore belongs on stderr. A refusal message printed to stdout would still
     exit non-zero and still look correct in every other test here, while quietly making the

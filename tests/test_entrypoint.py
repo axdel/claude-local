@@ -448,9 +448,9 @@ def test_implement_records_a_silent_server_as_a_derail_not_a_harness_fault() -> 
     """A server that answers nothing failed this generation; it did not fail the prerequisite.
 
     ``BackendUnavailable`` means the loop's precondition is unmet — nothing is listening — so it
-    propagates and the caller stops. A read timeout cannot mean that: it is reachable only after a
-    connection succeeded and the request was sent. Treating the two alike is what turned one slow
-    model's first case into zero results for all seven.
+    propagates and the caller stops. The first-byte deadline cannot mean that: it is reachable
+    only after a connection succeeded and the request was sent. Treating the two alike is what
+    turned one slow model's first case into zero results for all seven.
 
     Oracle: the outcome type is the same one any other bounded-decode verdict produces, and the
     injected client stays the caller's. Deriving from the fault taxonomy in ``BackendUnavailable``

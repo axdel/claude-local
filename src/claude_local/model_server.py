@@ -50,7 +50,7 @@ _BUILDER_OWNED_OPTIONS = frozenset(
 The server parses argv with argparse, which resolves a repeated option to its LAST value, and
 FLAGS is appended after these. Ordering is what would otherwise keep the bind on loopback, and
 argparse breaks that tie the other way — so a row adding ``--host 0.0.0.0`` would publish an
-unauthenticated inference server to every interface from a data-only edit.
+unauthenticated model server to every interface from a data-only edit.
 """
 
 _READINESS_PATH = "/v1/models"
@@ -222,7 +222,7 @@ class ModelServer:
         download it.
 
         The bind address is not a parameter, mirroring ``sandboxed_spawn``: this exposes no knob
-        that widens the exposure of an unauthenticated inference server, so loopback holds by
+        that widens the exposure of an unauthenticated model server, so loopback holds by
         construction rather than by every caller remembering to leave a default alone.
 
         Args:

@@ -99,7 +99,7 @@ def _report_directory(directory: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse arguments, lint each produced tree, and print the per-case reports."""
+    """Parse arguments, lint each produced-code tree, and print the per-case reports."""
     parser = argparse.ArgumentParser(
         prog="score_style.py",
         description="Report style findings in the code benchmarked models produced.",

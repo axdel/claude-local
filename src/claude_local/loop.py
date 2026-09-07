@@ -288,8 +288,8 @@ class Loop:
         back byte-identical is a replay of an answer already scored, not a repair. A *plateau* is
         the same failure in different words — consecutive attempts that never clear the best score
         — and it is the commoner one, so a loop watching only for identical text spends its whole
-        budget re-deriving one wrong answer. On exit the best snapshot is restored and the status
-        follows precedence.
+        budget re-deriving one wrong answer. On exit the best-passing snapshot is restored
+        and the status follows precedence.
 
         A transport failure (``BackendUnavailable`` from the client — an unreachable server) and a
         broken oracle (``OracleError`` from the runner) are never caught — they propagate, so a

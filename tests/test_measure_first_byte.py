@@ -23,7 +23,7 @@ probe = load_script(_REPO_ROOT / "scripts" / "measure_first_byte.py")
 
 
 def _largest_real_case_prefix_bytes() -> int:
-    """The biggest system prefix the benchmark actually builds, assembled the way the loop does.
+    """The biggest stable prefix the benchmark actually builds, assembled the way the loop does.
 
     The oracle for the probe's prompt size, and deliberately computed rather than read from the
     probe: it goes through ``PromptBuilder.stable_prefix`` over the committed cases, so it is a

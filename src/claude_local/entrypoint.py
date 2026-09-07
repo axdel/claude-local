@@ -232,9 +232,10 @@ def _writable_subtree(impl_path: str) -> str:
 def _new_http_client() -> httpx.Client:
     """Create the keep-alive HTTP client for an owned-lifecycle call.
 
-    The read timeout outlasts the guard's silence bound rather than equalling it, because the two
-    are not peers. The guard bounds a stream delivering bytes but no content and reports one task
-    silent; the socket bounds a stream delivering no bytes at all, and reaches that verdict from
+    The first-byte deadline outlasts the guard's silence bound rather than equalling it, because
+    the two are not peers. The guard bounds a stream delivering bytes but no content and
+    reports one task silent; the socket bounds a stream delivering no bytes at all, and
+    reaches that verdict from
     outside the guard's sight — ``_ticking`` runs the guard's clock on chunk arrival, so a stretch
     with no chunks in it is precisely the gap the guard cannot judge. Made equal, the socket won
     every race, including the ones the guard could see. Strictly greater, the guard decides

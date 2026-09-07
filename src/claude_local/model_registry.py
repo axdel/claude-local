@@ -46,7 +46,7 @@ _DRAFT_SUFFIX = "-MTP"
 """A draft model is stored beside the model it accelerates, under this suffixed name."""
 
 _THINKING_BUDGET = "thinking_budget"
-"""The request field capping tokens inside a thinking block — the hard half of non-thinking.
+"""The request field capping tokens spent on chain-of-thought — the hard half of non-thinking.
 
 Named here because it is the one generation parameter this layer must recognise rather than
 merely forward: it is the only one the server refuses to run in some configurations, so a

@@ -30,7 +30,7 @@ HTTP_CONNECT_TIMEOUT_S = 10.0
 """Connect-phase cap for a client built here — reaching a local server is fast or it is down."""
 
 HTTP_READ_TIMEOUT_S = 600.0
-"""Time-to-first-byte cap, and the DerailGuard's backstop for the one gap it cannot see.
+"""The first-byte deadline, and the DerailGuard's backstop for the one gap it cannot see.
 
 Twelve times the 50.1s a cold 24 GB model took to answer at the benchmark's own token budget, of
 which 9.1s was prefill and the rest a lazy weight load (``scripts/measure_first_byte.py``). The
@@ -122,13 +122,13 @@ class BackendUnavailable(RuntimeError):
 
 
 class GenerationSilent(RuntimeError):
-    """A reachable server accepted the request and then sent nothing within the read bound.
+    """A reachable server took the request and then sent nothing within the first-byte deadline.
 
     A task outcome, not a precondition failure, and the distinction is the whole point of the
-    class. A read timeout is only reachable *after* a connection succeeded and the request went
-    out, so the prerequisite ``BackendUnavailable`` reports — a server that is down, unreachable,
-    or answering non-2xx — was demonstrably met. Raising that here made one model's slow first
-    generation abort every remaining task in the run.
+    class. The first-byte deadline is only reachable *after* a connection succeeded and the
+    request went out, so the prerequisite ``BackendUnavailable`` reports — a server that is down,
+    unreachable, or answering non-2xx — was demonstrably met. Raising that here made one model's
+    slow first generation abort every remaining task in the run.
 
     The client translates this into the same ``SILENT`` verdict the DerailGuard reaches on a
     silence it *can* see. Both describe one thing — a generation that produced nothing — and the
@@ -178,10 +178,10 @@ class HttpxBackend:
                 translate infra errors to domain errors); the original is preserved as
                 ``__cause__``.
             GenerationSilent: the server took the request and then failed to finish answering —
-                it sent no bytes within the read bound, or the stream broke after the response had
-                started. Split from the fault above because the two demand opposite responses: a
-                missing prerequisite is fatal to the whole run, while a met one leaves the run
-                going with this single task recorded as silent.
+                it sent no bytes within the first-byte deadline, or the stream broke after
+                the response had started. Split from the fault above because the two demand
+                opposite responses: a missing prerequisite is fatal to the whole run, while a
+                met one leaves the run going with this single task recorded as silent.
 
         The split therefore turns on *whether the response started*, not on which transport error
         carried the failure. A server killed mid-decode raises the same ``RequestError`` family as
@@ -212,8 +212,9 @@ class HttpxBackend:
             raise BackendUnavailable(self._url, self._model, reason) from exc
         except httpx.ReadTimeout as exc:
             # Checked before RequestError, which it subclasses, and regardless of how far the
-            # response got: a read bound expiring means the server took the request and then went
-            # quiet, which is this generation failing rather than the server missing.
+            # response got: the first-byte deadline expiring means the server took the request
+            # and then went quiet, which is this generation failing rather than the server
+            # missing.
             reason = f"{type(exc).__name__}: {exc}"
             raise GenerationSilent(self._url, self._model, reason) from exc
         except httpx.RequestError as exc:

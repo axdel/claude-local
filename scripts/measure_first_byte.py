@@ -2,7 +2,7 @@
 """Report how long a freshly served model takes to send its first byte.
 
 This is the measurement behind `HTTP_READ_TIMEOUT_S` (`claude_local.backend`). That bound is
-a time-to-first-byte cap, so the number it must clear is the slowest first byte in the registry —
+the first-byte deadline, so the number it must clear is the slowest first byte in the registry —
 and the previous value was chosen by reasoning about prefill instead of measuring arrival, which
 is how it came to be wrong.
 
@@ -10,7 +10,7 @@ The gap the reasoning missed is that a model server answers its readiness probe 
 can answer a generation. `ModelServer` polls `/v1/models`, which returns 200 as soon as the HTTP
 server binds its port; mlx_vlm loads the weights lazily, on the first inference request. So a
 24 GB model reports ready in seconds and then spends minutes faulting weights in — with no bytes
-on the SSE socket for the whole load, which is exactly the silence the read timeout judges. The
+on the SSE socket for the whole load — exactly the silence the first-byte deadline judges. The
 server's own `timings` trailer cannot see it either: prefill is clocked once the weights are
 resident, so a run that spent minutes loading still reports a healthy prefill rate.
 
@@ -21,7 +21,7 @@ Hence this probe measures arrival from the client side and reports the split:
 `first_byte_s` is the wall clock from sending the request to the first chunk coming back — the
 quantity the bound has to clear. `prompt_ms` is the server's prefill within that, so the
 remainder is the lazy weight load. Prefill scales with the prompt, so the probe sends one the size
-of a real task's system prefix — the bundled rules card repeated until it reaches the largest
+of a real task's stable prefix — the bundled rules card repeated until it reaches the largest
 prefix the benchmark's own cases build (`_TARGET_PREFIX_BYTES`) — and asks for almost no output.
 
 A warm page cache under-measures the load, so run this on a model that was not just served, and
@@ -54,7 +54,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _RULES_CARD = _REPO_ROOT / "src" / "claude_local" / "rules_card.md"
 
 _TARGET_PREFIX_BYTES = 32_021
-"""The largest system prefix a real case builds — the one this probe has to reproduce.
+"""The largest stable prefix a real case builds — the one this probe has to reproduce.
 
 Measured through ``PromptBuilder.stable_prefix`` over the seven committed schedule-manager cases
 with the bundled card: 06_schedule_service at 32,021 bytes, against a 10,133-byte smallest and a
@@ -116,7 +116,7 @@ def _time_to_first_byte(backend: HttpxBackend, prefix: str, budget: Budget) -> t
     """Send one generation and return seconds until the first chunk, plus the whole stream.
 
     The clock starts before the stream is consumed and stops on the first chunk, because that is
-    precisely the window a read timeout bounds: `httpx` applies its read bound per socket read,
+    precisely the window the first-byte deadline bounds: `httpx` applies its read bound per read,
     and the first one spans the lazy weight load, the prefill, and the first decoded token.
     """
     start = time.monotonic()

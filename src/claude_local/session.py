@@ -69,7 +69,7 @@ class ChatSession:
 
         Args:
             user: The prompt.
-            system: An optional system prefix. Passing the same one across a session's turns
+            system: An optional stable prefix. Passing the same one across a session's turns
                 keeps the prefix byte-identical, so the server reuses its prefill cache instead
                 of discarding it; varying it per turn silently throws that reuse away.
 

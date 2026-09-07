@@ -24,9 +24,10 @@ none of them is negotiable from this side:
   ``network-bind``, so a confined child cannot start a model server. ``--base-url`` must name one
   that is already listening.
 
-``stdout`` carries exactly one thing — the contract version — because the parent's readiness probe
-strips stdout and compares it to a literal. Every diagnostic goes to stderr, where a human running
-this by hand reads it and the dispatching parent, by its own deliberate choice, does not.
+``stdout`` carries exactly one thing — the contract version — because the parent's contract
+handshake strips stdout and compares it to a literal. Every diagnostic goes to stderr, where a
+human running this by hand reads it and the dispatching parent, by its own deliberate choice,
+does not.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 CONTRACT_VERSION = "claude-local/1"
-"""The dispatch-protocol version the parent binds to, deliberately NOT the package version.
+"""The contract version the parent binds to, deliberately NOT the package version.
 
 claude-protocol computes its ready set as config AND PATH AND contract version, probing
 ``claude-local --contract-version`` and comparing the stripped stdout to its own copy of this
@@ -187,7 +188,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--contract-version",
         action="store_true",
-        help="Print the dispatch-protocol version and exit; the orchestrator's readiness probe.",
+        help="Print the contract version and exit; the orchestrator's contract handshake.",
     )
     parser.add_argument(
         "--task",

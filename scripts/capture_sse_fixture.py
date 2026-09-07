@@ -8,7 +8,7 @@ retyped: a hand-run capture drifts from the request body the loop actually sends
 recorded against the wrong body tests the decoder against a wire no server produces.
 
 The request body is built by `HttpxBackend.generate` itself, not restated here, so the captured
-bytes are by construction the answer to the request the loop makes — system prefix, user tail,
+bytes are by construction the answer to the request the loop makes — stable prefix, user tail,
 streaming, usage accounting on. Only the transport is local to this script.
 
     scripts/capture_sse_fixture.py gpt-oss-20b tests/fixtures/sse/harmony_channel_stream.bytes \
