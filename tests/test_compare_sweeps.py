@@ -1,4 +1,4 @@
-"""Tests for the cross-run comparison (``scripts/compare-sweeps.py``).
+"""Tests for the cross-run comparison (``scripts/compare_sweeps.py``).
 
 The script decides which (model, rules card) pair to actually use, so its two pieces of real logic
 are the ones that can silently produce a wrong recommendation: picking ONE row per configuration
@@ -17,7 +17,7 @@ from typing import Any
 
 from scriptloader import load_script
 
-_SCRIPT = Path(__file__).parents[1] / "scripts" / "compare-sweeps.py"
+_SCRIPT = Path(__file__).parents[1] / "scripts" / "compare_sweeps.py"
 
 
 def _script() -> ModuleType:

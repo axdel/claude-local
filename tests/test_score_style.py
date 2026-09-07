@@ -15,7 +15,7 @@ from scriptloader import load_script
 if TYPE_CHECKING:
     import pytest
 
-_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "score-style.py"
+_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "score_style.py"
 
 _USAGE_ERROR = 2
 """The script's documented exit code for a usage error — read from its module docstring, not from

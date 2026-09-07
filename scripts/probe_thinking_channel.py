@@ -32,15 +32,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 
 import httpx
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "src"))
-
-from claude_local.model_registry import ModelRegistry  # noqa: E402
-from claude_local.model_server import (  # noqa: E402
+from claude_local.model_registry import ModelRegistry
+from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
     ModelServer,
 )

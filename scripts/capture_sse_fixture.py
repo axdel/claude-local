@@ -26,17 +26,14 @@ from pathlib import Path
 
 import httpx
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "src"))
-
-from claude_local.backend import HttpxBackend  # noqa: E402
-from claude_local.model_registry import ModelRegistry  # noqa: E402
-from claude_local.model_server import (  # noqa: E402
+from claude_local.backend import HttpxBackend
+from claude_local.model_registry import ModelRegistry
+from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
     ModelServer,
 )
-from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S  # noqa: E402
-from claude_local.types import Budget  # noqa: E402
+from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S
+from claude_local.types import Budget
 
 
 def _served_model_id(base_url: str) -> str:

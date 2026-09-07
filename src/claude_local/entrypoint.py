@@ -245,7 +245,7 @@ def _new_http_client() -> httpx.Client:
     answers as soon as the port binds, while mlx_vlm faults the weights in on the first inference
     request. A 24 GB model therefore spends minutes mid-request with nothing on the socket, and
     the server's own prefill timings cannot see it — they start once the weights are resident.
-    ``scripts/measure-first-byte.py`` is the measurement; re-run it when a larger model joins the
+    ``scripts/measure_first_byte.py`` is the measurement; re-run it when a larger model joins the
     registry, because this bound tracks the biggest weights in the catalog.
 
     It still deliberately does not scale with the task's ``timeout_s``. That budget bounds how long

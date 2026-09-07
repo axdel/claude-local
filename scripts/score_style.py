@@ -6,16 +6,16 @@ worth keeping, so a run where every case is green and every function is undocume
 like one where neither is true. This reports the second number: how many missing docstrings,
 missing annotations and unused imports, variables and arguments each case's produced file carries.
 
-    scripts/score-style.py benchmarks/scorecards/code-gpt-oss-20b-1788655677482
+    scripts/score_style.py benchmarks/scorecards/code-gpt-oss-20b-1788655677482
 
 A sweep writes one directory per model and the comparison is the point, so it takes as many as
 you name and reports each in turn:
 
-    scripts/score-style.py benchmarks/scorecards/code-*
+    scripts/score_style.py benchmarks/scorecards/code-*
 
 With no argument it reports the most recently written code directory:
 
-    scripts/score-style.py
+    scripts/score_style.py
 
 It reads only artifacts, so it needs no model, no server and no GPU, and it reruns against any
 earlier run's saved code — including runs made before this script existed. That is why it is a
@@ -94,7 +94,7 @@ def _report_directory(directory: Path) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments, lint each produced tree, and print the per-case reports."""
     parser = argparse.ArgumentParser(
-        prog="score-style.py",
+        prog="score_style.py",
         description="Report style findings in the code benchmarked models produced.",
     )
     parser.add_argument(

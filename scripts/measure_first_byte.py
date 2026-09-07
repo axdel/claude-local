@@ -16,7 +16,7 @@ resident, so a run that spent minutes loading still reports a healthy prefill ra
 
 Hence this probe measures arrival from the client side and reports the split:
 
-    scripts/measure-first-byte.py Gemma4-31B
+    scripts/measure_first_byte.py Gemma4-31B
 
 `first_byte_s` is the wall clock from sending the request to the first chunk coming back — the
 quantity the bound has to clear. `prompt_ms` is the server's prefill within that, so the
@@ -41,18 +41,16 @@ from pathlib import Path
 
 import httpx
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "src"))
-
-from claude_local.backend import HttpxBackend  # noqa: E402
-from claude_local.model_registry import ModelRegistry  # noqa: E402
-from claude_local.model_server import (  # noqa: E402
+from claude_local.backend import HttpxBackend
+from claude_local.model_registry import ModelRegistry
+from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
     ModelServer,
 )
-from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S  # noqa: E402
-from claude_local.types import Budget  # noqa: E402
+from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S
+from claude_local.types import Budget
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 _RULES_CARD = _REPO_ROOT / "src" / "claude_local" / "rules_card.md"
 
 _TARGET_PREFIX_BYTES = 32_021
@@ -131,7 +129,7 @@ def _time_to_first_byte(backend: HttpxBackend, prefix: str, budget: Budget) -> t
 def main(argv: list[str] | None = None) -> int:
     """Serve one model cold, send a benchmark-sized prompt, and print its arrival timings."""
     parser = argparse.ArgumentParser(
-        prog="measure-first-byte.py",
+        prog="measure_first_byte.py",
         description="Report a freshly served model's time to first byte.",
     )
     parser.add_argument("model", help="A name from the model registry (e.g. Gemma4-31B).")

@@ -31,22 +31,20 @@ from pathlib import Path
 
 import httpx
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "src"))
-
-from claude_local.backend import HttpxBackend  # noqa: E402
-from claude_local.client import ModelClient  # noqa: E402
-from claude_local.edits import extract_file  # noqa: E402
-from claude_local.model_registry import ModelRegistry  # noqa: E402
-from claude_local.model_server import (  # noqa: E402
+from claude_local.backend import HttpxBackend
+from claude_local.client import ModelClient
+from claude_local.edits import extract_file
+from claude_local.model_registry import ModelRegistry
+from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
     ModelServer,
 )
-from claude_local.prompt import PromptBuilder  # noqa: E402
-from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S  # noqa: E402
-from claude_local.sse import Delta, decode_sse  # noqa: E402
-from claude_local.types import Budget, TaskSpec  # noqa: E402
+from claude_local.prompt import PromptBuilder
+from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S
+from claude_local.sse import Delta, decode_sse
+from claude_local.types import Budget, TaskSpec
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 _RULES_CARD = _REPO_ROOT / "src/claude_local/rules_card.md"
 
 

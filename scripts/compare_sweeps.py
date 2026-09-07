@@ -6,7 +6,7 @@ actually hand work to — is a comparison ACROSS runs, and since the rules card 
 variable that comparison has two axes rather than one: the same model under two cards is two
 different systems, and which card wins is not the same answer for every model.
 
-    scripts/compare-sweeps.py
+    scripts/compare_sweeps.py
 
 Reads only the committed scorecards, so it needs no model, no server and no GPU, and it
 re-derives the whole table from runs recorded long before it existed. Each scorecard is a complete

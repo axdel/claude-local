@@ -34,8 +34,8 @@ Run from the repository root, like every other command here — the shebang reso
 environment from the working directory, so this script imports ``claude_local`` and hands its own
 interpreter to each per-model subprocess. Under a bare ``python3`` it dies on the first import::
 
-    CLAUDE_LOCAL_MODELS=/path/to/models scripts/bench-all-models.py
-    CLAUDE_LOCAL_MODELS=/path/to/models scripts/bench-all-models.py --skip Muse-Glimmer-30B-6bit
+    CLAUDE_LOCAL_MODELS=/path/to/models scripts/benchmark_all_models.py
+    CLAUDE_LOCAL_MODELS=/path/to/models scripts/benchmark_all_models.py --skip GLM-4.7-Flash
 
 Exit code is 0 when every model was benchmarked, 1 when any model failed to produce a scorecard.
 That is deliberately not the benchmark's own pass/fail: a model scoring 0/7 has been measured, and
@@ -53,12 +53,10 @@ import sys
 import time
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "src"))
-
-from claude_local.model_registry import ModelRegistry  # noqa: E402
+from claude_local.model_registry import ModelRegistry
 
 _PER_MODEL_SCRIPT = Path(__file__).resolve().parent / "benchmark_model.py"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCORECARD_DIR = _REPO_ROOT / "benchmarks" / "scorecards"
 
 _PER_MODEL_CEILING_S = 4 * 60 * 60.0

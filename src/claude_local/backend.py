@@ -33,7 +33,7 @@ HTTP_READ_TIMEOUT_S = 600.0
 """Time-to-first-byte cap, and the DerailGuard's backstop for the one gap it cannot see.
 
 Twelve times the 50.1s a cold 24 GB model took to answer at the benchmark's own token budget, of
-which 9.1s was prefill and the rest a lazy weight load (``scripts/measure-first-byte.py``). The
+which 9.1s was prefill and the rest a lazy weight load (``scripts/measure_first_byte.py``). The
 margin is not padding: that figure is a floor, measured with the page cache evicted but nothing
 else contending, and the same load exceeded 180s outright under the memory pressure of a sweep
 that had already cycled three models through the host.

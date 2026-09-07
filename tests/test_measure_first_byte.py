@@ -1,4 +1,4 @@
-"""Tests for the first-byte probe (``scripts/measure-first-byte.py``).
+"""Tests for the first-byte probe (``scripts/measure_first_byte.py``).
 
 The probe is what ``HTTP_READ_TIMEOUT_S`` cites as its justification, so the one property worth
 pinning is that it still sends what it claims to send: a prompt the size of a real task's system
@@ -19,7 +19,7 @@ _REPO_ROOT = Path(__file__).parents[1]
 _CARD = _REPO_ROOT / "src" / "claude_local" / "rules_card.md"
 _BENCHMARK = _REPO_ROOT / "benchmarks" / "schedule_manager"
 
-probe = load_script(_REPO_ROOT / "scripts" / "measure-first-byte.py")
+probe = load_script(_REPO_ROOT / "scripts" / "measure_first_byte.py")
 
 
 def _largest_real_case_prefix_bytes() -> int:

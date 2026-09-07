@@ -42,16 +42,14 @@ import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "src"))
-
-from claude_local.model_registry import ModelRegistry  # noqa: E402
-from claude_local.model_server import (  # noqa: E402
+from claude_local.model_registry import ModelRegistry
+from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
     ModelServer,
 )
 
 _BENCHMARK_MODULE = "benchmarks.run"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_SCORECARD_DIR = _REPO_ROOT / "benchmarks" / "scorecards"
 
 

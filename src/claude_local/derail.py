@@ -59,7 +59,7 @@ CHARS_PER_TOKEN = 4
 # almost never. Set between the two, cutting a hang at roughly half the time it took to surface.
 # It does NOT have to clear the slowest model's startup: that is time-to-first-BYTE, dominated by
 # a lazy weight load (50.1s cold on the catalog's largest model, against 9.1s of prefill within
-# it), and `backend.HTTP_READ_TIMEOUT_S` owns that window — see `scripts/measure-first-byte.py`.
+# it), and `backend.HTTP_READ_TIMEOUT_S` owns that window — see `scripts/measure_first_byte.py`.
 STALL_TIMEOUT_S = 180.0
 
 

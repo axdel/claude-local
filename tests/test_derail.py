@@ -226,7 +226,7 @@ def test_the_wait_for_the_first_byte_is_not_judged_as_silence() -> None:
     ``model_server`` reports ready off ``/v1/models``, which answers as soon as the port binds,
     while mlx_vlm faults the weights in on the first inference request — measured on the catalog's
     largest model (24 GB) at the benchmark's own token budget as 50.1s to first byte with a cold
-    page cache, of which only 9.1s was prefill (``scripts/measure-first-byte.py``). That load
+    page cache, of which only 9.1s was prefill (``scripts/measure_first_byte.py``). That load
     exceeded this bound outright under the memory pressure of a full sweep, so a guard whose clock
     ran from construction would report a model that was loading normally as stalled — the same
     false verdict the reasoning-channel fix removed, re-entering through the clock instead of the
