@@ -84,10 +84,10 @@ def test_the_same_model_and_card_under_two_planning_modes_stays_two_rows() -> No
     """Oracle: the planning lever is part of the configuration too, exactly as the card is.
 
     The failure above, one axis over, and it is not hypothetical — it is how this was found. A
-    baseline sweep of one model measured 7/7 at 4436 completion tokens; the plan-first sweep of
-    the SAME model under the SAME card measured 7/7 at 9858, ran later, and silently took the
-    earlier row's place. The table then named the 9858 configuration the one worth using, which
-    is the opposite of what the two runs together say.
+    baseline benchmark-run of one model measured 7/7 at 4436 completion tokens; the plan-first
+    benchmark-run of the SAME model under the SAME card measured 7/7 at 9858, ran later, and
+    silently took the earlier row's place. The table then named the 9858 configuration the one
+    worth using, which is the opposite of what the two runs together say.
     """
     module = _script()
     unplanned = _result(module, plan_first=False, stamp_ms=1_000, completion_tokens=4_436)
@@ -349,7 +349,7 @@ def test_the_card_verdict_compares_cards_within_one_mode_never_across_them(
 def test_the_mode_verdict_names_the_cheaper_mode_for_a_configuration_measured_in_both(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Oracle: the question the sweep was run to answer — does the planning generation pay off?
+    """Oracle: the question the benchmark-run answers — does the planning generation pay off?
 
     Measured on one model under one card: 4436 completion tokens without the plan against 9858
     with it, both 7/7. The verdict is the one the artifacts support, so it survives the log the
@@ -375,8 +375,8 @@ def test_no_mode_verdict_is_offered_for_a_configuration_measured_in_one_mode_onl
 ) -> None:
     """Oracle: a comparison needs two arms. One arm is a measurement, not a winner.
 
-    Every sweep before the lever was benchmarked ran unplanned, so this is the ordinary case —
-    announcing ``off`` the winner there would report an A/B that was never run.
+    Every benchmark-run before the lever was benchmarked ran unplanned, so this is the ordinary
+    case — announcing ``off`` the winner there would report an A/B that was never run.
     """
     module = _script()
 

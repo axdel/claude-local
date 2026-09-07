@@ -156,7 +156,7 @@ class ModelSession:
             ServerExited: The server process died during startup.
             ServerNotReady: The server did not answer within ``startup_timeout_s``.
         """
-        with self.server.running(timeout_s=startup_timeout_s) as handle:
+        with self.server.running(startup_timeout_s=startup_timeout_s) as handle:
             served = handle.served_model_id()
             timeout = httpx.Timeout(HTTP_READ_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S)
             with httpx.Client(timeout=timeout) as http:

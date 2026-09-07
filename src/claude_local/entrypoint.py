@@ -138,7 +138,7 @@ def implement(
         base_url: The OpenAI-compatible server to infer against. claude-local does not serve.
         model: The model name to request from that server.
         generation_params: Optional extra generation parameters forwarded to the backend.
-        rules_card_path: Override for the system-prefix rules card. Defaults to the bundled card.
+        rules_card_path: Override for the stable-prefix rules card. Defaults to the bundled card.
         worktree: Override for the scratch worktree. Defaults to a managed temp directory that is
             created and removed around the run (the produced code is read back before removal).
         http_client: An HTTP client to reuse. When omitted, one is created for the call and closed

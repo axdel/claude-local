@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     resolved = ModelRegistry.default().resolve(args.model)
     server = ModelServer.for_model(resolved)
 
-    with server.running(timeout_s=args.startup_timeout) as handle:
+    with server.running(startup_timeout_s=args.startup_timeout) as handle:
         served = _served_model_id(handle.base_url)
         print(f"[capture] serving {served} (pid {handle.pid})", file=sys.stderr)
         # A capture is one generation, so the attempt and wall-clock bounds are formalities;

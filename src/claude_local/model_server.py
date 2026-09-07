@@ -9,7 +9,7 @@ exit, on an exception inside the block, and on a readiness timeout alike.
 Deliberately NOT routed through ``sandbox.sandboxed_spawn``. That profile denies network
 outright, so a listening server cannot run under it, and relaxing the denial to host one would
 widen the confinement that exists to contain untrusted model-authored code. The two spawn paths
-stay separate on purpose: one cages code we do not trust, this one runs a server we chose.
+stay separate on purpose: one sandboxes code we do not trust, this one runs a server we chose.
 
 The server is addressed only over loopback. mlx_vlm's own ``--host`` default is ``0.0.0.0``,
 which publishes the model to every interface, so the bind address is always passed explicitly.
@@ -276,13 +276,13 @@ class ModelServer:
     def running(
         self,
         *,
-        timeout_s: float = DEFAULT_STARTUP_TIMEOUT_S,
+        startup_timeout_s: float = DEFAULT_STARTUP_TIMEOUT_S,
         log_path: Path | None = None,
     ) -> Generator[ServerHandle]:
         """Spawn the server, wait until it answers, and guarantee it is gone afterwards.
 
         Args:
-            timeout_s: Budget for reaching readiness. Teardown is not charged against it.
+            startup_timeout_s: Budget for reaching readiness. Teardown is not charged against it.
             log_path: Keep the server's output here instead of in an unlinked temp file. Off by
                 default because the only writable root under an orchestrator's dispatch cage is
                 its isolation worktree, and a server log is not one of that worktree's declared
@@ -310,7 +310,7 @@ class ModelServer:
                 start_new_session=True,  # its own group, so teardown reaps every child
             )
             try:
-                self._await_readiness(process, output, timeout_s=timeout_s)
+                self._await_readiness(process, output, startup_timeout_s=startup_timeout_s)
                 yield ServerHandle(base_url=self.base_url, port=self.port, pid=process.pid)
             except BaseException as failure:
                 # A server that dies mid-run surfaces to the caller as a transport error raised by
@@ -324,7 +324,7 @@ class ModelServer:
                 _terminate_session(process)
 
     def _await_readiness(
-        self, process: subprocess.Popen[bytes], output: BinaryIO, *, timeout_s: float
+        self, process: subprocess.Popen[bytes], output: BinaryIO, *, startup_timeout_s: float
     ) -> None:
         """Poll until the server answers, it dies, or the budget runs out.
 
@@ -332,7 +332,7 @@ class ModelServer:
         otherwise burn the entire budget and be reported as slow rather than as broken — and
         its own output, which names the actual cause, would never be surfaced.
         """
-        deadline = time.monotonic() + timeout_s
+        deadline = time.monotonic() + startup_timeout_s
         probe_url = f"{self.base_url}{_READINESS_PATH}"
         while True:
             if process.poll() is not None:
@@ -345,7 +345,7 @@ class ModelServer:
                     return
             if time.monotonic() >= deadline:
                 raise ServerNotReady(
-                    f"the model server did not answer {probe_url} within {timeout_s:g}s; "
+                    f"the model server did not answer {probe_url} within {startup_timeout_s:g}s; "
                     f"last output:\n{_read_tail(output)}"
                 )
             time.sleep(_READINESS_POLL_S)

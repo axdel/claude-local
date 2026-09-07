@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[probe] server flags   : {resolved.flags or '(none)'}", file=sys.stderr)
     print(f"[probe] registry params: {dict(resolved.generation_params) or '(none)'}")
 
-    with server.running(timeout_s=args.startup_timeout) as handle:
+    with server.running(startup_timeout_s=args.startup_timeout) as handle:
         served = handle.served_model_id()
         with httpx.Client(timeout=httpx.Timeout(300.0, connect=10.0)) as http:
             for label, prompt in _PROMPTS:

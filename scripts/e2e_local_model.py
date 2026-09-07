@@ -53,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[e2e] command   : {' '.join(server.command)}", file=sys.stderr)
 
     started = time.monotonic()
-    with server.running(timeout_s=args.startup_timeout) as handle:
+    with server.running(startup_timeout_s=args.startup_timeout) as handle:
         ready_after = time.monotonic() - started
         served = handle.served_model_id()
         print(f"[e2e] ready in  : {ready_after:.1f}s (pid {handle.pid})", file=sys.stderr)

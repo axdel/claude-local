@@ -212,8 +212,8 @@ def test_score_cases_rejects_a_benchmark_that_changed_rules_card_mid_run() -> No
 def test_score_cases_carries_the_rules_card_digest_onto_the_scorecard() -> None:
     """Oracle: every record names one card, so the scorecard names that same card.
 
-    Without this the scorecard could not say which card produced it, and two sweeps under two
-    cards would be indistinguishable once written to disk.
+    Without this the scorecard could not say which card produced it, and two benchmark-runs
+    under two cards would be indistinguishable once written to disk.
     """
     cases = [
         _case_result(
@@ -255,7 +255,7 @@ def test_score_cases_rejects_a_benchmark_that_changed_the_planning_lever_mid_run
 def test_score_cases_carries_the_planning_lever_onto_the_scorecard() -> None:
     """Oracle: every record names one lever, so the scorecard names that same lever.
 
-    Without it two sweeps of one model under one card — one planned, one not — are
+    Without it two benchmark-runs of one model under one card — one planned, one not — are
     indistinguishable on disk, and the cross-run comparison silently keeps whichever ran last.
     That is not hypothetical: it is what a 4436-token run and a 9858-token run of the same model
     and card did to each other before this field existed.

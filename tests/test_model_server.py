@@ -261,7 +261,7 @@ def test_the_handle_reports_the_model_id_the_server_actually_serves() -> None:
     """
     port = free_port()
 
-    with _substitute(port).running(timeout_s=30.0) as handle:
+    with _substitute(port).running(startup_timeout_s=30.0) as handle:
         assert handle.served_model_id() == "substitute/store-path"
 
 
@@ -288,7 +288,7 @@ def test_a_server_advertising_no_models_is_named_rather_than_indexed_into() -> N
     port = free_port()
 
     with (
-        _substitute(port, body=_NO_MODELS_BODY).running(timeout_s=30.0) as handle,
+        _substitute(port, body=_NO_MODELS_BODY).running(startup_timeout_s=30.0) as handle,
         pytest.raises(ServerModelUnknown, match=r"/v1/models"),
     ):
         handle.served_model_id()
@@ -297,7 +297,7 @@ def test_a_server_advertising_no_models_is_named_rather_than_indexed_into() -> N
 def test_the_process_is_reaped_and_the_port_freed_after_a_normal_exit() -> None:
     port = free_port()
 
-    with _substitute(port).running(timeout_s=30.0) as handle:
+    with _substitute(port).running(startup_timeout_s=30.0) as handle:
         assert port_is_bound(port), "the substitute never came up, so teardown proves nothing"
         pid = handle.pid
 
@@ -314,7 +314,7 @@ def test_the_process_is_reaped_when_the_block_raises() -> None:
 
     with (
         pytest.raises(RuntimeError, match="failure inside the block"),
-        _substitute(port).running(timeout_s=30.0) as handle,
+        _substitute(port).running(startup_timeout_s=30.0) as handle,
     ):
         escaped = handle.pid
         raise RuntimeError("failure inside the block")
@@ -337,7 +337,7 @@ def test_starting_on_an_occupied_port_is_refused_rather_than_raced() -> None:
 
         with (
             pytest.raises(PortUnavailable) as refusal,
-            _substitute(occupied).running(timeout_s=5.0),
+            _substitute(occupied).running(startup_timeout_s=5.0),
         ):
             pass
 
@@ -362,7 +362,7 @@ def test_a_server_that_dies_during_startup_reports_its_output_rather_than_timing
         port=port,
     )
 
-    with pytest.raises(ServerExited) as death, doomed.running(timeout_s=30.0):
+    with pytest.raises(ServerExited) as death, doomed.running(startup_timeout_s=30.0):
         pass
 
     assert "weights corrupt" in str(death.value)
@@ -377,7 +377,7 @@ def test_a_server_that_never_answers_is_timed_out_and_still_torn_down() -> None:
         port=port,
     )
 
-    with pytest.raises(ServerNotReady), silent.running(timeout_s=2.0):
+    with pytest.raises(ServerNotReady), silent.running(startup_timeout_s=2.0):
         pass
 
     # Oracle: a readiness failure is still an exit path, so the same teardown guarantee binds.
@@ -394,7 +394,7 @@ def test_a_server_that_answers_slowly_is_ready_not_timed_out() -> None:
     """
     port = free_port()
 
-    with _substitute(port, delay_s=0.6).running(timeout_s=4.0) as handle:
+    with _substitute(port, delay_s=0.6).running(startup_timeout_s=4.0) as handle:
         assert handle.port == port
 
 
@@ -408,7 +408,7 @@ def test_a_served_models_answer_of_the_wrong_shape_names_the_server_and_what_it_
     port = free_port()
 
     with (
-        _substitute(port, body='{"object": "list"}').running(timeout_s=30.0) as handle,
+        _substitute(port, body='{"object": "list"}').running(startup_timeout_s=30.0) as handle,
         pytest.raises(ServerModelUnknown) as answer,
     ):
         handle.served_model_id()
@@ -430,7 +430,7 @@ def test_a_named_log_survives_the_teardown_that_destroys_the_default_capture(
     log_path = tmp_path / "server.log"
     port = free_port()
 
-    with _substitute(port).running(timeout_s=30.0, log_path=log_path) as handle:
+    with _substitute(port).running(startup_timeout_s=30.0, log_path=log_path) as handle:
         assert _process_alive(handle.pid)
 
     assert "substitute server up" in log_path.read_text(encoding="utf-8")
@@ -447,7 +447,10 @@ def test_a_server_that_dies_mid_run_attaches_its_output_to_the_failure_that_foll
     """
     port = free_port()
 
-    with pytest.raises(RuntimeError) as failure, _substitute(port).running(timeout_s=30.0) as h:
+    with (
+        pytest.raises(RuntimeError) as failure,
+        _substitute(port).running(startup_timeout_s=30.0) as h,
+    ):
         os.kill(h.pid, signal.SIGKILL)
         for _ in range(100):  # ~5s ceiling; the OS reaps a killed substitute in milliseconds
             if not _process_alive(h.pid):

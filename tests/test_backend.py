@@ -221,7 +221,7 @@ def test_httpx_stream_dying_after_the_response_started_raises_generation_silent(
     # continues with the task recorded. A server that answered 200 and streamed a chunk has
     # demonstrably met the prerequisite, so a break after that point is the second fault --
     # whatever transport error carries it. Classifying it as the first discards every task already
-    # completed in a sweep because one connection reset.
+    # completed in a benchmark-run because one connection reset.
     with pytest.raises(GenerationSilent) as excinfo:
         list(backend.generate("p", "t", build_budget()))
     assert excinfo.value.url == "http://local:8080/v1/chat/completions"

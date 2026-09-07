@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[bench] params   : {json.dumps(dict(resolved.generation_params))}", file=sys.stderr)
 
     started = time.monotonic()
-    with server.running(timeout_s=args.startup_timeout) as handle:
+    with server.running(startup_timeout_s=args.startup_timeout) as handle:
         ready_after = time.monotonic() - started
         served = handle.served_model_id()
         print(f"[bench] ready in : {ready_after:.1f}s (pid {handle.pid})", file=sys.stderr)

@@ -125,8 +125,8 @@ def test_extracted_reply_owns_validated_utf8_payload_bytes() -> None:
     [
         pytest.param("", id="empty-source"),
         # A payload wrapped END TO END in a fence is transport, not source, and is unwrapped
-        # instead — see the fenced-reply tests below. What stays preserved is every fence that is
-        # genuinely part of the file: an inner one, and an unbalanced one.
+        # instead — see the whole-file-reply tests below. What stays preserved is every fence
+        # that is genuinely part of the file: an inner one, and an unbalanced one.
         pytest.param("VALUE = 1\n```\nstill source\n", id="unbalanced-inner-fence"),
         pytest.param("FILE: inner.py\n\nVALUE = 1\n", id="header-looking-lines"),
         pytest.param("VALUE = 1\n", id="one-terminal-newline"),

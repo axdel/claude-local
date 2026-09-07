@@ -329,16 +329,17 @@ def test_main_exits_3_when_the_server_is_unreachable(
     assert "Traceback" not in err
 
 
-def test_a_harness_fault_mid_sweep_still_writes_the_cases_that_finished(
+def test_a_harness_fault_mid_run_still_writes_the_cases_that_finished(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Oracle: a sweep is hours of GPU time, and every completed case is a measurement already paid
-    for — losing them to the next case's fault costs the whole run to report one failure.
+    """Oracle: a benchmark-run is hours of GPU time, and every completed case is a measurement
+    already paid for — losing them to the next case's fault costs the whole run to report one
+    failure.
 
     The server answers the first case and then stops answering, which is the ordinary way a long
-    sweep ends: the host is killed, or swaps, or the model is unloaded. The fault must still be
-    loud (exit 3, a named diagnostic) AND the finished cases must still reach a scorecard, because
-    the two are not in tension — one says the run did not complete, the other says what it
+    benchmark-run ends: the host is killed, or swaps, or the model is unloaded. The fault must
+    still be loud (exit 3, a named diagnostic) AND the finished cases must still reach a scorecard,
+    because the two are not in tension — one says the run did not complete, the other says what it
     measured before it stopped. D-BACKEND-004 narrowed how often this fires; it is what happens
     when it fires anyway.
     """

@@ -122,7 +122,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help=(
             "Spend one generation per case on an implementation plan, frozen into the prefix. "
-            "Off by default, so an unflagged run is comparable with every sweep taken so far."
+            "Off by default, so an unflagged run is comparable with every benchmark-run "
+            "taken so far."
         ),
     )
     parser.add_argument(

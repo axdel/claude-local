@@ -3,9 +3,10 @@
 This is the branch's FULL-tier live-test for a library surface (a pytest/REPL driver). It exercises
 the real chain end to end: schema-derived SSE bytes -> the real ModelClient decode -> real
 whole-file extraction -> a REAL immutable oracle run by a REAL `python -m pytest` subprocess in a
-temp worktree -> real best-snapshot restore -> real telemetry aggregation and JSON write. The ONLY
-seam doubled is the model: ReplayBackend replays pre-built streams, so no model is downloaded (the
-branch's standing No-Go) yet the full path is proven — the loop's "prove it offline" design.
+temp worktree -> real best-passing-snapshot restore -> real telemetry aggregation and JSON write.
+The ONLY seam doubled is the model: ReplayBackend replays pre-built streams, so no model is
+downloaded (the branch's standing No-Go) yet the full path is proven — the loop's "prove it
+offline" design.
 
 Three scenarios cover the terminal outcomes that do real work: (A) a partial then a green reply
 reaches DONE with the green snapshot restored; (B) three partials exhaust the budget and the

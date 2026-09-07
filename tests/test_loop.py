@@ -621,10 +621,10 @@ def test_the_record_says_which_configuration_produced_its_token_total(tmp_path: 
     """The sibling of the test above: the record states the cost AND what was bought with it.
 
     Oracle: the record already names its model and its rules card because a total measured under
-    one is not comparable to a total measured under another, and the planning lever is a third
-    such variable — measured on one model under one card, it moved a sweep from 4436 completion
-    tokens to 9858. A record carrying the larger number with no way to say a plan was bought
-    reads exactly like the smaller configuration performing badly.
+    one is not comparable to a total measured under another, and the planning lever is a third such
+    variable — measured on one model under one card, it moved a benchmark-run from 4436 completion
+    tokens to 9858. A record carrying the larger number with no way to say a plan was bought reads
+    exactly like the smaller configuration performing badly.
 
     Both runs are driven because only the pair falsifies a constant: a wiring hardcoded to either
     value satisfies one half and fails the other.

@@ -93,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     resolved = ModelRegistry.default().resolve(args.model)
     server = ModelServer.for_model(resolved)
 
-    with server.running(timeout_s=args.startup_timeout) as handle:
+    with server.running(startup_timeout_s=args.startup_timeout) as handle:
         served = handle.served_model_id()
         with httpx.Client(timeout=args.generation_timeout) as http:
             # The row's PARAMS too, not just its FLAGS: a probe that answers "what did the model

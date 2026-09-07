@@ -127,8 +127,12 @@ are the one optional input:</p>
       so it can never be overwritten.</li>
   <li><strong>expected_tests</strong> &mdash; the exact collected-node count the oracle must expose; fewer
       tests is an invalid verdict, not green.</li>
-  <li><strong>budget</strong> &mdash; three hard caps: <code>max_attempts</code> (how many tries),
-      <code>max_tokens</code> (how long each decode may run), <code>timeout_s</code> (wall-clock). All strictly positive.</li>
+  <li><strong>budget</strong> &mdash; four hard caps: <code>max_attempts</code> (how many tries),
+      <code>max_tokens</code> (how long each decode may run), and two wall-clock deadlines that answer
+      opposite questions &mdash; <code>generation_timeout_s</code> bounds one producing decode and is set
+      generously, because a slow model streaming steadily is healthy and a hang is caught by silence
+      instead; <code>oracle_timeout_s</code> bounds one sandboxed test run and stays tight, because
+      nothing legitimate takes long there. All strictly positive.</li>
   <li><strong>context_files</strong> &mdash; optional neighbor files, kept in caller order and shown to the
       model as read-only context. Their content enters the prompt, but the path guard still permits
       writes only to <code>impl_path</code>.</li>
