@@ -322,10 +322,15 @@ def test_driver_rejects_behaviorally_wrong_scaffold_reply_and_removes_worktree(
 def test_case_rejects_fixture_paths_outside_regular_files(
     invalid_path: str, path_source: str
 ) -> None:
-    """Case construction refuses paths that could escape or replace a directory."""
+    """Case construction refuses paths that could escape or replace a directory.
+
+    The rule is owned by ``claude_local.paths.require_nested_relative_file`` — the same one the
+    loop's own entry point applies to an impl_path — so the harness and the loop cannot disagree
+    about which fixture paths are writable.
+    """
     case = _build_scaffold_case()
 
-    with pytest.raises(ValueError, match="regular relative file"):
+    with pytest.raises(ValueError, match="nested relative file"):
         if path_source == "implementation":
             replace(case, task=replace(case.task, impl_path=invalid_path))
         else:

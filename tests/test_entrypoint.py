@@ -179,6 +179,26 @@ def test_writable_subtree_rejects_a_flat_path() -> None:
         _writable_subtree("foo.py")
 
 
+@pytest.mark.parametrize(
+    "impl_path",
+    ["src/../test_loop_oracle.py", "../escape/x.py", "a/../../b/c.py"],
+)
+def test_writable_subtree_rejects_a_path_that_climbs_out_of_its_own_subtree(
+    impl_path: str,
+) -> None:
+    """A declared subtree means nothing if the path can climb back out of it.
+
+    Oracle: POSIX path algebra. ``src/../test_loop_oracle.py`` has ``src`` as its first
+    component and resolves to the worktree root — so the plain top-segment reading reports the
+    subtree ``src`` while the path names the immutable oracle test sitting outside it. Realpath
+    containment cannot catch this: the target stays inside the worktree root the whole way, so
+    it is contained AND wrong. The refusal has to happen on the path's shape, here, which is
+    also before any directory is created for it.
+    """
+    with pytest.raises(ValueError, match="nested relative file"):
+        _writable_subtree(impl_path)
+
+
 # --- Unit: fast-fail validation before any resource is acquired ---------------------
 
 

@@ -277,6 +277,28 @@ def test_a_flat_impl_path_is_refused_by_the_real_entry_point(
     assert main(["--task", str(task_file)]) == EXIT_REJECTED_TASK
 
 
+def test_a_traversing_impl_path_is_refused_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The dispatch door is the untrusted one, so the escape must die here, touching nothing.
+
+    Oracle: ``src/../test_loop_oracle.py`` names the immutable oracle while declaring the
+    subtree ``src``. Two independent assertions, because refusing late would still be a breach:
+    the exit code says the task was rejected, and the working directory is byte-for-byte
+    untouched — no scratch directory, and specifically no directory created for the path's
+    parent, which is a write outside the worktree that used to happen before any check ran.
+    """
+    task_file = tmp_path / "task.json"
+    task_file.write_text(
+        json.dumps(build_envelope(impl_path="src/../test_loop_oracle.py")), encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    before = sorted(path.name for path in tmp_path.iterdir())
+
+    assert main(["--task", str(task_file)]) == EXIT_REJECTED_TASK
+    assert sorted(path.name for path in tmp_path.iterdir()) == before
+
+
 @pytest.mark.parametrize(
     "envelope", ["not json at all", "[1, 2, 3]", '"a string"'], ids=["invalid", "array", "scalar"]
 )

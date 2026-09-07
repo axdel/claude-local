@@ -11,7 +11,8 @@
 | __main__ | cli | may-import | The python -m shim resolves the same front door as the installed console script. | active |  |
 | backend | httpx | may-import | Only external transport dependency. | active |  |
 | backend | types | may-import | Transport consumes Budget. | active |  |
-| benchmarks | claude_local | may-import | Downstream benchmark consumes only the top-level public package API. | active |  |
+| benchmarks | claude_local | may-import | Downstream benchmark consumes the top-level public package API, plus claude_local.paths for the shared path-shape rule (its own row). | active |  |
+| benchmarks | claude_local.paths | may-import | The one submodule reached past the public package API: the harness writes fixture trees, so it must apply the same path-shape rule the loop applies, not a second copy of it. | active |  |
 | claude_local | benchmarks | must-not-import | Reusable loop never depends on benchmark subjects or harness code. | active |  |
 | cli | backend | may-import | Catches BackendUnavailable so a broken host exits apart from a failed task. | active |  |
 | cli | entrypoint | may-import | Adapts one invocation to a TaskSpec; implement stays the composition root. | active |  |
@@ -30,6 +31,7 @@
 | entrypoint | client | may-import | Wraps the backend in ModelClient. | active |  |
 | entrypoint | httpx | may-import | Constructs the keep-alive httpx.Client for an owned-lifecycle call. | active |  |
 | entrypoint | loop | may-import | Constructs and runs the Loop, the red->green driver. | active |  |
+| entrypoint | paths | may-import | Validates the caller's impl_path shape before any resource is acquired; a path that climbs out of its declared subtree stays contained under the worktree root, so realpath containment alone cannot refuse it. | active |  |
 | entrypoint | prompt | may-import | Builds PromptBuilder from the rules card. | active |  |
 | entrypoint | runner | may-import | Constructs TestRunner over the budget-bound sandbox spawn. | active |  |
 | entrypoint | sandbox | may-import | Binds the oracle budget timeout into sandboxed_spawn. | active |  |

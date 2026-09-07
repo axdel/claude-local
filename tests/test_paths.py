@@ -15,7 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from claude_local.paths import KeepOnlyViolation, resolve_within
+from claude_local.paths import (
+    KeepOnlyViolation,
+    require_nested_relative_file,
+    resolve_within,
+)
 
 
 @pytest.fixture
@@ -164,3 +168,62 @@ def test_violation_names_the_candidate(root: Path) -> None:
         resolve_within(root, "../escape.py")
     # Oracle: the exception carries the offending candidate for the caller to log.
     assert excinfo.value.candidate == "../escape.py"
+
+
+# --- The permitted-path shape rule ----------------------------------------
+#
+# ``resolve_within`` contains a candidate against the root it is GIVEN. These tests cover the
+# separate, prior question its guarantee rests on: whether the permitted path handed to it is
+# itself a safe shape. A permitted path carrying `..` resolves back inside the worktree root and
+# is therefore contained — while naming the immutable oracle test.
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "src/../test_loop_oracle.py",  # climbs back out of its own declared subtree
+        "../escape/x.py",  # climbs above the worktree entirely
+        "a/../../b/c.py",  # net climb hidden behind a descent
+        "src/./main.py",  # a `.` component means the path is not normalized
+        "src//main.py",  # an empty component, likewise
+    ],
+)
+def test_rejects_a_permitted_path_that_is_not_normalized(candidate: str) -> None:
+    # Oracle: POSIX path algebra — a path containing `.`, `..` or an empty component does not
+    # name the file its literal text suggests, so its top segment is not the subtree it appears
+    # to declare. Only a normalized path can carry that guarantee.
+    with pytest.raises(ValueError, match="nested relative file"):
+        require_nested_relative_file(candidate)
+
+
+@pytest.mark.parametrize("candidate", ["/etc/passwd", "/srv/app/main.py"])
+def test_rejects_an_absolute_permitted_path(candidate: str) -> None:
+    # Oracle: an absolute path ignores the root it is joined to, so it can name anything.
+    with pytest.raises(ValueError, match="nested relative file"):
+        require_nested_relative_file(candidate)
+
+
+@pytest.mark.parametrize("candidate", ["flat.py", "", "   "])
+def test_rejects_a_permitted_path_with_no_directory(candidate: str) -> None:
+    # Oracle: the oracle test is written to the worktree root, so a path with no directory
+    # component would place the implementation beside it.
+    with pytest.raises(ValueError, match="nested relative file"):
+        require_nested_relative_file(candidate)
+
+
+@pytest.mark.parametrize("candidate", ["src/", "src/pkg/"])
+def test_rejects_a_permitted_path_naming_a_directory(candidate: str) -> None:
+    # Oracle: a trailing slash names a directory, and a directory is not a file to write.
+    with pytest.raises(ValueError, match="nested relative file"):
+        require_nested_relative_file(candidate)
+
+
+@pytest.mark.parametrize(
+    ("candidate", "expected_subtree"),
+    [("src/main.py", "src"), ("a/b/c.py", "a"), ("pkg/mod/file.py", "pkg")],
+)
+def test_accepts_a_nested_relative_file_and_reports_its_subtree(
+    candidate: str, expected_subtree: str
+) -> None:
+    # Oracle: POSIX path semantics — the writable subtree is the first path component.
+    assert require_nested_relative_file(candidate).parts[0] == expected_subtree

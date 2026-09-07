@@ -35,6 +35,7 @@ import httpx
 from claude_local.backend import HttpxBackend
 from claude_local.client import ModelClient
 from claude_local.loop import AttemptProgress, Loop
+from claude_local.paths import require_nested_relative_file
 from claude_local.prompt import PromptBuilder
 from claude_local.runner import TestRunner
 from claude_local.sandbox import sandboxed_spawn
@@ -218,17 +219,16 @@ def _writable_subtree(impl_path: str) -> str:
     The oracle test is written to the worktree root, and the snapshot store captures the whole
     writable subtree; a flat ``impl_path`` would put the impl at the root beside the oracle,
     letting a snapshot swallow (or a write clobber) the immutable test. Requiring a nesting
-    directory keeps the two disjoint by construction.
+    directory keeps the two disjoint — but only because the shape rule refuses a path whose
+    text and target disagree first. ``src/../test_loop_oracle.py`` declares the subtree ``src``
+    and names the oracle, and it stays contained under the worktree root the whole way, so no
+    later check catches it; validating the shape here is what makes "disjoint" true rather
+    than merely apparent.
 
     Raises:
-        ValueError: ``impl_path`` has no parent directory.
+        ValueError: ``impl_path`` is not a normalized, nested, relative file path.
     """
-    parts = Path(impl_path).parts
-    if len(parts) < 2:
-        raise ValueError(
-            f"impl_path must be nested under a directory (e.g. 'src/foo.py'), got {impl_path!r}"
-        )
-    return parts[0]
+    return require_nested_relative_file(impl_path).parts[0]
 
 
 def _new_http_client() -> httpx.Client:
