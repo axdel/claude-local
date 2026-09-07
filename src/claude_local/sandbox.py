@@ -8,6 +8,8 @@ command in macOS ``sandbox-exec`` under a deny-by-default SBPL profile, so the s
 
 - read the task worktree, disposable write box, and active Python runtime,
 - write *inside the write box* where the JUnit report and bounded stream captures land,
+- never read another process's argv or exec-time environment, which on a developer machine
+  is where the orchestrator's own API keys sit,
 - and never use the network or ambient host files as an indirect feedback-egress channel.
 
 Layered on top: a hard CPU/file-size ``setrlimit`` cap (Layer 1), bounded file-backed
@@ -54,9 +56,19 @@ _PROFILE_TEMPLATE = """\
 (version 1)
 (deny default)
 (import "system.sb")
-; The only two classes granted whole, and a closed set — INV-003 argues why neither widens the box.
-(allow process*)
+; The import grants classes this file never names, so withholding a grant here does not deny it —
+; only an explicit (deny ...) after the import binds. Measured: deleting the former blanket
+; (allow sysctl-read) changed nothing, because system.sb already grants that class.
+(allow process-exec* process-fork)
 (allow sysctl-read)
+; Another process's argv and exec-time environment — the orchestrator's API keys among them — is
+; admitted by EITHER of two classes, so closing that read takes both denies. Measured: with only
+; one of them denied a confined child still read a same-uid victim's whole environment. Each is
+; then allowed back along the axis that reaches no other process: introspecting yourself, and
+; every sysctl that is not a per-pid process query. See D-SANDBOX-011.
+(deny process-info*)
+(allow process-info* (target self))
+(deny sysctl-read (sysctl-name-prefix "kern.proc"))
 ; No mach-lookup grant: (deny network*) does not cover Mach IPC, so an unscoped one is a side
 ; channel out of the sandbox. Measured — a confined pbpaste read the developer's clipboard through
 ; it. The oracle needs none beyond what system.sb already scopes; see D-SANDBOX-008.

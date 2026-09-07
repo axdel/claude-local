@@ -180,7 +180,8 @@ Three deliberate choices make weak models usable:
   stderr at every green and in `D-ORACLE-004` / `D-ORACLE-006`. Treat a local green as *supervised
   evidence a test passed*, never as a substitute for reading the diff.
 - **The same scope bounds what the sandbox protects.** Kernel confinement denies the network, the
-  ambient host filesystem, and unscoped Mach IPC — but the worktree itself is readable, because the
+  ambient host filesystem, unscoped Mach IPC, and any read of another process's argv or exec-time
+  environment (`D-SANDBOX-011`) — but the worktree itself is readable, because the
   implementation has to import its neighbours, and the run's diagnostics tail is fed back into the
   next prompt, because that is how the loop tells the model what failed. Together those two
   necessary halves are a read-and-return path: `(deny network*)` stops the child sending anything

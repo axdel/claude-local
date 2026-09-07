@@ -15,6 +15,7 @@ a macOS-kernel fact, so there is nothing meaningful to assert without the kernel
 
 from __future__ import annotations
 
+import ctypes
 import os
 import re
 import shutil
@@ -22,6 +23,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -41,9 +43,32 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+_CTL_KERN = 1
+_KERN_PROCARGS2 = 49
+"""The per-pid sysctl that returns a process's argv followed by its exec-time environment.
+
+Numeric because it is only reachable that way: the pid is the third MIB element, so there is no
+``sysctlbyname`` spelling of it — which is why the profile denies it by name PREFIX rather than by
+exact name, the exact-name filter having no full name to match against (D-SANDBOX-011).
+"""
+
+
 def _run(payload: str, box: Path, *, timeout_s: float = 30.0) -> None:
     """Execute a Python payload under the sandbox, with ``box`` as the writable root."""
     sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box, timeout_s=timeout_s)
+
+
+def _read_process_arguments(pid: int) -> bytes:
+    """Return one process's argv-and-environment blob, or empty bytes if the kernel refuses."""
+    libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+    mib = (ctypes.c_int * 3)(_CTL_KERN, _KERN_PROCARGS2, pid)
+    size = ctypes.c_size_t(0)
+    if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
+        return b""
+    buffer = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+        return b""
+    return buffer.raw[: size.value]
 
 
 def test_write_outside_the_box_is_denied(tmp_path: Path) -> None:
@@ -215,19 +240,21 @@ def test_the_profile_grants_no_unscoped_mach_lookup(tmp_path: Path) -> None:
     )
 
 
-def test_the_profile_grants_exactly_two_classes_without_a_filter(tmp_path: Path) -> None:
-    """The class-wide grants are a closed set of two, each one deliberate and argued.
+def test_the_profile_grants_a_closed_set_of_classes_without_a_filter(tmp_path: Path) -> None:
+    """The class-wide grants are a closed, argued set — and none of them reaches another process.
 
-    Oracle: INV-003, which names them. ``process*`` and ``sysctl-read`` are granted whole because
-    neither widens the boundary — a child process inherits this same profile (measured on this
-    branch: the confined ``pbpaste`` was itself sandboxed, and what leaked was the Mach grant, not
-    its confinement), and sysctl-read returns read-only kernel parameters the runtime reads at
-    startup, reaching no file, socket or service.
+    Oracle: INV-003, which names them. ``process-exec*`` and ``process-fork`` cover spawning, which
+    widens nothing because a child inherits this same profile (measured on this branch: the
+    confined ``pbpaste`` was itself sandboxed, and what leaked was the Mach grant, not its
+    confinement). ``sysctl-read`` is granted whole and then narrowed by the ``kern.proc`` deny
+    below it, because the runtime reads named kernel parameters at startup — ``os.uname()`` fails
+    outright without them — while every per-pid process query lives under that one prefix.
 
-    The generalization of the mach-lookup test above, and the reason it is a separate one: that
-    test asks whether ONE class is scoped, so a fourth unfiltered grant of some other class passes
-    it silently. This pins the set, so adding one fails until someone argues it here — which is
-    the whole difference between an invariant that reads strict and an invariant that bites.
+    The predecessor of this test asserted a set of ``{process*, sysctl-read}`` on the reasoning
+    that neither could reach a file, socket or service. Measured, that reasoning was wrong on both
+    counts: ``process*`` includes ``process-info*``, which reads OTHER processes, and a per-pid
+    sysctl returns their argv and environment. The behavioral test below is what now holds that
+    line; this one keeps the set closed so a future blanket grant has to be argued here first.
     """
     box = tmp_path / "box"
     box.mkdir()
@@ -235,13 +262,72 @@ def test_the_profile_grants_exactly_two_classes_without_a_filter(tmp_path: Path)
     profile = _build_profile(tmp_path, box, [sys.executable])
 
     unfiltered = {
-        match.group(1)
+        operation
         for line in profile.splitlines()
-        if (match := re.fullmatch(r"\(allow ([^\s)]+)\)", line.strip()))
+        if (match := re.fullmatch(r"\(allow ([\w*\- ]+)\)", line.strip()))
+        for operation in match.group(1).split()
     }
-    assert unfiltered == {"process*", "sysctl-read"}, (
+    assert unfiltered == {"process-exec*", "process-fork", "sysctl-read"}, (
         f"the oracle profile's class-wide grants changed: {sorted(unfiltered)}"
     )
+
+
+def test_another_process_environment_is_unreadable_from_inside_the_box(tmp_path: Path) -> None:
+    """A confined child cannot read a same-uid process's argv or exec-time environment.
+
+    This is the credential boundary. ``_sandbox_env`` scrubs what the CHILD is handed, but that
+    cannot scrub what the child reads back out of the kernel about everyone else — on a developer
+    machine the orchestrator's own process carries the API keys its shell exported.
+
+    Oracle: the parent supplies ground truth by making the identical read unconfined, the same
+    shape as the network test standing up its own listener. That is what makes a vacuous pass
+    impossible — an empty blob returned for some unrelated reason would look like a pass, so the
+    sentinel is proven readable from OUTSIDE the box in the same breath it is denied inside.
+
+    The sentinel is passed at spawn, never assigned afterwards: KERN_PROCARGS2 returns the
+    environment a process was EXEC'd with, so a variable set later never appears in the blob and
+    would make this test pass against a wide-open profile.
+    """
+    sentinel = f"sentinel-{uuid.uuid4().hex}"
+    victim = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        env=dict(os.environ, CLAUDE_LOCAL_TEST_SECRET=sentinel),
+    )
+    try:
+        # Ground truth: unconfined, this read returns the victim's environment, sentinel included.
+        # Without it an empty confined result proves nothing about the profile.
+        deadline = time.monotonic() + 10.0
+        while sentinel.encode() not in _read_process_arguments(victim.pid):
+            if time.monotonic() > deadline:
+                pytest.fail("the victim's environment never became readable even unconfined")
+            time.sleep(0.05)
+
+        box = tmp_path / "box"
+        box.mkdir()
+        outcome = box / "procargs.bin"
+        payload = (
+            "import ctypes, pathlib\n"
+            "libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)\n"
+            f"mib = (ctypes.c_int * 3)({_CTL_KERN}, {_KERN_PROCARGS2}, {victim.pid})\n"
+            "size = ctypes.c_size_t(0)\n"
+            "blob = b''\n"
+            "if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) == 0:\n"
+            "    buffer = ctypes.create_string_buffer(size.value)\n"
+            "    if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) == 0:\n"
+            "        blob = buffer.raw[:size.value]\n"
+            f"pathlib.Path({str(outcome)!r}).write_bytes(blob)\n"
+        )
+        _run(payload, box)
+
+        leaked = outcome.read_bytes()
+    finally:
+        victim.kill()
+        victim.wait()
+
+    assert sentinel.encode() not in leaked, (
+        "the confined child read another process's environment out of the kernel"
+    )
+    assert leaked == b"", f"the per-pid process query was answered at all: {len(leaked)} bytes"
 
 
 def test_two_spawns_agree_on_a_string_hash(tmp_path: Path) -> None:
