@@ -46,7 +46,10 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from claude_local.model_registry import ModelRegistry  # noqa: E402
-from claude_local.model_server import ModelServer  # noqa: E402
+from claude_local.model_server import (  # noqa: E402
+    DEFAULT_STARTUP_TIMEOUT_S,
+    ModelServer,
+)
 
 _BENCHMARK_MODULE = "benchmarks.run"
 _DEFAULT_SCORECARD_DIR = _REPO_ROOT / "benchmarks" / "scorecards"
@@ -125,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--startup-timeout",
         type=float,
-        default=600.0,
+        default=DEFAULT_STARTUP_TIMEOUT_S,
         help="Seconds to wait for the model to load; a cold first read streams 11+ GB off disk.",
     )
     parser.add_argument(

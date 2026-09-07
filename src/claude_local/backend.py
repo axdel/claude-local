@@ -26,6 +26,25 @@ if TYPE_CHECKING:
 
     from claude_local.types import Budget
 
+HTTP_CONNECT_TIMEOUT_S = 10.0
+"""Connect-phase cap for a client built here — reaching a local server is fast or it is down."""
+
+HTTP_READ_TIMEOUT_S = 600.0
+"""Time-to-first-byte cap, and the DerailGuard's backstop for the one gap it cannot see.
+
+Twelve times the 50.1s a cold 24 GB model took to answer at the benchmark's own token budget, of
+which 9.1s was prefill and the rest a lazy weight load (``scripts/measure-first-byte.py``). The
+margin is not padding: that figure is a floor, measured with the page cache evicted but nothing
+else contending, and the same load exceeded 180s outright under the memory pressure of a sweep
+that had already cycled three models through the host.
+
+Both constants live here, in the module that owns the HTTP transport, because every caller that
+builds a client is describing the same server's behaviour — so there is one number to re-measure
+when that behaviour changes. They were declared twice, identically, with the measurement above
+recorded in only one copy; the other read as an arbitrary 600.0, which is how two writers to one
+fact start to drift.
+"""
+
 
 class Backend(Protocol):
     """A source of raw SSE byte chunks for one generation.

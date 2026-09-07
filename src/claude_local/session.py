@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from claude_local.backend import HttpxBackend
+from claude_local.backend import HTTP_CONNECT_TIMEOUT_S, HTTP_READ_TIMEOUT_S, HttpxBackend
 from claude_local.client import GenerationResult, ModelClient
 from claude_local.model_registry import ModelRegistry
 from claude_local.model_server import DEFAULT_STARTUP_TIMEOUT_S, ModelServer
@@ -45,12 +45,6 @@ _CHAT_GENERATION_TIMEOUT_S = 600.0
 Generous on purpose, and safe for the same reason the benchmark's is: a slow model producing
 steadily is healthy, and silence — not elapsed time — is what the derail guard cuts on.
 """
-
-_HTTP_CONNECT_TIMEOUT_S = 10.0
-"""Connect-phase cap — reaching a server on loopback is fast or it is not there."""
-
-_HTTP_READ_TIMEOUT_S = 600.0
-"""Time-to-first-byte cap, covering the lazy weight load on a model's first generation."""
 
 
 class ChatSession:
@@ -164,9 +158,7 @@ class ModelSession:
         """
         with self.server.running(timeout_s=startup_timeout_s) as handle:
             served = handle.served_model_id()
-            timeout = httpx.Timeout(
-                _HTTP_READ_TIMEOUT_S, connect=_HTTP_CONNECT_TIMEOUT_S, read=_HTTP_READ_TIMEOUT_S
-            )
+            timeout = httpx.Timeout(HTTP_READ_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S)
             with httpx.Client(timeout=timeout) as http:
                 backend = HttpxBackend(handle.base_url, http, served, self.generation_params)
                 yield ChatSession(ModelClient(backend), self.budget, served)

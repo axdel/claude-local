@@ -38,7 +38,10 @@ from claude_local.backend import HttpxBackend  # noqa: E402
 from claude_local.client import ModelClient  # noqa: E402
 from claude_local.edits import extract_file  # noqa: E402
 from claude_local.model_registry import ModelRegistry  # noqa: E402
-from claude_local.model_server import ModelServer  # noqa: E402
+from claude_local.model_server import (  # noqa: E402
+    DEFAULT_STARTUP_TIMEOUT_S,
+    ModelServer,
+)
 from claude_local.prompt import PromptBuilder  # noqa: E402
 from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S  # noqa: E402
 from claude_local.sse import Delta, decode_sse  # noqa: E402
@@ -77,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--max-tokens", type=int, default=4096)
     parser.add_argument("--generation-timeout", type=float, default=300.0)
-    parser.add_argument("--startup-timeout", type=float, default=600.0)
+    parser.add_argument("--startup-timeout", type=float, default=DEFAULT_STARTUP_TIMEOUT_S)
     args = parser.parse_args(argv)
 
     # This probe only decodes — it never runs the oracle — so the oracle deadline stays at the

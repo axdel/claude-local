@@ -45,6 +45,9 @@ measuring it is what this script is for.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
+import signal
 import subprocess  # nosec B404 (argv is built from catalog data, never shell-interpreted)
 import sys
 import time
@@ -58,9 +61,14 @@ from claude_local.model_registry import ModelRegistry  # noqa: E402
 _PER_MODEL_SCRIPT = Path(__file__).resolve().parent / "benchmark_model.py"
 _SCORECARD_DIR = _REPO_ROOT / "benchmarks" / "scorecards"
 
-# The largest catalogued row is 44.9 GB, and a cold first read streams all of it off disk before
-# the server answers. The per-model script's own 600 s default is tuned for a small model.
-_STARTUP_TIMEOUT_S = 900.0
+_PER_MODEL_CEILING_S = 4 * 60 * 60.0
+"""Wall-clock ceiling for one model's whole chain — the sweep's failure boundary against a hang.
+
+Without it the docstring's promise above is only half true: a model that *fails* costs its own
+row, but a model that *hangs* costs the sweep. The bounded worst case is already hours (seven
+cases, five attempts, a generous decode budget each), so this is set well beyond a legitimate run
+and exists purely so an unattended overnight sweep reaches model two.
+"""
 
 
 def _scorecards() -> set[Path]:
@@ -68,30 +76,52 @@ def _scorecards() -> set[Path]:
     return set(_SCORECARD_DIR.glob("*.json"))
 
 
-def _bench_one(name: str, rules_card: Path | None) -> tuple[bool, float]:
-    """Run the per-model chain for ``name``. Returns (a scorecard appeared, wall-clock seconds).
+def _bench_one(name: str, rules_card: Path | None) -> tuple[bool, str, float]:
+    """Run the per-model chain for ``name``. Returns (scored, how it ended, wall-clock seconds).
 
     The verdict is "a new scorecard exists", never the exit code. Exit 1 is ambiguous by design:
     `benchmark_model.py` returns the benchmark's own 1 when a CASE failed — a real measurement —
     and also exits 1 when it raises before serving anything, which is no measurement at all.
     Reading the exit code alone reports an unknown model as "scored". The artifact cannot lie.
 
+    The exit code is still read, because it is the only thing that can NAME a failure the missing
+    artifact merely proves. It decides nothing and describes everything: without it, every one of
+    nine overnight rows reads "no scorecard", and absent weights, an unreachable server and a
+    broken oracle are indistinguishable in the morning.
+
+    The startup budget is not passed: the per-model script defaults to the same
+    ``DEFAULT_STARTUP_TIMEOUT_S`` the server module owns, so re-stating it here would be a second
+    writer to one number.
+
     Output is INHERITED, not captured: the benchmark reports each case and attempt as it happens,
     and a captured pipe would withhold every one of those lines until the model was already done.
     """
     before = _scorecards()
     started = time.monotonic()
-    command = [
-        sys.executable,
-        str(_PER_MODEL_SCRIPT),
-        name,
-        "--startup-timeout",
-        str(_STARTUP_TIMEOUT_S),
-    ]
+    command = [sys.executable, str(_PER_MODEL_SCRIPT), name]
     if rules_card is not None:
         command.extend(("--rules-card", str(rules_card)))
-    subprocess.run(command, cwd=_REPO_ROOT, check=False)  # noqa: S603
-    return bool(_scorecards() - before), time.monotonic() - started
+    ending = _run_bounded(command)
+    return bool(_scorecards() - before), ending, time.monotonic() - started
+
+
+def _run_bounded(command: list[str]) -> str:
+    """Run one per-model chain under the sweep's ceiling and say how it ended.
+
+    Spawned into its own session so the ceiling can reap the whole tree. ``subprocess.run``'s own
+    timeout kills only the direct child, and the child that matters here is a GRANDCHILD: the
+    per-model script's model server, holding tens of gigabytes of unified memory and the port the
+    next model in the sweep is about to need. Killing the process group is what makes the ceiling
+    a real boundary instead of a way to leak a server per hung model.
+    """
+    process = subprocess.Popen(command, cwd=_REPO_ROOT, start_new_session=True)  # noqa: S603
+    try:
+        return f"exit {process.wait(timeout=_PER_MODEL_CEILING_S)}"
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        process.wait()
+        return f"timed out after {_PER_MODEL_CEILING_S / 3600:.0f}h"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -115,17 +145,17 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[sweep] {len(names)} model(s): {', '.join(names)}", file=sys.stderr, flush=True)
 
-    results: list[tuple[str, bool, float]] = []
+    results: list[tuple[str, bool, str, float]] = []
     for index, name in enumerate(names, start=1):
         print(f"\n[sweep] === {index}/{len(names)}  {name} ===", file=sys.stderr, flush=True)
-        scored, seconds = _bench_one(name, args.rules_card)
-        results.append((name, scored, seconds))
+        scored, ending, seconds = _bench_one(name, args.rules_card)
+        results.append((name, scored, ending, seconds))
 
     print("\n[sweep] === complete ===", file=sys.stderr)
-    for name, scored, seconds in results:
-        verdict = "scored" if scored else "FAILED — no scorecard"
-        print(f"[sweep]   {name:26} {verdict:22} {seconds / 60:5.1f} min", file=sys.stderr)
-    return 0 if all(scored for _, scored, _ in results) else 1
+    for name, scored, ending, seconds in results:
+        verdict = "scored" if scored else f"FAILED — {ending}"
+        print(f"[sweep]   {name:26} {verdict:26} {seconds / 60:5.1f} min", file=sys.stderr)
+    return 0 if all(scored for _, scored, _, _ in results) else 1
 
 
 if __name__ == "__main__":

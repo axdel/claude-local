@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, assert_never
 
 import httpx
 
-from claude_local.backend import HttpxBackend
+from claude_local.backend import HTTP_CONNECT_TIMEOUT_S, HTTP_READ_TIMEOUT_S, HttpxBackend
 from claude_local.client import ModelClient
 from claude_local.loop import AttemptProgress, Loop
 from claude_local.paths import require_nested_relative_file
@@ -50,19 +50,6 @@ if TYPE_CHECKING:
 
 _BUNDLED_RULES_CARD = Path(__file__).parent / "rules_card.md"
 """Default engineering-rules card — a static system prefix shipped beside the package."""
-
-_HTTP_CONNECT_TIMEOUT_S = 10.0
-"""Connect-phase cap for an owned client — reaching a local server is fast or it is down."""
-
-_HTTP_READ_TIMEOUT_S = 600.0
-"""Time-to-first-byte cap, and the DerailGuard's backstop for the one gap it cannot see.
-
-Twelve times the 50.1s a cold 24 GB model took to answer at the benchmark's own token budget, of
-which 9.1s was prefill and the rest a lazy weight load (``scripts/measure-first-byte.py``). The
-margin is not padding: that figure is a floor, measured with the page cache evicted but nothing
-else contending, and the same load exceeded 180s outright under the memory pressure of a sweep
-that had already cycled three models through the host.
-"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,7 +245,7 @@ def _new_http_client() -> httpx.Client:
     a PRODUCING generation may run, and pinning a silence bound to it made the transport wait
     longer the more generous the task was — the opposite of what a hang detector should do.
     """
-    timeout = httpx.Timeout(_HTTP_READ_TIMEOUT_S, connect=_HTTP_CONNECT_TIMEOUT_S)
+    timeout = httpx.Timeout(HTTP_READ_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S)
     return httpx.Client(timeout=timeout)
 
 

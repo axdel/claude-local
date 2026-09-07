@@ -31,7 +31,10 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from claude_local.backend import HttpxBackend  # noqa: E402
 from claude_local.model_registry import ModelRegistry  # noqa: E402
-from claude_local.model_server import ModelServer  # noqa: E402
+from claude_local.model_server import (  # noqa: E402
+    DEFAULT_STARTUP_TIMEOUT_S,
+    ModelServer,
+)
 from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S  # noqa: E402
 from claude_local.types import Budget  # noqa: E402
 
@@ -50,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--user", required=True, help="The changing tail — the prompt to send.")
     parser.add_argument("--max-tokens", type=int, default=200)
     parser.add_argument("--timeout", type=float, default=300.0, help="Per-generation wall clock.")
-    parser.add_argument("--startup-timeout", type=float, default=600.0)
+    parser.add_argument("--startup-timeout", type=float, default=DEFAULT_STARTUP_TIMEOUT_S)
     args = parser.parse_args(argv)
 
     resolved = ModelRegistry.default().resolve(args.model)

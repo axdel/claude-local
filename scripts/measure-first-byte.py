@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --quiet python
 """Report how long a freshly served model takes to send its first byte.
 
-This is the measurement behind `_HTTP_READ_TIMEOUT_S` (`claude_local.entrypoint`). That bound is
+This is the measurement behind `HTTP_READ_TIMEOUT_S` (`claude_local.backend`). That bound is
 a time-to-first-byte cap, so the number it must clear is the slowest first byte in the catalog —
 and the previous value was chosen by reasoning about prefill instead of measuring arrival, which
 is how it came to be wrong.
@@ -45,7 +45,10 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from claude_local.backend import HttpxBackend  # noqa: E402
 from claude_local.model_registry import ModelRegistry  # noqa: E402
-from claude_local.model_server import ModelServer  # noqa: E402
+from claude_local.model_server import (  # noqa: E402
+    DEFAULT_STARTUP_TIMEOUT_S,
+    ModelServer,
+)
 from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S  # noqa: E402
 from claude_local.types import Budget  # noqa: E402
 
@@ -111,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Report a freshly served model's time to first byte.",
     )
     parser.add_argument("model", help="A name from the model registry (e.g. Gemma4-31B).")
-    parser.add_argument("--startup-timeout", type=float, default=900.0)
+    parser.add_argument("--startup-timeout", type=float, default=DEFAULT_STARTUP_TIMEOUT_S)
     parser.add_argument("--max-tokens", type=int, default=_REPLY_TOKENS)
     arguments = parser.parse_args(argv)
 

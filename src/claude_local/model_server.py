@@ -18,6 +18,7 @@ which publishes the model to every interface, so the bind address is always pass
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import signal
 import socket
@@ -28,6 +29,7 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import BinaryIO
 
 import httpx
@@ -56,20 +58,37 @@ _READINESS_PATH = "/v1/models"
 
 _DEFAULT_MAX_TOKENS = 32768
 
-DEFAULT_STARTUP_TIMEOUT_S = 480.0
-"""Eight minutes: a 27-31B model at 6-bit streams off disk on a cold first load."""
+DEFAULT_STARTUP_TIMEOUT_S = 900.0
+"""Fifteen minutes: a 27-31B model at 6-bit streams off disk on a cold first load.
+
+The value is the largest any caller needed, not a guess. It was eight minutes while every script
+that actually serves the biggest catalogued models overrode it upward — which is the constant
+being wrong rather than the callers being cautious, since an override that every caller makes is
+the default in the wrong place. Callers now pass this through instead of re-typing a number.
+"""
 
 _READINESS_POLL_S = 0.25
+"""How often to ask. A refused connection returns immediately, so polling costs almost nothing."""
+
+_READINESS_PROBE_TIMEOUT_S = 5.0
+"""How long one answer may take — deliberately NOT the poll interval.
+
+Sharing one constant ties "how long may an answer take" to "how often do we ask", so a server
+that is loaded but busy — answering correctly in more than a poll interval — aborts every probe
+client-side and is reported as never having answered, at any budget.
+"""
 
 _CATALOGUE_TIMEOUT_S = 30.0
 """One-shot budget for reading the served model id — generous, since it is asked once per run."""
-"""Probe interval. A refused connection returns immediately, so polling costs almost nothing."""
 
 _TERMINATE_GRACE_S = 10.0
 """How long a server gets to exit on SIGTERM before the group is SIGKILLed."""
 
 _LOG_TAIL_BYTES = 8 * 1024
 """Diagnostic bytes kept from a failed startup; the cause is conventionally at the tail."""
+
+_ANSWER_EXCERPT_CHARS = 200
+"""How much of an unrecognised catalogue answer to quote — the head, where a proxy names itself."""
 
 
 class PortUnavailable(Exception):
@@ -105,13 +124,32 @@ class ServerHandle:
 
         Raises:
             httpx.HTTPError: The server did not answer.
-            LookupError: The server answered, but advertises no model to address.
+            LookupError: The server answered, but advertises no model this can address — either
+                an empty catalogue or a body that is not a catalogue at all.
         """
         catalogue_url = f"{self.base_url}{_READINESS_PATH}"
-        advertised = httpx.get(catalogue_url, timeout=_CATALOGUE_TIMEOUT_S).json()["data"]
+        answer = httpx.get(catalogue_url, timeout=_CATALOGUE_TIMEOUT_S).text
+        advertised = _advertised_models(catalogue_url, answer)
         if not advertised:
             raise LookupError(f"the model server at {catalogue_url} advertises no model")
         return str(advertised[0]["id"])
+
+
+def _advertised_models(catalogue_url: str, answer: str) -> list[dict[str, object]]:
+    """Read the catalogue entries out of a server's answer, or say what arrived instead.
+
+    Anything can be listening on a port — a proxy, a dev server, the wrong process — and answer
+    200 with a body that is not a catalogue. Indexing straight into it raises a bare ``KeyError:
+    'data'`` naming neither the address probed nor what came back, so the operator learns that a
+    dict lacked a key rather than that something other than a model server holds their port.
+    """
+    try:
+        return list(json.loads(answer)["data"])
+    except (json.JSONDecodeError, TypeError, KeyError) as exc:
+        raise LookupError(
+            f"the model server at {catalogue_url} did not answer with a model catalogue. "
+            f"It said: {answer[:_ANSWER_EXCERPT_CHARS]}"
+        ) from exc
 
 
 def _redeclared_builder_options(flags: tuple[str, ...]) -> tuple[str, ...]:
@@ -223,11 +261,21 @@ class ModelServer:
         return f"http://{self.host}:{self.port}"
 
     @contextmanager
-    def running(self, *, timeout_s: float = DEFAULT_STARTUP_TIMEOUT_S) -> Generator[ServerHandle]:
+    def running(
+        self,
+        *,
+        timeout_s: float = DEFAULT_STARTUP_TIMEOUT_S,
+        log_path: Path | None = None,
+    ) -> Generator[ServerHandle]:
         """Spawn the server, wait until it answers, and guarantee it is gone afterwards.
 
         Args:
             timeout_s: Budget for reaching readiness. Teardown is not charged against it.
+            log_path: Keep the server's output here instead of in an unlinked temp file. Off by
+                default because the only writable root under an orchestrator's dispatch cage is
+                its isolation worktree, and a server log is not one of that worktree's declared
+                artifacts — but a caller running a long sweep outside a cage names a path and
+                keeps what the default destroys.
 
         Yields:
             A handle carrying the base URL, port, and pid of the live server.
@@ -242,10 +290,7 @@ class ModelServer:
                 f"port {self.port} is already bound on {self.host} by a process this server "
                 f"does not own — stop it first rather than racing it"
             )
-        # Output goes to an unlinked temp file rather than a path under the repo: the only
-        # writable root under an orchestrator's dispatch cage is its isolation worktree, and a
-        # server log is not one of that worktree's declared artifacts.
-        with tempfile.TemporaryFile() as output:
+        with _server_output(log_path) as output:
             process = subprocess.Popen(  # noqa: S603 # nosec B603
                 self.command,
                 stdout=output,
@@ -255,6 +300,14 @@ class ModelServer:
             try:
                 self._await_readiness(process, output, timeout_s=timeout_s)
                 yield ServerHandle(base_url=self.base_url, port=self.port, pid=process.pid)
+            except BaseException as failure:
+                # A server that dies mid-run surfaces to the caller as a transport error raised by
+                # the backend, while the reason is only in the server's own output — which the
+                # default capture is about to destroy unread. A note carries it out without
+                # changing the exception type every caller already catches.
+                if process.poll() is not None:
+                    failure.add_note(_server_death_note(process.returncode, output))
+                raise
             finally:
                 _terminate_session(process)
 
@@ -276,7 +329,7 @@ class ModelServer:
                     f"last output:\n{_read_tail(output)}"
                 )
             with contextlib.suppress(httpx.HTTPError):
-                if httpx.get(probe_url, timeout=_READINESS_POLL_S).status_code == 200:
+                if httpx.get(probe_url, timeout=_READINESS_PROBE_TIMEOUT_S).status_code == 200:
                     return
             if time.monotonic() >= deadline:
                 raise ServerNotReady(
@@ -284,6 +337,31 @@ class ModelServer:
                     f"last output:\n{_read_tail(output)}"
                 )
             time.sleep(_READINESS_POLL_S)
+
+
+@contextmanager
+def _server_output(log_path: Path | None) -> Generator[BinaryIO]:
+    """Yield the sink the server's stdout and stderr are captured into.
+
+    Unlinked by default, which is what makes it safe under a dispatch cage — and also what makes
+    it unrecoverable, so a caller who wants the log after the run names a path and gets a file.
+    """
+    if log_path is None:
+        with tempfile.TemporaryFile() as unnamed:
+            yield unnamed
+        return
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w+b") as named:
+        yield named
+
+
+def _server_death_note(returncode: int | None, output: BinaryIO) -> str:
+    """State that the server was already dead, and quote what it said on the way out."""
+    tail = _read_tail(output).strip()
+    death = f"the model server had already exited (returncode {returncode})"
+    if not tail:
+        return f"{death}, having written nothing."
+    return f"{death}. Its output was:\n{tail}"
 
 
 def _is_port_bound(host: str, port: int) -> bool:

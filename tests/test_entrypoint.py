@@ -26,14 +26,9 @@ from factories import (
 )
 
 from claude_local import AttemptProgress
-from claude_local.backend import BackendUnavailable
+from claude_local.backend import HTTP_READ_TIMEOUT_S, BackendUnavailable
 from claude_local.derail import STALL_TIMEOUT_S
-from claude_local.entrypoint import (
-    _HTTP_READ_TIMEOUT_S,
-    Outcome,
-    _writable_subtree,
-    implement,
-)
+from claude_local.entrypoint import Outcome, _writable_subtree, implement
 from claude_local.sandbox import sandbox_available
 from claude_local.types import Budget, Status
 
@@ -411,7 +406,7 @@ def test_the_transport_read_bound_outlasts_the_guards_silence_bound() -> None:
     bytes the guard cannot run at all. The two therefore never actually tie, whatever the values,
     and strict inequality is the only ordering under which the guard decides every gap it can see.
     """
-    assert _HTTP_READ_TIMEOUT_S > STALL_TIMEOUT_S
+    assert HTTP_READ_TIMEOUT_S > STALL_TIMEOUT_S
 
 
 def test_implement_records_a_silent_server_as_a_derail_not_a_harness_fault() -> None:

@@ -38,7 +38,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
     from claude_local.backend import Backend
-    from claude_local.derail import DerailReason
     from claude_local.types import Budget
 
 

@@ -14,8 +14,11 @@ the suite stays fast while still exercising spawn, probe, and kill for real.
 
 from __future__ import annotations
 
+import os
+import signal
 import socket
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -33,12 +36,16 @@ from claude_local.model_server import (
 # subprocess so teardown assertions are about a real process and a real bound port. The body it
 # serves is an argument, so a test can choose what the catalogue endpoint advertises.
 _SUBSTITUTE_SERVER = """
-import http.server, sys
+import http.server, sys, time
+
+print("substitute server up", flush=True)
 
 body = sys.argv[2].encode()
+delay = float(sys.argv[3])
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        time.sleep(delay)
         code = 200 if self.path == "/v1/models" else 404
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -66,10 +73,13 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
-def _substitute(port: int, *, body: str = _ONE_MODEL_BODY) -> ModelServer:
-    """A ModelServer whose command is a real HTTP server rather than a 12 GB model."""
+def _substitute(port: int, *, body: str = _ONE_MODEL_BODY, delay_s: float = 0.0) -> ModelServer:
+    """A ModelServer whose command is a real HTTP server rather than a 12 GB model.
+
+    ``delay_s`` stands in for a loaded-but-busy server: it answers correctly, just not instantly.
+    """
     return ModelServer(
-        command=(sys.executable, "-c", _SUBSTITUTE_SERVER, str(port), body),
+        command=(sys.executable, "-c", _SUBSTITUTE_SERVER, str(port), body, str(delay_s)),
         host="127.0.0.1",
         port=port,
     )
@@ -371,6 +381,81 @@ def test_a_server_that_never_answers_is_timed_out_and_still_torn_down() -> None:
 
     # Oracle: a readiness failure is still an exit path, so the same teardown guarantee binds.
     assert not _is_listening(port)
+
+
+def test_a_server_that_answers_slowly_is_ready_not_timed_out() -> None:
+    """Oracle: readiness is whether the server answers, not whether it answers quickly.
+
+    The probe timeout and the poll interval are different quantities. Sharing one constant ties
+    "how long may an answer take" to "how often do we ask", so a loaded-but-busy server whose
+    answer exceeds the poll interval is unreachable at any budget — every probe aborts client-side
+    and the run reports "did not answer" about a server that answers correctly every time.
+    """
+    port = _free_port()
+
+    with _substitute(port, delay_s=0.6).running(timeout_s=4.0) as handle:
+        assert handle.port == port
+
+
+def test_a_catalogue_answer_of_the_wrong_shape_names_the_server_and_what_it_said() -> None:
+    """Oracle: a proxy or a wrong process on the port answers 200 with something else entirely.
+
+    Indexing straight into the decoded body turns that into a bare KeyError naming neither the
+    address probed nor the body received — the operator learns a dict lacked a key, not that
+    something other than a model server is on their port.
+    """
+    port = _free_port()
+
+    with (
+        _substitute(port, body='{"object": "list"}').running(timeout_s=30.0) as handle,
+        pytest.raises(LookupError) as answer,
+    ):
+        handle.served_model_id()
+
+    assert str(port) in str(answer.value)
+    assert '{"object": "list"}' in str(answer.value)
+
+
+def test_a_named_log_survives_the_teardown_that_destroys_the_default_capture(
+    tmp_path: Path,
+) -> None:
+    """Oracle: the default capture is an UNLINKED temp file, so nothing can recover it afterwards.
+
+    A sweep that serves nine models for hours needs the server's own words when one of them dies on
+    case six — and by then the run is over and the temp file is gone. Naming a path is the caller's
+    way to say "keep this"; the default stays unlinked, since a dispatched child may write only
+    inside its isolation worktree and a server log is not one of that worktree's artifacts.
+    """
+    log_path = tmp_path / "server.log"
+    port = _free_port()
+
+    with _substitute(port).running(timeout_s=30.0, log_path=log_path) as handle:
+        assert _process_alive(handle.pid)
+
+    assert "substitute server up" in log_path.read_text(encoding="utf-8")
+
+
+def test_a_server_that_dies_mid_run_attaches_its_output_to_the_failure_that_follows() -> None:
+    """Oracle: the death and the symptom are different exceptions, raised in different modules.
+
+    A server killed by the OS mid-sweep surfaces to the caller as a transport error from the
+    backend — a reset connection — while the reason (out of memory, weights unmapped) is only in
+    the server's own output. Attaching it as a note rather than raising keeps the caller's
+    exception type and message intact; masking a BackendUnavailable with a ServerExited would
+    change what every caller catches to deliver the same information.
+    """
+    port = _free_port()
+
+    with pytest.raises(RuntimeError) as failure, _substitute(port).running(timeout_s=30.0) as h:
+        os.kill(h.pid, signal.SIGKILL)
+        for _ in range(100):  # ~5s ceiling; the OS reaps a killed substitute in milliseconds
+            if not _process_alive(h.pid):
+                break
+            time.sleep(0.05)
+        raise RuntimeError("the backend gave up on a reset connection")
+
+    assert "the backend gave up" in str(failure.value)  # the caller's own failure is untouched
+    assert any("substitute server up" in note for note in failure.value.__notes__)
 
 
 def _process_alive(pid: int) -> bool:
