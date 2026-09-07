@@ -160,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[bench] command  : {' '.join(server.command)}", file=sys.stderr)
     # Echoed because the failure this configuration prevents is a SILENT one: a model left in the
     # wrong mode still answers, still scores, and reports nothing unusual. Seeing the row's
-    # parameters in the run's own header is what makes a misconfigured sweep visible while it runs.
+    # parameters in the run's own header is what makes a misconfigured benchmark-run visible
+    # while it runs.
     print(f"[bench] params   : {json.dumps(dict(resolved.generation_params))}", file=sys.stderr)
 
     started = time.monotonic()

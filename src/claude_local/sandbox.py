@@ -170,8 +170,8 @@ def sandboxed_spawn(
             ) from timeout_error
         # A signal death returns from communicate() NORMALLY, with no TimeoutExpired to catch, so
         # the negative returncode is the only evidence it happened. Left unread, the caller sees a
-        # completed run that wrote no report and calls the oracle broken — aborting a whole sweep
-        # over one impl that merely failed to terminate.
+        # completed run that wrote no report and calls the oracle broken — aborting a whole
+        # benchmark-run over one impl that merely failed to terminate.
         if proc.returncode is not None and proc.returncode < 0:
             raise SandboxKilled(_signal_death(-proc.returncode), stdout=stdout, stderr=stderr)
         return stdout, stderr

@@ -18,7 +18,7 @@ With no argument it reports the most recently written code directory:
     scripts/score_style.py
 
 It reads only artifacts, so it needs no model, no server and no GPU, and it reruns against any
-earlier run's saved code — including runs made before this script existed. That is why it is a
+earlier run's produced code — including runs made before this script existed. That is why it is a
 separate pass rather than part of the scorer: the produced code is already on disk, so the number
 stays re-derivable from the artifact instead of only from a live run.
 

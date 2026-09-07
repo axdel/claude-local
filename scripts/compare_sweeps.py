@@ -7,10 +7,10 @@ it: the same model under two cards is two different systems, and so is the same 
 without a planning generation. Which card wins is not the same answer for every model, and whether
 planning pays for itself is not the same answer for every configuration.
 
-The mode axis was added after a plan-first sweep silently overwrote the baseline sweep it followed
-— same model, same card, 9858 completion tokens taking the place of 4436 — and this script named
-the survivor the one worth using. A configuration axis left out of the key does not read as
-missing; it reads as a re-run.
+The mode axis was added after a plan-first benchmark-run silently overwrote the baseline run
+it followed — same model, same card, 9858 completion tokens taking the place of 4436 — and
+this script named the survivor the one worth using. A configuration axis left out of the key
+does not read as missing; it reads as a re-run.
 
     scripts/compare_sweeps.py
 
@@ -181,7 +181,7 @@ def _latest_per_configuration(scorecards: list[LoadedScorecard]) -> list[LoadedS
 
     All three name the configuration a token total belongs to, so all three are the key. Leaving
     any one out silently discards an arm of the A/B that varied it and reports the survivor as
-    that model's scorecard — what a plan-first sweep did to the baseline sweep it followed.
+    that model's scorecard — what a plan-first benchmark-run did to the baseline run it followed.
     """
     latest: dict[tuple[str, str, bool], LoadedScorecard] = {}
     for scorecard in scorecards:

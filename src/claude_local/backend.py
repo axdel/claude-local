@@ -186,9 +186,9 @@ class HttpxBackend:
         The split therefore turns on *whether the response started*, not on which transport error
         carried the failure. A server killed mid-decode raises the same ``RequestError`` family as
         one that was never listening, but it had already answered — so treating the two alike
-        throws away every task a sweep has finished because one connection reset. When the server
-        really is gone, the next task discovers it at connect time and aborts there, costing one
-        wasted task instead of the run.
+        throws away every task a benchmark-run has finished because one connection reset. When
+        the server really is gone, the next task discovers it at connect time and aborts there,
+        costing one wasted task instead of the run.
         """
         body: dict[str, object] = {
             **self._generation_params,

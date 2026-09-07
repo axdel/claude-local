@@ -17,9 +17,10 @@ repoints it.
 ``plan_first`` is the second such variable, and it is here for the same reason rather than a
 different one: a run that spends a generation planning burns tokens a run without one never spends,
 so the two are not comparable either. Measured on one model under one card, the lever moved a
-sweep from 4436 completion tokens to 9858 — which, left unrecorded, is one configuration's number
-standing in for another's with nothing downstream able to tell (D-TELEMETRY-003). It is carried
-from the caller like the model and the card above, never inferred from whether the timeline happens
+benchmark-run from 4436 completion tokens to 9858 — which, left unrecorded, is one
+configuration's number standing in for another's with nothing downstream able to tell
+(D-TELEMETRY-003). It is carried from the caller like the model and the card above, never
+inferred from whether the timeline happens
 to contain a planning generation: that would make the record's account of how a run was CONFIGURED
 depend on how the plan call happened to go.
 

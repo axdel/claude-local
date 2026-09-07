@@ -3,14 +3,17 @@
 An oracle test answers one question: does the model's file work. It cannot answer whether the file
 that passed is worth keeping, so a run where every case is green and every function is
 undocumented scores identically to one where neither is true. This pass supplies the missing
-number by linting the saved code tree, and it is deliberately kept OUT of the scorer: the code is
-already on disk, so style is a post-hoc pass over artifacts that leaves the scorecard a pure
-correctness record and reruns against any earlier run.
+number by linting the produced-code tree, and it is deliberately kept OUT of the scorer: the
+scorer reduces CaseResults already in memory, while counting style means reading files on disk.
+The scorecard still carries the number — the harness writes it into style_findings while the
+tree is still there — but keeping the measurement here is what lets it rerun afterwards against
+any earlier run whose tree was retained.
 
 The linter is invoked isolated from this repository's own configuration, in both directions and
-for two different reasons. The repository excludes the produced tree because a weak model's style
-is not this repository's findings; this pass ignores the repository's rule selection because that
-selection was chosen for source we write, not for a measurement of code we did not.
+for two different reasons. The repository excludes the produced-code tree because a weak
+model's style is not this repository's findings; this pass ignores the repository's rule
+selection because that selection was chosen for source we write, not for a measurement of code
+we did not.
 
 What it measures is bounded and stated: missing docstrings, missing annotations, the unused
 imports, variables and arguments a linter can see, and errors caught blindly or re-raised without

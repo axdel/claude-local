@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 
 class BenchmarkInterrupted(RuntimeError):
-    """A harness fault stopped a sweep partway; carries the cases that finished before it.
+    """A harness fault stopped a benchmark-run partway; carries the cases that finished before it.
 
     A harness fault is the host failing, not a case failing, so it must stay loud — it is raised,
     never folded into a case status. But every case already finished is a measurement that cost
