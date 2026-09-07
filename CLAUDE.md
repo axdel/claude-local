@@ -67,8 +67,10 @@ Serving and the front doors sit above that engine, and the loop depends on none 
 - **cli** — the machine front door claude-protocol dispatches to, taking one JSON envelope on
   stdin. Its contract version is the cross-repo handshake.
 
-claude-local's own entry point is `implement()` — it owns the whole loop behind that one typed
-seam (see README). One thing stays **external to claude-local**: the **orchestrator half** of the
+The **loop** has one entry point, `implement()` — it owns the whole red→green cycle behind that
+single typed seam (see README). The CLI and the session above are front doors too; neither runs
+the loop, which is why one seam still holds (D-ENTRYPOINT-004). One thing stays **external to
+claude-local**: the **orchestrator half** of the
 economy record — the frontier-token accounting and the net-savings verdict that decide whether
 offloading a task actually paid off. claude-local writes only the **local half** (what it produced
 and burned); the driving orchestrator (Claude Code) owns the comparison.
