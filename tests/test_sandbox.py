@@ -62,7 +62,13 @@ def test_write_outside_the_box_is_denied(tmp_path: Path) -> None:
 
 
 def test_read_outside_the_worktree_and_box_is_denied(tmp_path: Path) -> None:
-    """Captured diagnostics cannot relay arbitrary host-file contents to the model request."""
+    """Captured diagnostics cannot relay host files from OUTSIDE the worktree to the model.
+
+    Outside is the whole of what this proves. Files INSIDE the worktree are readable by design and
+    their contents do reach the next prompt — pinned by the test below, and disclosed in
+    D-SANDBOX-010. Reading this test as "diagnostics cannot relay file contents" is the over-claim
+    that decision exists to correct.
+    """
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     box = tmp_path / "box"
@@ -83,6 +89,48 @@ def test_read_outside_the_worktree_and_box_is_denied(tmp_path: Path) -> None:
 
     assert stdout.startswith(b"blocked:")
     assert b"credential-sentinel" not in stdout
+
+
+def test_a_worktree_file_is_readable_and_its_content_returns_to_the_parent(
+    tmp_path: Path,
+) -> None:
+    """Executed model code CAN read the worktree and hand what it read back through diagnostics.
+
+    A characterization of an accepted limitation, not a wish: the grant is deliberate (the impl
+    must import its neighbours, so the worktree has to be readable), and the captured tail is
+    deliberate (it is how the loop tells the model what failed). Together they form a read-and-
+    return channel that ``(deny network*)`` does not close, because nothing leaves the host — the
+    parent carries it out, into the next prompt and thence into the file it admits.
+
+    Oracle: the SBPL profile renders ``(allow file-read* (subpath "<cwd>"))`` for the worktree
+    root, so a read under it is permitted by the profile's own text — derived from the grant, not
+    from running the sandbox. Pinned as a test so the disclosure in D-SANDBOX-010 and README cannot
+    drift from the behavior: narrow the read root later and this goes red, which is the prompt to
+    correct all three at once rather than leave a stale reassurance behind.
+    """
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    box = tmp_path / "box"
+    box.mkdir()
+    # A credential fixture of the kind a real checkout carries — under dispatch the worktree is a
+    # working copy of the TARGET repository, not of claude-local.
+    (worktree / ".env").write_text("API_KEY=worktree-sentinel", encoding="utf-8")
+    payload = (
+        "import pathlib\n"
+        "try:\n"
+        f"    print(pathlib.Path({str(worktree / '.env')!r}).read_text())\n"
+        "except OSError as exc:\n"
+        "    print('blocked:' + type(exc).__name__)\n"
+    )
+
+    stdout, _ = sandboxed_spawn(
+        [sys.executable, "-c", payload], cwd=worktree, write_box=box, timeout_s=30.0
+    )
+
+    assert b"worktree-sentinel" in stdout, (
+        "the worktree read grant no longer reaches the worktree — if that is intended, "
+        "D-SANDBOX-010 and the README disclosure it backs are now stale"
+    )
 
 
 def test_network_egress_is_denied(tmp_path: Path) -> None:

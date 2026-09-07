@@ -159,6 +159,15 @@ Three deliberate choices make weak models usable:
   cannot reach, which is a different design; this one takes the trade knowingly and says so, on
   stderr at every green and in `D-ORACLE-004` / `D-ORACLE-006`. Treat a local green as *supervised
   evidence a test passed*, never as a substitute for reading the diff.
+- **The same scope bounds what the sandbox protects.** Kernel confinement denies the network, the
+  ambient host filesystem, and unscoped Mach IPC — but the worktree itself is readable, because the
+  implementation has to import its neighbours, and the run's diagnostics tail is fed back into the
+  next prompt, because that is how the loop tells the model what failed. Together those two
+  necessary halves are a read-and-return path: `(deny network*)` stops the child sending anything
+  out, but the *parent* carries what it read into the next prompt and thence into the file it
+  admits. Under dispatch that worktree is a working copy of your repository. Point claude-local at
+  a checkout you would be willing to show the model — not one holding live credentials. Pinned by
+  tests either side of the boundary and stated in `D-SANDBOX-010`.
 
 ## Does It Actually Pay? (The Measurement)
 
