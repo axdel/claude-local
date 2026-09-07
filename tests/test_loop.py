@@ -617,6 +617,38 @@ def test_the_plan_step_is_paid_for_in_the_record_without_inflating_attempts(
     assert result.record.total_completion_tokens > 0
 
 
+def test_the_record_says_which_configuration_produced_its_token_total(tmp_path: Path) -> None:
+    """The sibling of the test above: the record states the cost AND what was bought with it.
+
+    Oracle: the record already names its model and its rules card because a total measured under
+    one is not comparable to a total measured under another, and the planning lever is a third
+    such variable — measured on one model under one card, it moved a sweep from 4436 completion
+    tokens to 9858. A record carrying the larger number with no way to say a plan was bought
+    reads exactly like the smaller configuration performing badly.
+
+    Both runs are driven because only the pair falsifies a constant: a wiring hardcoded to either
+    value satisfies one half and fails the other.
+    """
+    _, planned = _plan_first_run(tmp_path)
+
+    worktree = tmp_path / "unplanned"
+    (worktree / "src").mkdir(parents=True)
+    loop, _ = _make_loop(
+        worktree,
+        RecordingReplayBackend([_edit_script(_V1)]),
+        ScriptedSpawn(_junit("all_pass.xml")),
+    )
+    unplanned = loop.run(
+        build_task_spec(
+            impl_path="src/widget.py", expected_tests=3, budget=build_budget(max_attempts=1)
+        ),
+        worktree,
+    )
+
+    assert planned.record.plan_first is True
+    assert unplanned.record.plan_first is False
+
+
 def test_plan_first_is_off_by_default_and_spends_no_extra_call(tmp_path: Path) -> None:
     """The lever is opt-in: an unchanged spec produces the unchanged prompt and call count.
 

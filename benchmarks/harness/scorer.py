@@ -63,6 +63,7 @@ class Scorecard:
 
     model: str
     rules_card_digest: str
+    plan_first: bool
     cases: tuple[CaseScore, ...]
     total_completion_tokens: int
     total_model_seconds: float
@@ -103,6 +104,7 @@ class Scorecard:
         return {
             "model": self.model,
             "rules_card_digest": self.rules_card_digest,
+            "plan_first": self.plan_first,
             "cases_passed": self.cases_passed,
             "cases_total": self.cases_total,
             "total_completion_tokens": self.total_completion_tokens,
@@ -131,17 +133,27 @@ class Scorecard:
         return case_dict
 
 
-def _held_constant(observed: set[str], subject: str) -> str:
+def _held_constant[ConfigurationValue](
+    observed: set[ConfigurationValue], subject: str
+) -> ConfigurationValue:
     """The single value in ``observed``, or a ``ValueError`` naming what varied instead.
 
     A scorecard is a comparison, and a comparison is sound only where everything but the axis
-    under test was held fixed. Two such conditions exist — one model, one rules card — and both
-    fail the same way: a mixed run silently produces a card labelled with whichever value the
-    reducer happened to pick. Naming the offending set is what turns that into a caller error.
+    under test was held fixed. Three such conditions exist — one model, one rules card, one
+    planning lever — and all fail the same way: a mixed run silently produces a card labelled
+    with whichever value the reducer happened to pick. Naming the offending set is what turns
+    that into a caller error.
+
+    Generic over the value because the conditions are not all strings — the lever is a bool — and
+    the check is about a set's CARDINALITY, which no value type changes. The offending values are
+    rendered as text before sorting, so the helper asks nothing of the type at all: ordering is a
+    property the MESSAGE needs, not the check, and requiring it of the value would narrow a
+    genuinely general helper to buy stable output it can have either way.
     """
     if len(observed) > 1:
         raise ValueError(
-            f"a scorecard describes one {subject}, but the benchmark ran {sorted(observed)}"
+            f"a scorecard describes one {subject}, but the benchmark ran "
+            f"{sorted(str(value) for value in observed)}"
         )
     (value,) = observed
     return value
@@ -153,7 +165,9 @@ def score_cases(results: Sequence[CaseResult]) -> Scorecard:
     Every total is derived from the results' local economy records — the benchmark is never re-run
     and no token re-counted. The model name is read from the records and must be identical across
     the benchmark (one scorecard describes one model); a mixed-model result list is a caller error,
-    not a silently mislabelled card.
+    not a silently mislabelled card. The rules card and the planning lever are read the same way
+    and held to the same rule: all three name the configuration a token total belongs to, so a
+    result list that disagrees on any of them describes no single configuration at all.
 
     Args:
         results: One ``CaseResult`` per case, in benchmark order, as ``run_cases`` returns them.
@@ -172,6 +186,7 @@ def score_cases(results: Sequence[CaseResult]) -> Scorecard:
     rules_card_digest = _held_constant(
         {record.rules_card_digest for record in records}, "rules card"
     )
+    plan_first = _held_constant({record.plan_first for record in records}, "planning lever")
     total_completion_tokens = sum(record.total_completion_tokens for record in records)
     total_model_seconds = sum((record.total_model_seconds for record in records), 0.0)
     mean = total_completion_tokens / total_model_seconds if total_model_seconds > 0 else None
@@ -188,6 +203,7 @@ def score_cases(results: Sequence[CaseResult]) -> Scorecard:
     return Scorecard(
         model=model,
         rules_card_digest=rules_card_digest,
+        plan_first=plan_first,
         cases=cases,
         total_completion_tokens=total_completion_tokens,
         total_model_seconds=total_model_seconds,

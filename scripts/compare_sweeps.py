@@ -1,10 +1,16 @@
 #!/usr/bin/env -S uv run --quiet python
-"""Compare every benchmarked (model, rules card) pair and name the one worth using.
+"""Compare every benchmarked (model, rules card, mode) configuration and name the one worth using.
 
 A scorecard measures one run. The decision this project exists to make — which local model to
-actually hand work to — is a comparison ACROSS runs, and since the rules card became a benchmark
-variable that comparison has two axes rather than one: the same model under two cards is two
-different systems, and which card wins is not the same answer for every model.
+actually hand work to — is a comparison ACROSS runs, and every benchmark variable adds an axis to
+it: the same model under two cards is two different systems, and so is the same model with and
+without a planning generation. Which card wins is not the same answer for every model, and whether
+planning pays for itself is not the same answer for every configuration.
+
+The mode axis was added after a plan-first sweep silently overwrote the baseline sweep it followed
+— same model, same card, 9858 completion tokens taking the place of 4436 — and this script named
+the survivor the one worth using. A configuration axis left out of the key does not read as
+missing; it reads as a re-run.
 
     scripts/compare_sweeps.py
 
@@ -50,6 +56,7 @@ class SweepResult:
 
     model: str
     rules_card_digest: str
+    plan_first: bool
     stamp_ms: int
     cases_passed: int
     cases_total: int
@@ -100,6 +107,11 @@ def _load_scorecards(scorecards: Path = _SCORECARDS) -> list[SweepResult]:
                 # card that was bundled at the time, and excluding them would discard every
                 # measurement taken before the axis existed.
                 rules_card_digest=loaded.get("rules_card_digest", _UNSTAMPED),
+                # Absent means baseline, and that is a reading rather than an assumption: the
+                # lever is opt-in on both benchmark runners over a False default, and the sweep
+                # driver that produced every scorecard predating this field
+                # (scripts/benchmark_all_models.py) has no way to pass it.
+                plan_first=bool(loaded.get("plan_first", False)),
                 stamp_ms=stamp_ms,
                 cases_passed=loaded["cases_passed"],
                 cases_total=loaded["cases_total"],
@@ -114,16 +126,23 @@ def _load_scorecards(scorecards: Path = _SCORECARDS) -> list[SweepResult]:
     return results
 
 
-def _output_fingerprint(result: SweepResult) -> tuple[str, int, int, int, int]:
+def _output_fingerprint(result: SweepResult) -> tuple[str, bool, int, int, int, int]:
     """What a deterministic loop reproduces exactly: the model, its score, and what it burned.
 
     Wall-clock is deliberately absent — it is the one number that moves between identical runs,
     measured at 42.4 and 43.5 minutes for byte-identical output. Style findings are absent too:
     they come from the produced-code directory, which an old run may no longer have, so including
     them would make a fingerprint depend on whether an artifact was cleaned up.
+
+    The planning lever IS present, though it is an input rather than an output, because the
+    inference this fingerprint serves is "these two rows are one measurement listed twice" — and
+    that can only hold within one configuration. Two runs that tie on totals across the lever are
+    two measurements, and the tie is what makes them worth telling apart rather than what makes
+    them the same.
     """
     return (
         result.model,
+        result.plan_first,
         result.cases_passed,
         result.cases_total,
         result.completion_tokens,
@@ -155,10 +174,15 @@ def _drop_duplicated_unstamped(results: list[SweepResult]) -> list[SweepResult]:
 
 
 def _latest_per_configuration(results: list[SweepResult]) -> list[SweepResult]:
-    """One row per (model, card): the most recent run of each configuration."""
-    latest: dict[tuple[str, str], SweepResult] = {}
+    """One row per (model, card, planning lever): the most recent run of each configuration.
+
+    All three name the configuration a token total belongs to, so all three are the key. Leaving
+    any one out silently discards an arm of the A/B that varied it and reports the survivor as
+    that model's result — which is what a plan-first sweep did to the baseline sweep it followed.
+    """
+    latest: dict[tuple[str, str, bool], SweepResult] = {}
     for result in results:
-        key = (result.model, result.rules_card_digest)
+        key = (result.model, result.rules_card_digest, result.plan_first)
         if key not in latest or result.stamp_ms > latest[key].stamp_ms:
             latest[key] = result
     return sorted(
@@ -167,10 +191,20 @@ def _latest_per_configuration(results: list[SweepResult]) -> list[SweepResult]:
     )
 
 
+def _mode(result: SweepResult) -> str:
+    """How the row's run was configured, in one column-width word.
+
+    The lever's canonical name when it is on; ``off`` when it is not. Naming the off state after
+    the same lever rather than inventing a second term keeps this to the one concept the glossary
+    declares — there is no such thing as a run in "direct mode", only a run that did not plan.
+    """
+    return "plan-first" if result.plan_first else "off"
+
+
 def _print_table(rows: list[SweepResult]) -> None:
     """Print every configuration, best first — most cases passed, then fewest tokens."""
     header = (
-        f"{'model':<30} {'card':<13} {'cases':>6} {'tokens':>8} "
+        f"{'model':<30} {'card':<13} {'mode':<10} {'cases':>6} {'tokens':>8} "
         f"{'decode':>8} {'attempts':>9} {'style':>6}"
     )
     print(header)
@@ -178,7 +212,7 @@ def _print_table(rows: list[SweepResult]) -> None:
     for row in rows:
         style = "  n/a" if row.style_findings is None else f"{row.style_findings:>5}"
         print(
-            f"{row.short_model:<30} {row.rules_card_digest:<13} "
+            f"{row.short_model:<30} {row.rules_card_digest:<13} {_mode(row):<10} "
             f"{row.cases_passed:>3}/{row.cases_total:<2} {row.completion_tokens:>8} "
             f"{row.model_seconds / 60:>7.1f}m {row.attempts:>9} {style}"
         )
@@ -190,7 +224,7 @@ def _print_card_verdicts(rows: list[SweepResult]) -> None:
     The per-model verdict is the point: a card that helps a weak model can cost a strong one, so
     a single overall winner would average away the only finding that changes what to run.
     """
-    by_model: dict[str, list[SweepResult]] = {}
+    by_model_and_mode: dict[tuple[str, bool], list[SweepResult]] = {}
     for row in rows:
         # Unstamped rows stay in the table above — they are real measurements — but they cannot
         # appear in a verdict. A difference can only be ATTRIBUTED to a card that can be named,
@@ -199,21 +233,59 @@ def _print_card_verdicts(rows: list[SweepResult]) -> None:
         # exactly, which is what a single card measured twice looks like.
         if row.rules_card_digest == _UNSTAMPED:
             continue
-        by_model.setdefault(row.short_model, []).append(row)
+        # Keyed with the mode, not the model alone: a verdict may only vary the axis it names, so
+        # two rows differing in the LEVER are not a card comparison. Grouped on the model alone
+        # they would be paired anyway and a winner announced between a card and itself.
+        by_model_and_mode.setdefault((row.short_model, row.plan_first), []).append(row)
 
-    compared = {model: runs for model, runs in by_model.items() if len(runs) > 1}
+    compared = {group: runs for group, runs in by_model_and_mode.items() if len(runs) > 1}
     if not compared:
         print("\nNo model has been measured under two NAMED cards yet.")
         return
 
     print("\nPer-model card comparison (a model's own best card, not a global winner):")
-    for model, runs in sorted(compared.items()):
+    for (model, plan_first), runs in sorted(compared.items()):
         best = min(runs, key=lambda r: (-r.cases_passed, r.completion_tokens))
         others = ", ".join(
             f"{r.rules_card_digest} {r.cases_passed}/{r.cases_total} @{r.completion_tokens}tok"
             for r in sorted(runs, key=lambda r: r.rules_card_digest)
         )
-        print(f"  {model:<30} best: {best.rules_card_digest}   [{others}]")
+        mode = "plan-first" if plan_first else "off"
+        print(f"  {model:<30} {mode:<10} best: {best.rules_card_digest}   [{others}]")
+
+
+def _print_mode_verdicts(rows: list[SweepResult]) -> None:
+    """For every (model, card) measured in both modes, say whether the plan paid for itself.
+
+    The mirror of the card verdict, on the axis the lever varies, and per configuration for the
+    same reason: a plan is worth its generation only where it saves more than it costs, and that
+    is a property of a particular model under a particular card — a weak model may need the
+    scaffolding a strong one is only slowed by. A single global answer would average away the
+    finding that decides what to run.
+    """
+    by_configuration: dict[tuple[str, str], list[SweepResult]] = {}
+    for row in rows:
+        if row.rules_card_digest == _UNSTAMPED:
+            continue
+        by_configuration.setdefault((row.short_model, row.rules_card_digest), []).append(row)
+
+    compared = {
+        configuration: runs
+        for configuration, runs in by_configuration.items()
+        if len({run.plan_first for run in runs}) > 1
+    }
+    if not compared:
+        print("\nNo configuration has been measured in both modes yet.")
+        return
+
+    print("\nPer-configuration mode comparison (does a planning generation pay for itself?):")
+    for (model, card), runs in sorted(compared.items()):
+        best = min(runs, key=lambda r: (-r.cases_passed, r.completion_tokens))
+        others = ", ".join(
+            f"{_mode(r)} {r.cases_passed}/{r.cases_total} @{r.completion_tokens}tok"
+            for r in sorted(runs, key=lambda r: r.plan_first)
+        )
+        print(f"  {model:<30} {card:<13} best: {_mode(best):<10} [{others}]")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -228,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     rows = _drop_duplicated_unstamped(_latest_per_configuration(results))
     _print_table(rows)
     _print_card_verdicts(rows)
+    _print_mode_verdicts(rows)
     return 0
 
 

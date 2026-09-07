@@ -343,7 +343,9 @@ class Loop:
                 break
             nudge = escalation
 
-        return self._finish(planning, results, scored=last_attempt is not None)
+        return self._finish(
+            planning, results, scored=last_attempt is not None, plan_first=spec.plan_first
+        )
 
     def _next_tail(
         self, last_attempt: _ScoredAttempt | None, nudge: str, reframe: str
@@ -363,7 +365,12 @@ class Loop:
         return self._repair_brief(last_attempt, nudge), bool(nudge)
 
     def _finish(
-        self, planning: list[GenerationResult], results: list[GenerationResult], *, scored: bool
+        self,
+        planning: list[GenerationResult],
+        results: list[GenerationResult],
+        *,
+        scored: bool,
+        plan_first: bool,
     ) -> LoopResult:
         """Restore the best attempt, classify how the run ended, and total what it burned.
 
@@ -380,6 +387,10 @@ class Loop:
         record = LocalEconomyRecord.from_run(
             model=self._model,
             rules_card_digest=self._prompt.card_digest,
+            # Carried from the spec, never read off `planning` — the record states how the run was
+            # CONFIGURED, and a plan call that returned nothing must not make it read as a run
+            # that never asked for one.
+            plan_first=plan_first,
             results=[*planning, *results],  # the plan burned real decode; the loop pays for it
             total_calls=self._client.total_calls,
             attempts=len(results),  # but planning is not an attempt at the implementation

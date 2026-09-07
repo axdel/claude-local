@@ -32,6 +32,7 @@ def _case_result(
     model_seconds: float,
     model: str = "local/candidate-7b",
     rules_card_digest: str = "0123456789ab",
+    plan_first: bool = False,
     fault: str | None = None,
     length_capped: int = 0,
 ) -> CaseResult:
@@ -44,6 +45,7 @@ def _case_result(
     record = build_local_economy_record(
         model=model,
         rules_card_digest=rules_card_digest,
+        plan_first=plan_first,
         total_completion_tokens=completion_tokens,
         total_model_seconds=model_seconds,
         status=status,
@@ -227,6 +229,51 @@ def test_score_cases_carries_the_rules_card_digest_onto_the_scorecard() -> None:
     assert score_cases(cases).rules_card_digest == "abcdef012345"
 
 
+def test_score_cases_rejects_a_benchmark_that_changed_the_planning_lever_mid_run() -> None:
+    """One scorecard describes one configuration, and the lever is part of the configuration.
+
+    The same argument as the rules card above: a run whose cases were half planned and half not
+    has no single configuration to attribute its token total to, and labelling it with whichever
+    value the set happened to yield is the mislabelling that nothing downstream can detect.
+    """
+    cases = [
+        _case_result("a", Status.DONE, attempts=1, completion_tokens=10, model_seconds=1.0),
+        _case_result(
+            "b",
+            Status.DONE,
+            attempts=1,
+            completion_tokens=20,
+            model_seconds=1.0,
+            plan_first=True,
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="one planning lever"):
+        score_cases(cases)
+
+
+def test_score_cases_carries_the_planning_lever_onto_the_scorecard() -> None:
+    """Oracle: every record names one lever, so the scorecard names that same lever.
+
+    Without it two sweeps of one model under one card — one planned, one not — are
+    indistinguishable on disk, and the cross-run comparison silently keeps whichever ran last.
+    That is not hypothetical: it is what a 4436-token run and a 9858-token run of the same model
+    and card did to each other before this field existed.
+    """
+    cases = [
+        _case_result(
+            "a",
+            Status.DONE,
+            attempts=1,
+            completion_tokens=10,
+            model_seconds=1.0,
+            plan_first=True,
+        ),
+    ]
+
+    assert score_cases(cases).plan_first is True
+
+
 def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
     """The written JSON reloads to the hand-derived mapping, under a scorecard-prefixed name."""
     scorecard = score_cases(_mixed_cases())
@@ -239,6 +286,7 @@ def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "model": "local/candidate-7b",
         "rules_card_digest": "0123456789ab",
+        "plan_first": False,
         "cases_passed": 2,
         "cases_total": 3,
         "total_completion_tokens": 400,

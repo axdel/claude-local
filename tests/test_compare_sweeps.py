@@ -15,6 +15,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
 from scriptloader import load_script
 
 _SCRIPT = Path(__file__).parents[1] / "scripts" / "compare_sweeps.py"
@@ -35,6 +36,7 @@ def _result(module: ModuleType, **overrides: object) -> Any:
     fields: dict[str, object] = {
         "model": "local/candidate",
         "rules_card_digest": "aaaaaaaaaaaa",
+        "plan_first": False,
         "stamp_ms": 1_000,
         "cases_passed": 7,
         "cases_total": 7,
@@ -76,6 +78,70 @@ def test_the_same_model_under_two_cards_stays_two_rows() -> None:
     rows = module._latest_per_configuration([compact, doctrine])
 
     assert {row.rules_card_digest for row in rows} == {"aaaaaaaaaaaa", "bbbbbbbbbbbb"}
+
+
+def test_the_same_model_and_card_under_two_planning_modes_stays_two_rows() -> None:
+    """Oracle: the planning lever is part of the configuration too, exactly as the card is.
+
+    The failure above, one axis over, and it is not hypothetical — it is how this was found. A
+    baseline sweep of one model measured 7/7 at 4436 completion tokens; the plan-first sweep of
+    the SAME model under the SAME card measured 7/7 at 9858, ran later, and silently took the
+    earlier row's place. The table then named the 9858 configuration the one worth using, which
+    is the opposite of what the two runs together say.
+    """
+    module = _script()
+    unplanned = _result(module, plan_first=False, stamp_ms=1_000, completion_tokens=4_436)
+    planned = _result(module, plan_first=True, stamp_ms=2_000, completion_tokens=9_858)
+
+    rows = module._latest_per_configuration([unplanned, planned])
+
+    assert {row.completion_tokens for row in rows} == {4_436, 9_858}
+
+
+def test_the_table_names_the_mode_so_two_rows_of_one_configuration_are_tellable_apart(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Oracle: keying on the lever puts two rows where there was one, and a reader must see why.
+
+    Without the column the same model under the same card appears twice with different token
+    totals and nothing on the line accounting for the difference, which reads as a duplicate or a
+    bug rather than as the comparison it is. The lever's canonical name is what the on-row says;
+    the off-row says ``off`` rather than naming a second concept the glossary does not have.
+    """
+    module = _script()
+
+    module._print_table(
+        [
+            _result(module, plan_first=False, completion_tokens=4_436),
+            _result(module, plan_first=True, completion_tokens=9_858),
+        ]
+    )
+
+    printed = capsys.readouterr().out
+    assert "mode" in printed
+    planned, unplanned = (
+        next(line for line in printed.splitlines() if str(tokens) in line)
+        for tokens in (9_858, 4_436)
+    )
+    assert "plan-first" in planned
+    assert "plan-first" not in unplanned
+    assert "off" in unplanned
+
+
+def test_a_planned_run_cannot_absorb_an_unstamped_run_it_merely_ties_on_totals() -> None:
+    """Oracle: an unstamped run predates the card axis, so it also predates the lever — baseline.
+
+    The drop rule reads matching totals as one measurement listed twice. That inference holds
+    only within a configuration: a planned run and an unplanned one that happen to tie are two
+    measurements, and dropping either loses a real arm of the comparison.
+    """
+    module = _script()
+    unstamped = _result(module, rules_card_digest="unstamped", plan_first=False)
+    planned = _result(module, plan_first=True)
+
+    rows = module._drop_duplicated_unstamped([unstamped, planned])
+
+    assert len(rows) == 2
 
 
 def test_rows_are_ordered_by_cases_passed_then_by_fewest_tokens() -> None:
@@ -257,3 +323,63 @@ def test_a_scorecard_written_before_the_card_axis_existed_is_kept_and_labelled(
     (result,) = module._load_scorecards(tmp_path)
 
     assert result.rules_card_digest == module._UNSTAMPED
+
+
+def test_the_card_verdict_compares_cards_within_one_mode_never_across_them(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Oracle: a verdict attributes a difference to the axis it names, so only that axis may vary.
+
+    One model measured under ONE card in two modes is not a card comparison — it has a single
+    card. Grouping on the model alone would pair those two rows and announce a winner between a
+    card and itself, attributing the lever's whole cost to a card that never changed.
+    """
+    module = _script()
+
+    module._print_card_verdicts(
+        [
+            _result(module, rules_card_digest="aaaaaaaaaaaa", plan_first=False),
+            _result(module, rules_card_digest="aaaaaaaaaaaa", plan_first=True),
+        ]
+    )
+
+    assert "No model has been measured under two NAMED cards yet." in capsys.readouterr().out
+
+
+def test_the_mode_verdict_names_the_cheaper_mode_for_a_configuration_measured_in_both(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Oracle: the question the sweep was run to answer — does the planning generation pay off?
+
+    Measured on one model under one card: 4436 completion tokens without the plan against 9858
+    with it, both 7/7. The verdict is the one the artifacts support, so it survives the log the
+    run was read from.
+    """
+    module = _script()
+
+    module._print_mode_verdicts(
+        [
+            _result(module, plan_first=False, completion_tokens=4_436),
+            _result(module, plan_first=True, completion_tokens=9_858),
+        ]
+    )
+
+    printed = capsys.readouterr().out
+    assert "off" in printed
+    assert "4436" in printed
+    assert "9858" in printed
+
+
+def test_no_mode_verdict_is_offered_for_a_configuration_measured_in_one_mode_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Oracle: a comparison needs two arms. One arm is a measurement, not a winner.
+
+    Every sweep before the lever was benchmarked ran unplanned, so this is the ordinary case —
+    announcing ``off`` the winner there would report an A/B that was never run.
+    """
+    module = _script()
+
+    module._print_mode_verdicts([_result(module, plan_first=False)])
+
+    assert "measured in both modes" in capsys.readouterr().out

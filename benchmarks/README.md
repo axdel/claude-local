@@ -89,11 +89,14 @@ One scorecard describes one model's run over the whole ladder. `--out` writes it
 ```json
 {
   "model": "candidate-7b",
+  "rules_card_digest": "1a2694b6136d",
+  "plan_first": false,
   "cases_passed": 5,
   "cases_total": 7,
   "total_completion_tokens": 18432,
   "total_model_seconds": 240.5,
   "mean_tokens_per_second": 76.6,
+  "style_findings": 0,
   "cases": [
     {"case_id": "01_scaffold", "status": "done", "attempts": 1, "length_capped": 0},
     {"case_id": "02_schemas", "status": "done", "attempts": 2, "length_capped": 1},
@@ -102,9 +105,18 @@ One scorecard describes one model's run over the whole ladder. `--out` writes it
 }
 ```
 
+- `model` / `rules_card_digest` / `plan_first` — the configuration the totals below belong to. All
+  three are here for one reason: a token total measured under one of them says nothing about a run
+  under another, so two scorecards are comparable only where all three agree. `plan_first` is the
+  most easily forgotten and the most expensive to forget — one model under one card measured 4436
+  completion tokens without a planning generation and 9858 with one, and a scorecard that could not
+  tell them apart let the second silently replace the first in the cross-run table
+  (`D-TELEMETRY-003`).
 - `cases_passed` / `cases_total` — the headline: how many cases reached `done`.
 - `total_completion_tokens` / `total_model_seconds` / `mean_tokens_per_second` — the economy of the
   run, summed across cases. The mean is `null` when no model-seconds elapsed.
+- `style_findings` — how many style findings the run's produced code drew, or `null` when the run
+  predates the field. `null` and `0` are different answers: not measured, versus measured and clean.
 - `cases[]` — one line per case in ladder order: its `case_id`, terminal `status` (`done` when the
   oracle passed, otherwise the loop's failure status), how many loop `attempts` it took, and
   `length_capped` — how many of those attempts the server ended at its own token cap (a budget

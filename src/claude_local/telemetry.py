@@ -14,6 +14,15 @@ nothing about a run under another. The digest is carried from ``PromptBuilder``,
 the card bytes, and never re-derived from a path here: a path identifies a card only until someone
 repoints it.
 
+``plan_first`` is the second such variable, and it is here for the same reason rather than a
+different one: a run that spends a generation planning burns tokens a run without one never spends,
+so the two are not comparable either. Measured on one model under one card, the lever moved a
+sweep from 4436 completion tokens to 9858 — which, left unrecorded, is one configuration's number
+standing in for another's with nothing downstream able to tell (D-TELEMETRY-003). It is carried
+from the caller like the model and the card above, never inferred from whether the timeline happens
+to contain a planning generation: that would make the record's account of how a run was CONFIGURED
+depend on how the plan call happened to go.
+
 ``from_run`` AGGREGATES a timeline of per-attempt ``GenerationResult`` (client token usage
 and timing) into those scalars. Two counts are deliberately NOT derived from the timeline.
 ``total_calls`` is the client's own logical-call ledger — it increments at entry, so it
@@ -76,6 +85,7 @@ class LocalEconomyRecord:
 
     model: str
     rules_card_digest: str
+    plan_first: bool
     total_calls: int
     total_completion_tokens: int
     total_model_seconds: float
@@ -91,6 +101,7 @@ class LocalEconomyRecord:
         *,
         model: str,
         rules_card_digest: str,
+        plan_first: bool,
         results: Sequence[GenerationResult],
         total_calls: int,
         attempts: int,
@@ -107,6 +118,7 @@ class LocalEconomyRecord:
         return cls(
             model=model,
             rules_card_digest=rules_card_digest,
+            plan_first=plan_first,
             total_calls=total_calls,
             total_completion_tokens=total_completion_tokens,
             total_model_seconds=total_model_seconds,
@@ -133,6 +145,7 @@ class LocalEconomyRecord:
         return {
             "model": self.model,
             "rules_card_digest": self.rules_card_digest,
+            "plan_first": self.plan_first,
             "total_calls": self.total_calls,
             "total_completion_tokens": self.total_completion_tokens,
             "total_model_seconds": self.total_model_seconds,

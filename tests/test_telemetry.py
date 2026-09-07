@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
 from factories import build_generation_result
 
 from claude_local.telemetry import LocalEconomyRecord, slug_model_id
@@ -32,6 +33,9 @@ def _record(**overrides: object) -> LocalEconomyRecord:
     fields: dict[str, object] = {
         "model": "mlx-community/Qwen2.5-Coder-7B",
         "rules_card_digest": "cafebabe1234",
+        # False against tokens_estimated's True: the two booleans must DIFFER for the same reason
+        # the scalars above are all distinct — equal values let a field-swap mutant round-trip.
+        "plan_first": False,
         "total_calls": 3,
         "total_completion_tokens": 300,
         "total_model_seconds": 6.0,
@@ -61,6 +65,7 @@ def _from_run(
     return LocalEconomyRecord.from_run(
         model="m",
         rules_card_digest="d",
+        plan_first=False,
         results=results,
         total_calls=total_calls,
         attempts=attempts,
@@ -156,6 +161,7 @@ def test_model_card_attempts_and_status_are_carried_through() -> None:
     record = LocalEconomyRecord.from_run(
         model="qwen",
         rules_card_digest="9f86d081884c",
+        plan_first=False,
         results=results,
         total_calls=1,
         attempts=5,
@@ -165,6 +171,34 @@ def test_model_card_attempts_and_status_are_carried_through() -> None:
     assert record.rules_card_digest == "9f86d081884c"
     assert record.attempts == 5
     assert record.status is Status.DERAILED
+
+
+@pytest.mark.parametrize("plan_first", [True, False])
+def test_the_planning_lever_is_carried_through_as_a_named_variable_of_the_run(
+    *, plan_first: bool
+) -> None:
+    """Oracle: the caller states how the run was configured, so the record reports that.
+
+    The same argument this record already makes for the rules card. A token total measured with a
+    planning generation says nothing about a run without one — measured on one model under one
+    card, 9858 completion tokens with the lever on against 4436 with it off. A record that omits
+    the lever leaves the larger of those two numbers indistinguishable from the smaller, and every
+    artifact derived from it inherits the ambiguity.
+
+    Both values are pinned because only the pair falsifies a constant: a wiring that always
+    reported ``False`` would satisfy a one-sided test while recording nothing at all.
+    """
+    record = LocalEconomyRecord.from_run(
+        model="qwen",
+        rules_card_digest="9f86d081884c",
+        results=[build_generation_result()],
+        total_calls=1,
+        attempts=1,
+        status=Status.DONE,
+        plan_first=plan_first,
+    )
+
+    assert record.plan_first is plan_first
 
 
 # --- write: JSON serialization round-trip -----------------------------------------
@@ -180,6 +214,7 @@ def test_write_round_trips_every_field_as_json_and_returns_the_path(tmp_path: Pa
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "model": "mlx-community/Qwen2.5-Coder-7B",
         "rules_card_digest": "cafebabe1234",
+        "plan_first": False,
         "total_calls": 3,
         "total_completion_tokens": 300,
         "total_model_seconds": 6.0,
@@ -189,6 +224,14 @@ def test_write_round_trips_every_field_as_json_and_returns_the_path(tmp_path: Pa
         "status": "done",
         "attempts": 4,
     }
+
+
+def test_write_serializes_a_plan_first_run_as_json_true(tmp_path: Path) -> None:
+    # The round-trip above pins the lever OFF, which a serializer writing a bare False literal
+    # would also satisfy. Reading the other value back is what proves the field is the record's
+    # and not the writer's — the same reason the None-mean case below is its own test.
+    path = _record(plan_first=True).write(tmp_path)
+    assert json.loads(path.read_text(encoding="utf-8"))["plan_first"] is True
 
 
 def test_write_serializes_a_none_mean_as_json_null(tmp_path: Path) -> None:
