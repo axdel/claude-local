@@ -191,6 +191,33 @@ class ResolvedModel:
                 f"Drop one — the budget bounds a runaway reasoner, the draft buys decode speed."
             )
 
+    def generation_params_with(
+        self, override: Mapping[str, object] | None
+    ) -> Mapping[str, object]:
+        """The request-body fields a run should send: this row's, or an override in place of them.
+
+        The single answer to "what configuration is this run using", because the alternative is
+        each caller pairing a null check with a servability check and one of them eventually
+        pairing it wrong. An override REPLACES rather than merges: a row's fields are one
+        configuration, and merging would leave a hard cap standing inside the configuration a
+        caller is explicitly setting aside.
+
+        Raises:
+            UnservableCombination: the override pairs a thinking budget with draft weights that
+                are present. Checked here rather than at generation because the alternative is a
+                cold model load ending in a fault frame — the row's own pairing is refused at
+                construction for the same reason.
+        """
+        if override is None:
+            return self.generation_params
+        if is_unservable_combination(self.draft_path, override):
+            raise UnservableCombination(
+                f"{self.name}: the override sends {_THINKING_BUDGET}, which a server running "
+                f"speculative decoding refuses, and the draft weights at {self.draft_path} are "
+                f"present. Drop it from the override, or ask this of a model with no draft."
+            )
+        return override
+
 
 @dataclass(frozen=True, slots=True)
 class ModelRegistry:

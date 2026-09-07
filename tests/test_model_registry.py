@@ -18,6 +18,7 @@ from claude_local.model_registry import (
     MalformedRegistry,
     ModelNotPresent,
     ModelRegistry,
+    ResolvedModel,
     UnknownModel,
     UnservableCombination,
     is_unservable_combination,
@@ -368,3 +369,59 @@ def test_only_a_thinking_budget_alongside_draft_weights_is_unservable(
     budget alone would refuse the row the registry ships.
     """
     assert is_unservable_combination(draft_path, params) is unservable
+
+
+def test_no_override_leaves_the_rows_own_generation_params_in_force(tmp_path: Path) -> None:
+    """Oracle: absent an override there is nothing to substitute, so the row still stands.
+
+    The null case is worth pinning because it is the one every ordinary invocation takes: a
+    resolution that quietly dropped the row's fields would half-configure every run while looking
+    fully configured, which is the defect this method exists to make unrepresentable.
+    """
+    resolved = _budgeted_draft_registry(tmp_path, present=("Qwen3.8-27B",)).resolve("Qwen3.8-27B")
+
+    assert resolved.generation_params_with(None) == resolved.generation_params
+
+
+def test_an_override_replaces_the_rows_generation_params_rather_than_merging(
+    tmp_path: Path,
+) -> None:
+    """Oracle: the flag's contract is replacement — a row's fields are one configuration.
+
+    Merging is the plausible wrong answer and the damaging one: the row here pins a thinking
+    budget, so a merge would leave that cap standing inside an override whose whole purpose is to
+    set the row's configuration aside, and the run would report as reconfigured while still
+    truncating.
+    """
+    resolved = _budgeted_draft_registry(tmp_path, present=("Qwen3.8-27B",)).resolve("Qwen3.8-27B")
+
+    effective = resolved.generation_params_with({"enable_thinking": True})
+
+    assert effective == {"enable_thinking": True}
+    assert "thinking_budget" not in effective
+
+
+def test_an_override_pairing_a_thinking_budget_with_present_draft_weights_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Oracle: the same server rule that refuses the row, applied to the caller's substitution.
+
+    Refusing before the spawn rather than at generation is the point — the alternative is loading
+    weights for a request the server was always going to reject.
+    """
+    # Constructed rather than resolved: the row this method must refuse an override FOR is one
+    # whose own params are servable, so it survives __post_init__ — a shape no fixture registry
+    # here produces, because the budgeted row already carries the pair.
+    drafted = ResolvedModel(
+        name="Qwen3.8-27B",
+        repo="lmstudio/Qwen3.8-27B-6bit",
+        draft_repo="lukaskremla/Qwen3.8-MTP",
+        port=8080,
+        flags=("--enable-thinking",),
+        generation_params={"enable_thinking": False},
+        path=tmp_path / "store" / "Qwen3.8-27B",
+        draft_path=tmp_path / "store" / "Qwen3.8-27B-MTP",
+    )
+
+    with pytest.raises(UnservableCombination, match="thinking_budget"):
+        drafted.generation_params_with({"thinking_budget": 64})

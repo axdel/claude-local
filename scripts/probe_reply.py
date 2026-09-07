@@ -39,8 +39,8 @@ from claude_local.client import ModelClient
 from claude_local.edits import extract_file
 from claude_local.model_registry import (
     ModelRegistry,
+    UnservableCombination,
     generation_params_from_json,
-    is_unservable_combination,
 )
 from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
@@ -133,16 +133,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     spec = _spec_from(args.task_dir, budget)
     resolved = ModelRegistry.default().resolve(args.model)
-    override = args.generation_params
-    params = resolved.generation_params if override is None else override
-    if is_unservable_combination(resolved.draft_path, params):
-        # The rule the registry enforces on a row, applied to an override before a server is
-        # spawned: mlx_vlm refuses this pair outright, so the alternative is a cold model load
-        # that ends in a fault frame nobody asked for.
-        raise SystemExit(
-            f"{args.model}: a thinking budget cannot be sent to a server running speculative "
-            f"decoding, and the draft weights at {resolved.draft_path} are present"
-        )
+    try:
+        params = resolved.generation_params_with(args.generation_params)
+    except UnservableCombination as refusal:
+        raise SystemExit(str(refusal)) from refusal
     server = ModelServer.for_model(resolved)
 
     with server.running(startup_timeout_s=args.startup_timeout) as handle:

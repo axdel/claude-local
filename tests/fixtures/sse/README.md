@@ -83,7 +83,9 @@ granularity, marker placement, and the usage trailer are preserved exactly.
     upstream of the client has any signal that the generation failed, which is why
     the loop reported BLOCKED with a correct answer in hand.
 - `reasoning_channel_stream.bytes` — **a real capture**, recorded 2026-09-06 from
-  `mlx_vlm.server` serving `Qwen3.8-27B` (same prompts as above). 25 reasoning deltas
+  `mlx_vlm.server` serving `Qwen3.8-27B` (same prompts as above) under
+  `--generation-params '{"enable_thinking": true}'`, which that model's registry row turns off
+  and this fixture exists to show. 25 reasoning deltas
   carrying 89 characters, then two content deltas (`"\n\n"`, `"OK"`) carrying 4,
   `finish_reason:"stop"`, `usage.completion_tokens=29`. Every reasoning frame has
   `content:null` and puts its text on `reasoning_content`, with a duplicate `reasoning`
