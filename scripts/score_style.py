@@ -19,8 +19,15 @@ With no argument it reports the most recently written code directory:
 
 It reads only artifacts, so it needs no model, no server and no GPU, and it reruns against any
 earlier run's saved code — including runs made before this script existed. That is why it is a
-separate pass rather than part of the scorer: the produced code is already on disk, so the
-scorecard stays a pure correctness record and this measurement stays re-derivable.
+separate pass rather than part of the scorer: the produced code is already on disk, so the number
+stays re-derivable from the artifact instead of only from a live run.
+
+A scorecard does carry the count — ``benchmarks/run.py --code-out`` fills its ``style_findings``
+while the tree it linted is still there. This script is how that same number is recovered
+afterwards, from a tree that was retained. It is not recoverable for a run whose tree was not:
+``--code-out`` is off by default and points outside the repository, so an older scorecard's count
+is a frozen measurement rather than a regenerable one, which is what ``DERIVATION_MAP.md`` records
+for ``Scorecard.style_findings``.
 
 What it counts is bounded and stated. A guard against a state the code itself just made
 impossible — the defect that reads worst to a human — has no rule in any linter, so it is absent
