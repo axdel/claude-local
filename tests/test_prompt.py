@@ -217,6 +217,29 @@ def test_real_card_prefix_has_no_volatile_tokens() -> None:
         assert sub not in prefix, f"forbidden volatile substring: {sub}"
 
 
+# The card is a fixed cost paid on every attempt of every task, so "token-budgeted" has to be a
+# bound something can fail against rather than a description. The ceiling is set from measurement:
+# the 34,030-character doctrine card inflated the prefill 2.1-5.0x and lost on completion tokens
+# for six of the eight models benchmarked, while the 4,714-character card that replaced it won.
+# 8,000 leaves ~70% headroom for real growth and refuses anything approaching the card that lost.
+_CARD_CHARACTER_CEILING = 8_000
+
+
+def test_the_real_card_stays_within_its_stated_budget() -> None:
+    """The card documents itself as token-budgeted; this is the budget.
+
+    Oracle: the ceiling above, derived from the benchmark, not from measuring the current card —
+    a test asserting the card's own length would pass at any size and pin nothing. It fails only
+    when the card grows past a size already measured to cost more than it returns.
+    """
+    card = REAL_CARD.read_text(encoding="utf-8").rstrip("\n")
+
+    assert len(card) <= _CARD_CHARACTER_CEILING, (
+        f"rules card is {len(card)} characters, over the {_CARD_CHARACTER_CEILING} ceiling; "
+        "every task pays this on every attempt"
+    )
+
+
 # --- distill_feedback: node id, path-strip, byte cap, score -----------------------
 
 
