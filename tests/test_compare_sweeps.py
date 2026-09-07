@@ -10,27 +10,19 @@ is local-substitutable, so nothing here is mocked.
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+from scriptloader import load_script
 
 _SCRIPT = Path(__file__).parents[1] / "scripts" / "compare-sweeps.py"
 
 
 def _script() -> ModuleType:
-    """Import the script by path, the way its shebang runs it.
-
-    Its name is hyphenated and it lives outside the package, so no import statement can name it.
-    """
-    spec = importlib.util.spec_from_file_location("compare_sweeps", _SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    """The comparison script, loaded by path the way its shebang runs it."""
+    return load_script(_SCRIPT)
 
 
 def _result(module: ModuleType, **overrides: object) -> Any:

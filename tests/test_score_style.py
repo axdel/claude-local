@@ -7,14 +7,12 @@ answers is always asked of several at once — and the exit code that arity forc
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from types import ModuleType
+from scriptloader import load_script
 
+if TYPE_CHECKING:
     import pytest
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "score-style.py"
@@ -24,18 +22,7 @@ _USAGE_ERROR = 2
 its source, so a mutated constant diverges this instead of moving with it."""
 
 
-def _load_score_style() -> ModuleType:
-    """Import the scorer despite a hyphenated filename, which no import statement can name."""
-    spec = importlib.util.spec_from_file_location("score_style", _SCRIPT)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {_SCRIPT}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-score_style = _load_score_style()
+score_style = load_script(_SCRIPT)
 
 
 def _produced_code_directory(root: Path, name: str) -> Path:

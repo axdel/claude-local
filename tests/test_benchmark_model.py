@@ -12,30 +12,23 @@ builder — the two are separate modules precisely so one can check the other.
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
 from types import MappingProxyType, ModuleType
 
 import pytest
+from scriptloader import load_script
 
 _SCRIPT = Path(__file__).parents[1] / "scripts" / "benchmark_model.py"
 
 
 def _script() -> ModuleType:
-    """Import the script by path, the way its shebang runs it.
+    """The builder script, loaded by path. Reaching its pure parts at all requires that.
 
-    It lives in ``scripts/`` rather than the package, so no import statement can name it. Loading
-    it through importlib is what lets its pure parts be tested at all — the alternative is testing
-    only what a subprocess prints, which cannot see an argument that was silently dropped.
+    The alternative is testing only what a subprocess prints, which cannot see an argument that
+    was silently dropped.
     """
-    spec = importlib.util.spec_from_file_location("benchmark_model", _SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_script(_SCRIPT)
 
 
 def test_generation_params_are_forwarded_as_one_json_object(tmp_path: Path) -> None:

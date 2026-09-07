@@ -20,9 +20,9 @@ Hence this probe measures arrival from the client side and reports the split:
 
 `first_byte_s` is the wall clock from sending the request to the first chunk coming back — the
 quantity the bound has to clear. `prompt_ms` is the server's prefill within that, so the
-remainder is the lazy weight load. Prefill scales with the prompt, so the probe sends one the
-size of a real task's system prefix (the bundled rules card repeated to roughly the token count
-a case's spec, oracle, and context files add up to) and asks for almost no output.
+remainder is the lazy weight load. Prefill scales with the prompt, so the probe sends one the size
+of a real task's system prefix — the bundled rules card repeated until it reaches the largest
+prefix the benchmark's own cases build (`_TARGET_PREFIX_BYTES`) — and asks for almost no output.
 
 A warm page cache under-measures the load, so run this on a model that was not just served, and
 read the result as a floor rather than a ceiling. The model is resident only inside the
@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -54,8 +55,22 @@ from claude_local.types import Budget  # noqa: E402
 
 _RULES_CARD = _REPO_ROOT / "src" / "claude_local" / "rules_card.md"
 
-_PREFIX_REPEATS = 6
-"""Rules-card copies making a prompt the size of a real one: card + spec + oracle + context."""
+_TARGET_PREFIX_BYTES = 32_021
+"""The largest system prefix a real case builds — the one this probe has to reproduce.
+
+Measured through ``PromptBuilder.stable_prefix`` over the seven committed schedule-manager cases
+with the bundled card: 06_schedule_service at 32,021 bytes, against a 10,133-byte smallest and a
+22,433-byte mean. The largest is the target because the bound this probe justifies has to clear
+the SLOWEST first byte, and prefill scales with the prompt.
+
+Stated as a size rather than as a count of card copies, because the copies are the mechanism and
+the size is the intent. The previous form fixed the mechanism at six copies — a ratio to the 2.5 KB
+card of the day — so when the card briefly grew to 34 KB the same six copies sent 205 KB, six times
+any real prompt, while the constant's own docstring still called it benchmark-sized. Deriving the
+count from the card's current size is what keeps that from happening again silently; the target
+itself is pinned against the real cases by ``tests/test_measure_first_byte.py``.
+"""
+
 
 _REPLY_TOKENS = 32768
 """The benchmark's own token budget, because the KV cache a server reserves is sized from it.
@@ -70,6 +85,12 @@ _GENERATION_TIMEOUT_S = 1800.0
 """Deliberately far past any plausible load — a bound here would censor the measurement."""
 
 _REPORTED_TIMINGS = ("prompt_n", "prompt_ms", "prompt_per_second", "predicted_per_second")
+
+
+def benchmark_sized_prefix() -> str:
+    """The rules card repeated until it is at least as long as the largest real case prefix."""
+    card = _RULES_CARD.read_text(encoding="utf-8") + "\n"
+    return card * math.ceil(_TARGET_PREFIX_BYTES / len(card.encode("utf-8")))
 
 
 def _served_model_id(base_url: str) -> str:
@@ -118,8 +139,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-tokens", type=int, default=_REPLY_TOKENS)
     arguments = parser.parse_args(argv)
 
-    prefix = (_RULES_CARD.read_text(encoding="utf-8") + "\n") * _PREFIX_REPEATS
-    print(f"[first-byte] prompt characters: {len(prefix)}", file=sys.stderr)
+    prefix = benchmark_sized_prefix()
+    print(
+        f"[first-byte] prompt characters: {len(prefix)} "
+        f"({len(prefix.encode('utf-8'))} bytes, target {_TARGET_PREFIX_BYTES})",
+        file=sys.stderr,
+    )
 
     resolved = ModelRegistry.default().resolve(arguments.model)
     server = ModelServer.for_model(resolved)
