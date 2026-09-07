@@ -32,6 +32,7 @@ from claude_local.cli import (
 )
 from claude_local.entrypoint import Outcome
 from claude_local.loop import ORACLE_TEST_FILENAME
+from claude_local.paths import KeepOnlyViolation
 from claude_local.types import Status
 
 if TYPE_CHECKING:
@@ -331,6 +332,35 @@ def test_a_refusal_leaves_stdout_empty(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "test_text" in captured.err
+
+
+def test_a_containment_refusal_exits_as_a_rejected_task_not_an_uncaught_crash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Oracle: ``exit_code_for`` reserves 1 for an uncaught exception, so a refusal may not use it.
+
+    ``resolve_within`` refuses an ``impl_path`` whose shape is legal but whose target escapes the
+    worktree through a symlink — a case string validation cannot see, because only ``resolve()``
+    follows links. That refusal is a statement about the caller's envelope, exactly like the flat
+    path already translated here, so it owes the caller the same answer. Reaching the parent as a
+    bare traceback instead makes a rejected task indistinguishable from a crashed claude-local,
+    since the dispatching orchestrator reads only the exit code.
+
+    Live reproduction against the real front door, before the fix: a worktree whose ``src`` is a
+    symlink out of the tree exited 1 with a ``KeepOnlyViolation`` traceback.
+    """
+
+    def refuse_containment(_spec: TaskSpec, **_: object) -> Outcome:
+        raise KeepOnlyViolation("src", "final component is a symlink")
+
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps(build_envelope()), encoding="utf-8")
+    monkeypatch.setattr(cli, "implement", refuse_containment)
+
+    exit_code = main(["--task", str(task_file), "--worktree", str(tmp_path)])
+
+    assert exit_code == EXIT_REJECTED_TASK
+    assert "Traceback" not in capsys.readouterr().err
 
 
 def test_missing_server_coordinates_are_refused_rather_than_guessed(

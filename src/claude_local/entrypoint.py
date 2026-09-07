@@ -161,8 +161,12 @@ def implement(
         the local-half economy record.
 
     Raises:
-        ValueError: ``spec.impl_path`` is not nested under a directory, so the writable subtree
-            would collide with the worktree-root oracle test.
+        ValueError: ``spec.impl_path`` is not a normalized, nested, relative file path, so the
+            writable subtree it declares is not the one its text names.
+        KeepOnlyViolation: ``spec.impl_path`` is well-shaped but does not resolve inside the
+            worktree — the escape a symlinked component makes, which only resolution can see.
+            A refusal about the caller's own path, like the ``ValueError`` above; the loop
+            catches separately the one raised when the model aims an edit outside that path.
         BackendUnavailable: the model server at ``base_url`` was unreachable or returned an error
             status — a harness fault (the running server is a prerequisite), propagated, never
             mapped to a status.

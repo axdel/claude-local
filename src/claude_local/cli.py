@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, assert_never
 
 from claude_local.backend import BackendUnavailable
 from claude_local.entrypoint import implement
+from claude_local.paths import KeepOnlyViolation
 from claude_local.runner import OracleError
 from claude_local.sandbox import SandboxUnavailable
 from claude_local.types import Budget, ContextFile, Status, TaskSpec
@@ -127,11 +128,15 @@ def _run(args: argparse.Namespace) -> int:
     model = _required_setting(args.model, _MODEL_ENV, "--model")
     try:
         outcome = implement(spec, base_url=base_url, model=model, worktree=args.worktree)
-    except ValueError as exc:
-        # A refusal, not a fault: ``implement`` documents exactly one ValueError, and it is a
-        # statement about the caller's impl_path — a flat one would put the implementation at the
-        # worktree root beside the immutable oracle. It is also the package's only bare ValueError
-        # outside TaskSpec/Budget construction, so this catch cannot swallow a loop-internal fault.
+    except (ValueError, KeepOnlyViolation) as exc:
+        # Both are refusals, not faults, and both are statements about the caller's impl_path.
+        # ``implement`` documents exactly one ValueError -- a flat path would put the
+        # implementation at the worktree root beside the immutable oracle -- and it is the
+        # package's only bare ValueError outside TaskSpec/Budget construction. KeepOnlyViolation
+        # is the containment boundary refusing a path whose shape is legal but whose target
+        # escapes the worktree through a symlink, which only resolution can see. The loop catches
+        # its own KeepOnlyViolation where the model aims an edit outside the permitted path, so
+        # the only one that reaches here is the store refusing the caller's own impl_path.
         raise TaskRejected(str(exc)) from exc
     print(outcome.summary, file=sys.stderr)
     if args.record_dir is not None:
