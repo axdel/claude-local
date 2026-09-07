@@ -329,6 +329,52 @@ def test_main_exits_3_when_the_server_is_unreachable(
     assert "Traceback" not in err
 
 
+def test_a_harness_fault_mid_sweep_still_writes_the_cases_that_finished(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Oracle: a sweep is hours of GPU time, and every completed case is a measurement already paid
+    for — losing them to the next case's fault costs the whole run to report one failure.
+
+    The server answers the first case and then stops answering, which is the ordinary way a long
+    sweep ends: the host is killed, or swaps, or the model is unloaded. The fault must still be
+    loud (exit 3, a named diagnostic) AND the finished cases must still reach a scorecard, because
+    the two are not in tension — one says the run did not complete, the other says what it
+    measured before it stopped. D-BACKEND-004 narrowed how often this fires; it is what happens
+    when it fires anyway.
+    """
+    sources = _golden_sources()
+
+    def die_after_the_first_case(request: httpx.Request) -> None:
+        if b"app/main.py" not in request.content:
+            raise httpx.ConnectError("connection refused")
+
+    with replay_cases_http_client(
+        sources, request_observer=die_after_the_first_case
+    ) as http_client:
+        exit_code = main(
+            [
+                "--base-url",
+                "http://benchmark.local",
+                "--model",
+                "replay/dies-midway",
+                "--out",
+                str(tmp_path),
+            ],
+            http_client=http_client,
+        )
+
+    assert exit_code == 3
+    err = capsys.readouterr().err
+    assert "harness fault" in err
+
+    (scorecard_path,) = tmp_path.glob("scorecard-*.json")
+    card = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    # Exactly the one case that finished before the server went away — not zero, and not the
+    # whole ladder either, since the remaining cases were never measured.
+    assert [case["case_id"] for case in card["cases"]] == ["01_scaffold"]
+    assert card["cases_passed"] == card["cases_total"] == 1
+
+
 def test_print_scorecard_surfaces_a_faulted_case_and_a_capped_case(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -404,6 +450,26 @@ def test_console_progress_opens_a_case_with_its_target_and_its_budget(
             ),
             "server fault: upstream 503",
         ),
+        # A block carries its own reason, and the two blocks are different problems: a reply that
+        # framed nothing is a formatting failure, one framed at the wrong path a targeting failure.
+        (
+            build_attempt_progress(
+                score=None,
+                blocked_reason="the reply carried no whole-file frame to write",
+            ),
+            "no whole-file frame",
+        ),
+        (
+            build_attempt_progress(
+                score=None,
+                blocked_reason=(
+                    "refused 'src/other.py': only the permitted impl path may be written"
+                ),
+            ),
+            "src/other.py",
+        ),
+        # No reason recorded at all: the renderer must still name the shape, not print an empty
+        # phrase — a watcher reading a blank verdict learns less than one reading a vague one.
         (build_attempt_progress(score=None), "no usable file frame"),
     ],
 )
@@ -415,8 +481,10 @@ def test_console_progress_names_what_each_attempt_produced(
     Oracle: the four are the loop's own terminal shapes — an oracle verdict, a guard-cut derail,
     an upstream fault, and the structural block that is left when neither of those stopped it.
     Collapsing any pair would show the same phrase for two different failures, which is precisely
-    the ambiguity a live view exists to remove. ``DerailReason`` is named here only to build the
-    fixture; the renderer reads its stable value rather than matching on the enum.
+    the ambiguity a live view exists to remove. The block splits further into two causes with
+    nothing in common to fix, so the renderer quotes the reason the loop recorded rather than
+    restating a fixed phrase. ``DerailReason`` is named here only to build the fixture; the
+    renderer reads its stable value rather than matching on the enum.
     """
     ConsoleProgress().attempt(progress)
 

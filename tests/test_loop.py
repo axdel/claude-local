@@ -31,6 +31,7 @@ from sse_wire import sse_frame_json
 
 from claude_local.backend import BackendUnavailable, ReplayBackend
 from claude_local.client import ModelClient
+from claude_local.derail import DerailReason
 from claude_local.loop import (
     ORACLE_TEST_FILENAME,
     AttemptProgress,
@@ -213,49 +214,52 @@ def test_loop_result_has_scored_edit_derives_from_best_score(
 # --- Terminal precedence: the pure classifier, pinned exhaustively (the spine's core) ----
 
 
+# Columns run in the same precedence order the classifier declares them, so the table reads
+# top-to-bottom as the rule does — three same-typed booleans in any other order is exactly the
+# confusion that made them keyword-only.
 @pytest.mark.parametrize(
-    ("best_score", "derailed", "blocked", "faulted", "expected"),
+    ("best_score", "faulted", "derailed", "blocked", "expected"),
     [
         # Best is green -> DONE, regardless of any later flag (an earlier green wins outright).
         (build_test_score(passed=3, collected=3, expected=3), False, False, False, Status.DONE),
-        (build_test_score(passed=3, collected=3, expected=3), True, False, False, Status.DONE),
         (build_test_score(passed=3, collected=3, expected=3), False, True, False, Status.DONE),
         (build_test_score(passed=3, collected=3, expected=3), False, False, True, Status.DONE),
+        (build_test_score(passed=3, collected=3, expected=3), True, False, False, Status.DONE),
         # Not green: an upstream server fault outranks every model-side cause beneath it.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
-            False,
-            False,
             True,
+            False,
+            False,
             Status.FAULTED,
         ),
+        (None, True, True, False, Status.FAULTED),
         (None, True, False, True, Status.FAULTED),
-        (None, False, True, True, Status.FAULTED),
         # Not green, no fault: a derail outranks a block and plain exhaustion.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
-            True,
             False,
+            True,
             False,
             Status.DERAILED,
         ),
-        (None, True, False, False, Status.DERAILED),
+        (None, False, True, False, Status.DERAILED),
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
-            True,
-            True,
             False,
+            True,
+            True,
             Status.DERAILED,
         ),
         # Not green, no fault, no derail: a structural block outranks plain exhaustion.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
             False,
-            True,
             False,
+            True,
             Status.BLOCKED,
         ),
-        (None, False, True, False, Status.BLOCKED),
+        (None, False, False, True, Status.BLOCKED),
         # Not green, nothing set: the loop simply ran out of attempts.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
@@ -267,13 +271,16 @@ def test_loop_result_has_scored_edit_derives_from_best_score(
     ],
 )
 def test_classify_terminal_precedence(
-    best_score: object, derailed: bool, blocked: bool, faulted: bool, expected: Status
+    best_score: TestScore | None,
+    faulted: bool,
+    derailed: bool,
+    blocked: bool,
+    expected: Status,
 ) -> None:
     # Expected is hand-derived from the rule "DONE(best green) > FAULTED > DERAILED > BLOCKED >
     # EXHAUSTED", never from running _classify_terminal — so a reordered branch is caught.
-    assert (
-        _classify_terminal(best_score, derailed, blocked, faulted) is expected  # type: ignore[arg-type]
-    )
+    verdict = _classify_terminal(best_score, faulted=faulted, derailed=derailed, blocked=blocked)
+    assert verdict is expected
 
 
 # --- Integration: each terminal path wired end-to-end through run() ----------------
@@ -1245,3 +1252,156 @@ def test_an_unobserved_run_reaches_the_same_terminal_result(tmp_path: Path) -> N
     assert result.status is Status.DONE
     assert client.total_calls == 2
     assert _widget(worktree) == _V1
+
+
+def test_classify_terminal_refuses_positionally_passed_flags() -> None:
+    """Oracle: three same-typed booleans in an order that does not match the documented precedence.
+
+    The docstring ranks the causes fault > derail > block, and the parameters used to arrive
+    derailed-blocked-faulted — so a caller who typed them in the order the docstring states
+    inverted two flags, and every call still type-checked because all three are ``bool``. Nothing
+    in the signature could catch it. Keyword-only makes that call a ``TypeError`` at the call
+    site, which is the only thing that distinguishes the flags from each other.
+    """
+    with pytest.raises(TypeError):
+        _classify_terminal(None, True, False, False)  # type: ignore[misc]
+
+
+def test_a_refused_edit_names_the_path_it_aimed_at(tmp_path: Path) -> None:
+    """Oracle: the refusal already knows the path and the reason; both were being discarded.
+
+    A model writing to the wrong path and a model returning prose both surface as ``blocked``,
+    yet they are different problems — one is a targeting failure, the other a formatting one. An
+    operator watching attempts scroll past cannot act on the first without being told which it is,
+    and the string that says so exists at the moment the write is refused.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    backend = ReplayBackend([_edit_script(_V1, "src/other.py")] * 2)
+    loop, _ = _make_loop(worktree, backend, ScriptedSpawn(), on_attempt=seen.append)
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    loop.run(spec, worktree)
+
+    assert seen, "the refused attempt was never reported"
+    assert seen[0].blocked is True
+    assert seen[0].blocked_reason is not None
+    assert "src/other.py" in seen[0].blocked_reason
+
+
+def test_an_unframed_reply_is_reported_as_blocked_for_a_different_reason(tmp_path: Path) -> None:
+    """The sibling structural cause, so the two are pinned apart rather than merely non-empty."""
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_sse_script("I would need to read the existing file first.")] * 2),
+        ScriptedSpawn(),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    loop.run(spec, worktree)
+
+    assert seen[0].blocked is True
+    assert seen[0].blocked_reason is not None
+    assert "src/other.py" not in seen[0].blocked_reason
+
+
+def test_a_derail_is_reported_with_no_block_reason(tmp_path: Path) -> None:
+    """``blocked_reason`` names a STRUCTURAL cause, so a derail — already named — must not set it.
+
+    Oracle: ``blocked`` is the residue after the guard and the server are ruled out, so a value
+    that disagreed with it would be a second, drifting classification of the same attempt.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_sse_script("x" * 200)]),
+        ScriptedSpawn(),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_tokens=2),
+    )
+
+    loop.run(spec, worktree)
+
+    assert seen[0].blocked is False
+    assert seen[0].blocked_reason is None
+
+
+def test_a_derailed_run_names_the_bound_that_cut_it(tmp_path: Path) -> None:
+    """Oracle: the guard latches exactly one reason and the result reports the run — so it must
+    carry that reason out, exactly as a fault carries its message out.
+
+    ``DERAILED`` alone says a bound fired; it does not say which, and the four bounds call for
+    four different responses (raise the cap, raise the timeout, fix a repetitive prompt). The
+    reason has a single owner on the generation and was simply not being propagated.
+    """
+    worktree = _setup_worktree(tmp_path)
+    loop, _ = _make_loop(worktree, ReplayBackend([_sse_script("x" * 200)]), ScriptedSpawn())
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_tokens=2),
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DERAILED
+    assert result.derail_reason is DerailReason.TOKEN_CAP
+
+
+def test_an_attempt_reframed_rather_than_escalated_is_not_reported_as_nudged(
+    tmp_path: Path,
+) -> None:
+    """Oracle: ``nudged`` claims the attempt's PROMPT carried an escalation, and the tail is
+    built a line above the report — so the claim is checkable against the expression that built it.
+
+    A correction replaces the tail outright with a reframe, and the escalation variable is not
+    cleared on that path (it is only reassigned on the repair path). So an attempt reframed after
+    an earlier stall reported ``nudged`` for a prompt that carried no nudge at all — telling a
+    watcher the loop paid for an escalation it never sent.
+
+    The run: two identical scored attempts (the second stalls, setting the escalation), then an
+    unframed reply (which spends the one correction), then the reframed attempt under test.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend(
+            [
+                _edit_script(_V0),
+                _edit_script(_V0),
+                _sse_script("Let me know which file to change."),
+                _edit_script(_V0),
+            ]
+        ),
+        # Three scored attempts: the unframed reply never reaches the oracle.
+        ScriptedSpawn(*([_junit("one_failure.xml")] * 3)),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=4),
+    )
+
+    loop.run(spec, worktree)
+
+    assert len(seen) == 4
+    assert seen[1].nudged is False  # the stall is detected ON this attempt, not applied to it
+    assert seen[2].nudged is True  # escalated: its tail was a repair brief carrying the nudge
+    assert seen[3].nudged is False  # reframed: its tail was the correction, not the escalation

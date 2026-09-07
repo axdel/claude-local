@@ -27,7 +27,7 @@ from factories import (
 
 from claude_local import AttemptProgress
 from claude_local.backend import HTTP_READ_TIMEOUT_S, BackendUnavailable
-from claude_local.derail import STALL_TIMEOUT_S
+from claude_local.derail import STALL_TIMEOUT_S, DerailReason
 from claude_local.entrypoint import Outcome, _writable_subtree, implement
 from claude_local.sandbox import sandbox_available
 from claude_local.types import Budget, Status
@@ -266,6 +266,41 @@ def test_faulted_summary_surfaces_the_upstream_error_message() -> None:
     assert outcome.fault == "context length exceeded"
     assert "context length exceeded" in outcome.summary
     assert "src/thing.py" in outcome.summary
+
+
+def test_derailed_summary_names_the_bound_that_cut_the_generation() -> None:
+    """The exact sibling of the FAULTED case above, and it was the one arm not doing it.
+
+    ``DERAILED`` says a bound fired; it does not say which, and the four bounds ask for four
+    different responses — raise the token cap, raise the timeout, fix a prompt the model keeps
+    repeating, chase a server streaming bytes and no content. The reason has a single owner on
+    the generation, so the summary quotes it rather than restating a class of failure.
+    """
+    outcome = Outcome(
+        status=Status.DERAILED,
+        code=None,
+        impl_path="src/thing.py",
+        files_changed=(),
+        record=build_local_economy_record(status=Status.DERAILED),
+        derail_reason=DerailReason.TOKEN_CAP,
+    )
+    assert outcome.derail_reason is DerailReason.TOKEN_CAP
+    assert DerailReason.TOKEN_CAP.value in outcome.summary
+    assert "src/thing.py" in outcome.summary
+
+
+def test_a_derailed_summary_with_no_recorded_reason_still_reads_as_a_sentence() -> None:
+    """Oracle: the field defaults to None, so the arm must not interpolate an empty bound name."""
+    outcome = Outcome(
+        status=Status.DERAILED,
+        code=None,
+        impl_path="src/thing.py",
+        files_changed=(),
+        record=build_local_economy_record(status=Status.DERAILED),
+    )
+    assert "derailed" in outcome.summary.lower()
+    assert "()" not in outcome.summary
+    assert "None" not in outcome.summary
 
 
 # --- Unit: no-edit exits ignore a caller-seeded implementation target ---------------

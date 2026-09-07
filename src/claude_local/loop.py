@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from claude_local.client import GenerationResult, ModelClient
+    from claude_local.derail import DerailReason
     from claude_local.prompt import PromptBuilder
     from claude_local.runner import OracleRun, TestRunner, TestScore
     from claude_local.snapshot import SnapshotStore
@@ -111,6 +112,14 @@ class AttemptProgress:
     shapes of "the model made no progress" — identical words, and different words that get no
     further — while the third says why the loop kept paying anyway. A watcher given only some of
     them sees either a loop re-buying a known answer or an escalation with no trigger.
+
+    ``blocked_reason`` names WHICH structural cause fired, and is set exactly when ``blocked`` is
+    true — the two are computed from the same branch, so they cannot disagree. Two very different
+    problems reach ``blocked``: a reply carrying no whole-file frame at all (a formatting failure),
+    and one framed at a path outside the single writable one (a targeting failure). The second
+    already knows the path it aimed at when the write is refused; discarding that left an operator
+    watching two indistinguishable "the model returned nothing usable" lines for problems whose
+    fixes have nothing in common.
     """
 
     attempt: int
@@ -119,6 +128,7 @@ class AttemptProgress:
     repeats_previous: bool = False
     plateaued: bool = False
     nudged: bool = False
+    blocked_reason: str | None = None
 
     @property
     def blocked(self) -> bool:
@@ -150,6 +160,20 @@ class _ScoredAttempt:
 
 
 @dataclass(frozen=True, slots=True)
+class _AttemptResult:
+    """What one generation yielded: a scored attempt, or the reason it never reached the oracle.
+
+    Both arms in one value because the caller needs them at the same moment — it reports the
+    attempt and decides the next tail from the same fact, and splitting them would put a second
+    writer on one classification. ``blocked_reason`` is set only for the causes that are the
+    attempt's own shape; a server fault and a derail are already named on the generation.
+    """
+
+    scored: _ScoredAttempt | None
+    blocked_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LoopResult:
     """One task's loop outcome: the terminal status, the best score seen, and the economy record.
 
@@ -158,12 +182,19 @@ class LoopResult:
     fact. ``fault`` carries
     the upstream error message when the run terminated ``FAULTED`` (a server-side SSE error frame),
     else ``None``.
+
+    ``derail_reason`` is the symmetric field for ``DERAILED``: WHICH bound cut the last generation,
+    read off its single owner on the generation itself. The status alone says a bound fired, and
+    the four bounds want four different responses — raise the token cap, raise the timeout, fix a
+    prompt the model keeps repeating, chase a server that streams bytes and no content — so a
+    result that named only the class of failure left every one of them to guesswork.
     """
 
     status: Status
     best_score: TestScore | None
     record: LocalEconomyRecord
     fault: str | None = None
+    derail_reason: DerailReason | None = None
 
     @property
     def has_scored_edit(self) -> bool:
@@ -172,7 +203,7 @@ class LoopResult:
 
 
 def _classify_terminal(
-    best_score: TestScore | None, derailed: bool, blocked: bool, faulted: bool
+    best_score: TestScore | None, *, faulted: bool, derailed: bool, blocked: bool
 ) -> Status:
     """Classify the loop's terminal status by strict precedence.
 
@@ -181,6 +212,11 @@ def _classify_terminal(
     upstream SSE error frame — the host failed, not the model) outranks a derail (the
     bounded-decode kill), which outranks a structural block (no usable edit for the permitted
     path), which outranks plain budget exhaustion (attempts spent with a partial best).
+
+    The three flags are keyword-only, and declared in that same precedence order. Positionally
+    they were three ``bool`` parameters in a DIFFERENT order from the one this docstring states,
+    so a caller who typed them as written here silently swapped fault and derail — a call the
+    type checker cannot fault, since the arguments differ only in meaning.
     """
     if best_score is not None and best_score.is_green:
         return Status.DONE
@@ -206,7 +242,7 @@ def _terminal_status(
     derailed = final is not None and final.derail_reason is not None
     faulted = final is not None and final.fault is not None
     blocked = final is not None and not scored and not derailed and not faulted
-    return _classify_terminal(best_score, derailed, blocked, faulted)
+    return _classify_terminal(best_score, faulted=faulted, derailed=derailed, blocked=blocked)
 
 
 class Loop:
@@ -272,11 +308,12 @@ class Loop:
         plateau = _Plateau()
 
         for index in range(spec.budget.max_attempts):
-            tail = reframe if last_attempt is None else self._repair_brief(last_attempt, nudge)
+            tail, nudged = self._next_tail(last_attempt, nudge, reframe)
             generation = self._client.generate(stable, tail, spec.budget)
             repeats_previous = bool(results) and generation.text == results[-1].text
             results.append(generation)
-            last_attempt = self._score_attempt(generation, index, spec, worktree, oracle_path)
+            attempted = self._score_attempt(generation, index, spec, worktree, oracle_path)
+            last_attempt = attempted.scored
             score = None if last_attempt is None else last_attempt.run.score
             plateau.record(score)
             if self._on_attempt is not None:
@@ -287,7 +324,8 @@ class Loop:
                         score=score,
                         repeats_previous=repeats_previous,
                         plateaued=plateau.reached,
-                        nudged=bool(nudge),
+                        nudged=nudged,
+                        blocked_reason=attempted.blocked_reason,
                     )
                 )
             if last_attempt is None:
@@ -305,11 +343,40 @@ class Loop:
                 break
             nudge = escalation
 
+        return self._finish(planning, results, scored=last_attempt is not None)
+
+    def _next_tail(
+        self, last_attempt: _ScoredAttempt | None, nudge: str, reframe: str
+    ) -> tuple[str, bool]:
+        """The next attempt's volatile tail, and whether that tail carried an escalation.
+
+        The two travel together because the second is a fact ABOUT the first, and reading them
+        apart is how they came to disagree: a correction replaces the tail outright with a reframe
+        and does NOT clear the escalation (only the repair path reassigns it), so an attempt
+        reframed after an earlier stall reported an escalation its prompt never carried.
+
+        A scored last attempt earns a repair brief — the file it wrote and how it failed. One that
+        reached no oracle has nothing to quote back, so it gets the reframe instead.
+        """
+        if last_attempt is None:
+            return reframe, False
+        return self._repair_brief(last_attempt, nudge), bool(nudge)
+
+    def _finish(
+        self, planning: list[GenerationResult], results: list[GenerationResult], *, scored: bool
+    ) -> LoopResult:
+        """Restore the best attempt, classify how the run ended, and total what it burned.
+
+        The exit phase, whole: every branch here reads the run's accumulated facts and none of them
+        can advance it, so keeping them in the loop body only lent the iteration's variables a
+        second, longer life. ``scored`` is whether the LAST attempt reached the oracle, which is
+        what separates a structural block from plain exhaustion.
+        """
         self._snapshots.restore_best()
         best = self._snapshots.best()
         best_score = best.score if best is not None else None
         final = results[-1] if results else None
-        status = _terminal_status(final, scored=last_attempt is not None, best_score=best_score)
+        status = _terminal_status(final, scored=scored, best_score=best_score)
         record = LocalEconomyRecord.from_run(
             model=self._model,
             rules_card_digest=self._prompt.card_digest,
@@ -323,6 +390,7 @@ class Loop:
             best_score=best_score,
             record=record,
             fault=final.fault if final is not None else None,
+            derail_reason=final.derail_reason if final is not None else None,
         )
 
     def _plan(self, spec: TaskSpec) -> tuple[list[GenerationResult], str]:
@@ -409,26 +477,30 @@ class Loop:
         spec: TaskSpec,
         worktree: Path,
         oracle_path: Path,
-    ) -> _ScoredAttempt | None:
-        """Apply one generation and score it; ``None`` when it never reached the oracle.
+    ) -> _AttemptResult:
+        """Apply one generation and score it, or say why it never reached the oracle.
 
-        Every way an attempt can yield nothing to score collapses to ``None`` here: an upstream
-        server fault (the host failed, not the model), a derail the guard cut, a reply carrying no
-        usable whole-file frame, and an edit aimed outside the one permitted path. Folding them
-        into one return is what lets the caller report and classify every attempt at a single
-        site instead of at five scattered breaks.
+        Every way an attempt can yield nothing to score arrives back through one value: an
+        upstream server fault (the host failed, not the model), a derail the guard cut, a reply
+        carrying no usable whole-file frame, and an edit aimed outside the one permitted path.
+        Folding them into one return is what lets the caller report and classify every attempt at
+        a single site instead of at five scattered breaks.
+
+        The two STRUCTURAL causes also carry a reason out, because they are the two the caller
+        cannot reconstruct: the fault and the derail are already named on the generation itself,
+        while a refusal knows a path that exists nowhere else once this frame returns.
         """
         if generation.fault is not None or generation.derail_reason is not None:
-            return None
+            return _AttemptResult(None)
         reply = extract_file(generation.text)
-        if reply is None:  # prose with no usable whole-file reply
-            return None
+        if reply is None:
+            return _AttemptResult(None, "the reply carried no whole-file frame to write")
         try:
             apply_file(reply, worktree, spec.impl_path)
-        except KeepOnlyViolation:  # an edit aimed outside the one permitted path
-            return None
+        except KeepOnlyViolation as refusal:
+            return _AttemptResult(None, str(refusal))
         run = self._runner.run(oracle_path, worktree, spec.expected_tests)
         self._snapshots.record(index, run.score)
         # The payload validated as UTF-8 on the way in, so decoding returns the applied bytes
         # exactly — the file the oracle just scored, not what the reply meant to write.
-        return _ScoredAttempt(source=reply.payload.decode("utf-8"), run=run)
+        return _AttemptResult(_ScoredAttempt(source=reply.payload.decode("utf-8"), run=run))

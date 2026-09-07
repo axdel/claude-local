@@ -46,6 +46,7 @@ from claude_local.types import Status
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
 
+    from claude_local.derail import DerailReason
     from claude_local.types import TaskSpec
 
 _BUNDLED_RULES_CARD = Path(__file__).parent / "rules_card.md"
@@ -61,7 +62,10 @@ class Outcome:
     caller-seeded target already on disk. ``files_changed`` is ``(impl_path,)`` exactly when
     ``code`` is present. ``record`` is the local half of the economy story; the orchestrator owns
     the net-savings verdict, never this object. ``fault`` carries the upstream error message when
-    status is ``FAULTED`` (a server-side SSE error frame stopped the run), else ``None``.
+    status is ``FAULTED`` (a server-side SSE error frame stopped the run), else ``None``, and
+    ``derail_reason`` is its exact sibling for ``DERAILED`` — WHICH bound cut the last generation.
+    Both name the specific cause behind a status word, because that is what a caller can act on:
+    a token cap, a timeout, and a repetition loop end a run identically and are fixed differently.
     """
 
     status: Status
@@ -70,6 +74,7 @@ class Outcome:
     files_changed: tuple[str, ...]
     record: LocalEconomyRecord
     fault: str | None = None
+    derail_reason: DerailReason | None = None
 
     @property
     def summary(self) -> str:
@@ -87,8 +92,9 @@ class Outcome:
                     f"kept the best partial (the oracle test did not pass)."
                 )
             case Status.DERAILED:
+                bound = f" ({self.derail_reason.value})" if self.derail_reason else ""
                 return (
-                    f"Generation derailed on {self.impl_path} within the decode budget; "
+                    f"Generation derailed on {self.impl_path} within the decode budget{bound}; "
                     f"produced no passing implementation."
                 )
             case Status.BLOCKED:
@@ -198,6 +204,7 @@ def implement(
             files_changed=files_changed,
             record=result.record,
             fault=result.fault,
+            derail_reason=result.derail_reason,
         )
     finally:
         if owns_client:

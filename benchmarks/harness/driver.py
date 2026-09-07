@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from claude_local import Outcome, implement
+from claude_local import BackendUnavailable, OracleError, Outcome, SandboxUnavailable, implement
 
 from .case import BenchmarkCase
 
@@ -29,6 +29,25 @@ if TYPE_CHECKING:
     import httpx
 
     from claude_local import AttemptProgress
+
+
+class BenchmarkInterrupted(RuntimeError):
+    """A harness fault stopped a sweep partway; carries the cases that finished before it.
+
+    A harness fault is the host failing, not a case failing, so it must stay loud — it is raised,
+    never folded into a case status. But every case already finished is a measurement that cost
+    real decode time, and a sweep is hours long: letting the fault propagate bare discarded all of
+    them to report the one that broke. The two facts are not in tension, so both travel — the
+    exception says the run did not complete, ``completed`` says what it measured before it stopped.
+
+    The underlying fault is the ``__cause__``, chained rather than restated, so nothing here can
+    disagree with the error the host actually raised. D-BACKEND-004 narrowed how often a healthy
+    sweep reaches this path; this is what happens when it reaches it anyway.
+    """
+
+    def __init__(self, completed: list[CaseResult]) -> None:
+        self.completed = completed
+        super().__init__(f"benchmark stopped after {len(completed)} completed case(s)")
 
 
 class BenchmarkProgress(Protocol):
@@ -180,12 +199,15 @@ def run_cases(
     for index, (case_id, case) in enumerate(cases.items(), start=1):
         if progress is not None:
             progress.case_started(case_id, case, index, total)
-        outcome = driver.run_case(
-            case,
-            http_client=http_client,
-            on_delta=None if progress is None else progress.delta,
-            on_attempt=None if progress is None else progress.attempt,
-        )
+        try:
+            outcome = driver.run_case(
+                case,
+                http_client=http_client,
+                on_delta=None if progress is None else progress.delta,
+                on_attempt=None if progress is None else progress.attempt,
+            )
+        except (BackendUnavailable, SandboxUnavailable, OracleError) as fault:
+            raise BenchmarkInterrupted(results) from fault
         result = CaseResult(case_id=case_id, outcome=outcome)
         results.append(result)
         if progress is not None:

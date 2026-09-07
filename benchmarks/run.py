@@ -27,7 +27,8 @@ end; ``--out DIR`` also writes the scorecard as JSON. The process exits 0 only w
 passed, 1 when any case failed, 2 for a usage error (no model named, or an unknown ``--only`` id),
 and 3 when the benchmark harness itself faults — the prerequisite server is unreachable, the kernel
 sandbox is unavailable, or an oracle is broken. Exit 3 is a broken *host*, distinct from exit 1's
-model that simply failed the task.
+model that simply failed the task. A fault partway through still scores and writes the cases that
+finished first: the run did not complete, but what it measured before stopping is not thrown away.
 
 ``--only <case_id>`` narrows the run to the named cases and is repeatable. A scorecard is a claim
 about a whole ladder, so the full run stays the default — but when the question is why ONE case
@@ -49,9 +50,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from benchmarks.harness import load_cases, run_cases, score_cases, write_produced_code
+from benchmarks.harness import (
+    BenchmarkInterrupted,
+    load_cases,
+    run_cases,
+    score_cases,
+    write_produced_code,
+)
 from benchmarks.harness.style import collect_style_findings
-from claude_local import BackendUnavailable, OracleError, SandboxUnavailable
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -171,8 +177,12 @@ def _attempt_verdict(progress: AttemptProgress) -> str:
 
     The four arms are the loop's own terminal shapes. Each is a distinct thing to do about it:
     a partial score means keep going, a fault means fix the server, a derail means the decode
-    bounds are wrong for this task, and a missing frame means the model is not answering in
-    protocol at all.
+    bounds are wrong for this task, and a block means the model produced nothing to score.
+
+    The block arm quotes the loop's recorded reason rather than restating a phrase, because two
+    unrelated problems land there: a reply that framed nothing (the model is not answering in
+    protocol) and one framed at a path outside the permitted impl (it is answering in protocol
+    and aiming elsewhere). A fixed phrase named only the first, so the second read as the first.
     """
     if progress.score is not None:
         return f"{progress.score.passed}/{progress.score.expected} oracle tests passed"
@@ -180,7 +190,7 @@ def _attempt_verdict(progress: AttemptProgress) -> str:
         return f"server fault: {progress.generation.fault}"
     if progress.generation.derail_reason is not None:
         return f"derailed ({progress.generation.derail_reason.value})"
-    return "no usable file frame"
+    return progress.blocked_reason or "no usable file frame"
 
 
 class ConsoleProgress:
@@ -283,7 +293,9 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
 
     Returns the process exit code: 0 when every case passed, 1 when any case failed, 2 for a usage
     error (no model named), and 3 when the benchmark harness itself faults (unreachable server,
-    unavailable sandbox, or broken oracle). An injected ``http_client`` is shared across the cases
+    unavailable sandbox, or broken oracle) — writing a scorecard for the cases that finished before
+    the fault, since exit 3 says the run stopped, not that it measured nothing. An injected
+    ``http_client`` is shared across the cases
     and left open for its caller (the tests replay the transport through it); when omitted, each
     case owns a per-case client against the real server.
     """
@@ -312,6 +324,11 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
         # Rebuilt from the loaded mapping, never from argv, so the ladder order is the committed
         # one: a case must never be driven from a later case's position in the progression.
         cases = {case_id: case for case_id, case in cases.items() if case_id in selected}
+    # A harness fault is the HOST failing, so it always ends the run at exit 3 — but the cases
+    # that finished first are hours of decode already paid for, and scoring them costs nothing.
+    # The fault is reported after the scorecard is written, so the last line an operator reads is
+    # why the run stopped rather than a filename that makes it look like it completed.
+    interruption: BaseException | None = None
     try:
         results = run_cases(
             cases,
@@ -322,8 +339,11 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
             generation_params=args.generation_params,
             rules_card_path=args.rules_card,
         )
-    except (BackendUnavailable, SandboxUnavailable, OracleError) as fault:
-        print(f"error: benchmark harness fault: {fault}", file=sys.stderr)
+    except BenchmarkInterrupted as interrupted:
+        results = interrupted.completed
+        interruption = interrupted.__cause__ or interrupted
+    if not results:
+        print(f"error: benchmark harness fault: {interruption}", file=sys.stderr)
         return 3
     scorecard = score_cases(results)
     # The scorecard says how many oracle tests passed; only the code says whether what passed them
@@ -342,6 +362,15 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     if args.out is not None:
         written = scorecard.write(args.out, stamp_ms)
         print(f"scorecard written to {written}", file=sys.stderr)
+    if interruption is not None:
+        # Last, so it is what an operator reads after the artifact lines — and 3 outranks the
+        # pass/fail verdict below, because a partial ladder never earns a green.
+        print(f"error: benchmark harness fault: {interruption}", file=sys.stderr)
+        print(
+            f"the scorecard covers the {len(results)} case(s) that finished before it",
+            file=sys.stderr,
+        )
+        return 3
     return 0 if scorecard.cases_passed == scorecard.cases_total else 1
 
 
