@@ -25,8 +25,9 @@ from pathlib import Path
 
 import pytest
 
+from claude_local import sandbox
 from claude_local.sandbox import (
-    SandboxTimeout,
+    SandboxKilled,
     SandboxUnavailable,
     _build_profile,
     sandbox_available,
@@ -320,12 +321,42 @@ def test_a_hanging_command_is_killed_at_the_timeout_with_bounded_diagnostics(
     )
     started = time.monotonic()
 
-    with pytest.raises(SandboxTimeout) as excinfo:
+    with pytest.raises(SandboxKilled) as excinfo:
         sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box, timeout_s=2.0)
 
     assert time.monotonic() - started < 15.0
     assert excinfo.value.stdout == b"started\n"
     assert excinfo.value.stderr == b"still-running\n"
+
+
+def test_a_cpu_burning_command_dies_through_the_signal_path_not_the_wall_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Oracle: RLIMIT_CPU is set strictly below the wall clock, so a busy loop cannot reach it.
+
+    A busy loop burns ~1 CPU-second per wall-second, so the CPU cap fires first and the kernel
+    kills the child outright — ``communicate`` then returns normally with a negative returncode and
+    raises no ``TimeoutExpired``. That is a different exit from the sleeping-hang test above, and
+    is the one a weak model actually produces (``while True:`` in the impl). Both must surface as a
+    repairable attempt; a silent normal return makes the caller see a missing report and abort the
+    whole run as a broken oracle.
+
+    The cap is patched down so this costs a second rather than a minute. ``_apply_rlimits`` reads
+    the constant post-fork inside ``preexec_fn``, so the forked child inherits the patched value.
+    """
+    box = tmp_path / "box"
+    box.mkdir()
+    monkeypatch.setattr(sandbox, "_MAX_CPU_SECONDS", 1)
+    payload = "import sys\nprint('burning', flush=True)\nwhile True:\n    pass\n"
+    started = time.monotonic()
+
+    with pytest.raises(SandboxKilled) as excinfo:
+        sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box, timeout_s=60.0)
+
+    # Well under the wall clock: proof the CPU cap is what fired, not the timeout we did not reach.
+    assert time.monotonic() - started < 30.0
+    assert "SIGXCPU" in str(excinfo.value)
+    assert excinfo.value.stdout == b"burning\n"
 
 
 def test_home_points_into_the_box_not_the_developer_home(tmp_path: Path) -> None:

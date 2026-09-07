@@ -73,8 +73,17 @@ class SandboxUnavailable(RuntimeError):
     """Raised when ``sandbox-exec`` is absent — untrusted code is never run unconfined."""
 
 
-class SandboxTimeout(TimeoutError):
-    """A killed oracle command's timeout fact and bounded diagnostic stream tails."""
+class SandboxKilled(RuntimeError):
+    """A confined command died before producing a verdict, with bounded diagnostic tails.
+
+    Two deaths reach here and the loop treats both the same way — as a repairable failed attempt,
+    never a broken oracle. One is ours: the wall clock we set expired and we killed the group. The
+    other is the kernel's: a resource cap fired (``RLIMIT_CPU`` is deliberately below the wall
+    clock, so a busy loop exits this way) or the child faulted. The message names which.
+
+    They are one class because nothing branches on the difference — both mean pytest wrote no
+    report through no fault of the harness, so the verdict is zero and the tails are the feedback.
+    """
 
     def __init__(
         self,
@@ -110,7 +119,8 @@ def sandboxed_spawn(
 
     Raises:
         SandboxUnavailable: ``sandbox-exec`` is not present on this host.
-        SandboxTimeout: the command exceeded ``timeout_s`` and was killed.
+        SandboxKilled: the command exceeded ``timeout_s``, or the kernel killed it with a signal —
+            a CPU-cap overrun or a fault. Either way it produced no verdict.
     """
     if not sandbox_available():
         raise SandboxUnavailable(
@@ -153,12 +163,29 @@ def sandboxed_spawn(
         stdout = _read_tail(stdout_file)
         stderr = _read_tail(stderr_file)
         if timeout_error is not None:
-            raise SandboxTimeout(
+            raise SandboxKilled(
                 f"oracle exceeded the {timeout_s:g}s wall-clock budget",
                 stdout=stdout,
                 stderr=stderr,
             ) from timeout_error
+        # A signal death returns from communicate() NORMALLY, with no TimeoutExpired to catch, so
+        # the negative returncode is the only evidence it happened. Left unread, the caller sees a
+        # completed run that wrote no report and calls the oracle broken — aborting a whole sweep
+        # over one impl that merely failed to terminate.
+        if proc.returncode is not None and proc.returncode < 0:
+            raise SandboxKilled(_signal_death(-proc.returncode), stdout=stdout, stderr=stderr)
         return stdout, stderr
+
+
+def _signal_death(signum: int) -> str:
+    """Describe a signal death, attributing the cause when the limit that killed it is ours."""
+    try:
+        name = signal.Signals(signum).name
+    except ValueError:
+        name = f"signal {signum}"
+    if signum == signal.SIGXCPU:
+        return f"oracle was killed by {name}: it exceeded the {_MAX_CPU_SECONDS}s CPU-time cap"
+    return f"oracle was killed by {name} before producing a verdict"
 
 
 def _read_tail(stream: BinaryIO) -> bytes:

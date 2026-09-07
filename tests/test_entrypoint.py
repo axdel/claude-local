@@ -518,7 +518,7 @@ def test_implement_e2e_binds_budget_timeout_to_the_sandbox() -> None:
 
     Proves ``spec.budget.oracle_timeout_s`` is bound into the oracle sandbox (the composition-root
     timeout wiring): a mutant that dropped the binding and fell back to the 120s default would blow
-    this wall-clock bound. The hang → SandboxTimeout → zero verdict → budget spent → EXHAUSTED.
+    this wall-clock bound. The hang → SandboxKilled → zero verdict → budget spent → EXHAUSTED.
     """
     spec = build_task_spec(
         impl_path="src/adder.py",
