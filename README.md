@@ -139,6 +139,7 @@ author-oracle → implement-local → verify recipe.
 
 ## How It Works
 
+<!-- prefix-enumeration -->
 ```
 distilled rules card + tight spec + optional ordered read-only context + FAILING TEST
         |                                                         (frontier-authored, immutable)
@@ -157,6 +158,7 @@ distilled rules card + tight spec + optional ordered read-only context + FAILING
         v
    return an Outcome — status + produced code + local-economy record — to the orchestrator
 ```
+<!-- /prefix-enumeration -->
 
 Three deliberate choices make weak models usable:
 

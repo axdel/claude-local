@@ -12,11 +12,13 @@ same loop at your own task.
 
 ## What claude-local is (and is not)
 
+<!-- prefix-enumeration -->
 - **A loop, not an agent.** It hands the model a rules card, the spec, any optional ordered
   read-only context files, and the immutable oracle test — optionally spending one generation
   first on a plan the model writes itself, then frozen into the prefix; applies the whole-file
   implementation the model returns to one permitted path; runs the test; and feeds any failure
   back — all under a hard token/attempt budget with a derail guard.
+<!-- /prefix-enumeration -->
 - **Test-first and supervised.** *You* (the orchestrator) author the oracle test; the model
   never writes or edits it. That is what makes green trustworthy — the model could not have
   changed the test to pass it.

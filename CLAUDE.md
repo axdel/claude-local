@@ -6,13 +6,16 @@ orchestrator-owned immutable oracle test, the derail guard, and the measurement/
 
 ## What this is
 
-A deterministic loop — not an agent — hands a local model a distilled rules card, a tight
-spec, any optional ordered, read-only neighbor files, and a frontier-authored **failing test the
-model may never write**. It may first spend one generation on a plan — the model's own, frozen
-into the prefix last and re-read on every attempt after. The model returns a complete
-implementation file as raw text; the loop applies it to the one permitted impl path — never a
-context file — runs the test, and feeds the failure back under a hard token budget and a derail
-guard. The test is the oracle: green means
+<!-- prefix-enumeration -->
+A deterministic loop — not an agent — hands a local model a distilled rules card, a tight spec,
+any optional ordered read-only context files, and a frontier-authored **failing test the model
+may never write**. It may first spend one generation on a plan — the model's own, frozen into the
+prefix last and re-read on every attempt after.
+<!-- /prefix-enumeration -->
+
+The model returns a complete implementation file as raw text; the loop applies it to the one
+permitted impl path — never a context file — runs the test, and feeds the failure back under a
+hard token budget and a derail guard. The test is the oracle: green means
 done — against a model that is wrong, not one that is hostile, because the verdict is computed in
 the same process that runs the model's file (D-ORACLE-004, D-ORACLE-006). Every task is metered,
 so the system can tell — per task

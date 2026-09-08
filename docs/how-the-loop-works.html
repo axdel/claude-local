@@ -306,9 +306,9 @@ you always walk away holding the best implementation the model produced, byte-fo
 <p>Local inference is bound by memory bandwidth, and the most expensive part of a call is re-reading a
 long prompt. Model servers cache that work &mdash; the <em>prefill KV cache</em> &mdash; but only for a prefix that
 is <strong>byte-for-byte identical</strong> to a previous call. So the loop makes the front of the prompt a hard
-invariant: the rules card, the spec, any optional context files in their supplied order, the
+invariant: <!-- prefix-enumeration -->the rules card, the spec, any optional context files in their supplied order, the
 immutable test, and &mdash; when plan-first is on &mdash; the plan the model wrote before it started
-implementing, in a fixed layout, with no builder-generated timestamps, run ids, or absolute
+implementing<!-- /prefix-enumeration -->, in a fixed layout, with no builder-generated timestamps, run ids, or absolute
 worktree paths. Context files sit between the spec and test; when none are supplied, that segment
 disappears completely, preserving
 the original empty-context prefix bytes. The plan is appended <em>last</em>, so the planning call's

@@ -6,7 +6,10 @@ the task spec, any ordered read-only context files, the IMMUTABLE test, and the 
 per task, in a fixed layout with no builder-generated timestamps, run ids, or absolute worktree
 paths. This docstring and ``stable_prefix`` below are the enumeration; every other mention of the
 prefix's composition cites them rather than copying the list, because a copied list is what went
-stale when the plan was added (INV-017). Pinning the test in
+stale when the plan was added (INV-017). Four orientation documents are the bounded exception
+(D-DOC-001) — a reader meeting the system for the first time needs the list in front of them, not
+a pointer into a module — and each marks its copy with ``<!-- prefix-enumeration -->`` so a
+differential test scans it against this method's own section constants. Pinning the test in
 the prefix also blocks the model from rewriting or importing it away. Only the tail varies: the
 repair brief — the file the last attempt wrote, then how it failed — each section byte-capped and
 path-stripped so neither can starve the other or prime a derail.

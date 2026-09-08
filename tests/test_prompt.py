@@ -228,61 +228,105 @@ def test_real_card_prefix_has_no_volatile_tokens() -> None:
         assert sub not in prefix, f"forbidden volatile substring: {sub}"
 
 
-# Every document that enumerates what the model is handed. Each carries its own copy of the
-# composition — prose, an ASCII diagram, a bullet — and each is a place the list can go stale
-# independently of the builder that actually assembles it.
-_PREFIX_ENUMERATION_DOCUMENTS = (
-    "docs/how-the-loop-works.html",
-    "README.md",
-    "CLAUDE.md",
-    "skills/claude-local/SKILL.md",
+# A deliberate copy of the prefix's composition is delimited by these markers. Everything between
+# them is scanned; everything outside is not, so an unrelated sentence elsewhere in the file can
+# no longer satisfy the check on a coincidence. Both are HTML comments, invisible in rendered
+# markdown and in the HTML walkthrough, and both sit OUTSIDE any fenced code block.
+_ENUMERATION_OPEN = "<!-- prefix-enumeration -->"
+_ENUMERATION_CLOSE = "<!-- /prefix-enumeration -->"
+
+# Regions are discovered by walking the tree, so a document that starts carrying a copy is covered
+# without anyone remembering to register it — which is how src/claude_local/__init__.py went
+# unguarded. This set is the ratchet in the other direction: deleting a marker from one of these
+# reddens instead of silently shrinking the guard's scope.
+_DOCUMENTS_REQUIRED_TO_CARRY_AN_ENUMERATION = frozenset(
+    {
+        "docs/how-the-loop-works.html",
+        "README.md",
+        "CLAUDE.md",
+        "skills/claude-local/SKILL.md",
+    }
+)
+
+_DIRECTORIES_NOT_SEARCHED = frozenset(
+    {".git", ".venv", ".pytest_cache", ".ruff_cache", "models", "node_modules"}
 )
 
 
-def test_every_document_enumerating_the_prefix_names_each_section_it_can_carry() -> None:
-    """No published enumeration of the prefix may fall behind the builder that assembles it.
+def _marked_enumerations(root: Path) -> tuple[dict[str, list[str]], list[str]]:
+    """Every marked enumeration region in the tree, plus any marker left unterminated."""
+    regions: dict[str, list[str]] = {}
+    unterminated: list[str] = []
+    for path in sorted([*root.rglob("*.md"), *root.rglob("*.html")]):
+        relative = path.relative_to(root)
+        if _DIRECTORIES_NOT_SEARCHED & set(relative.parts):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if _ENUMERATION_OPEN not in text:
+            continue
+        found: list[str] = []
+        for chunk in text.split(_ENUMERATION_OPEN)[1:]:
+            if _ENUMERATION_CLOSE not in chunk:
+                unterminated.append(relative.as_posix())
+                continue
+            found.append(chunk.split(_ENUMERATION_CLOSE)[0])
+        regions[relative.as_posix()] = found
+    return regions, unterminated
+
+
+def test_every_marked_prefix_enumeration_names_each_section_it_can_carry() -> None:
+    """No published copy of the prefix's composition may fall behind the builder that assembles it.
 
     Oracle: the section set is read out of ``stable_prefix``'s own source rather than listed
     here — every ``_<NAME>_HEADER`` the method references is a section it can emit, and the
     constant's stem is the word a reader scans for. A sixth section added to the builder
-    therefore reddens this test until every document names it, which a hand-copied list here
+    therefore reddens this test until every marked copy names it, which a hand-copied list here
     could not do.
 
-    This is a differential test because the prose is the half that rots, and it rots in more
-    than one place at a time: plan-first added a fifth section and *four* documents kept
-    describing four parts. Guarding only the walkthrough fixed one site of a class, so the
-    document list above is the class. The rules card is the prefix's remaining member and is
-    deliberately not covered here; it is pinned instead by the card-digest chain (D-CARD-003),
-    which a prose edit cannot move.
+    ``prompt.py``'s module docstring and ``stable_prefix`` are the one authoritative enumeration;
+    every other mention cites them rather than copying. Four orientation documents are the bounded
+    exception (D-DOC-001) — a reader meeting the system for the first time needs the list in front
+    of them, not a pointer into a module — and this test is the mechanism that makes the exception
+    safe. The rules card is the prefix's remaining member and is deliberately not covered here; it
+    is pinned instead by the card-digest chain (D-CARD-003), which a prose edit cannot move.
 
-    The stem is matched on word boundaries, not as a substring: ``"explanation"`` contains
-    ``"plan"``, so a substring test would have gone green on a document that never mentions the
-    plan section at all.
+    Scanning is region-bounded because whole-file scanning does not weakly verify an enumeration —
+    it does not verify it at all. The previous whole-file form passed ``CLAUDE.md`` on a
+    coincidence: that file's enumeration said "read-only neighbor files" and the word ``context``
+    appeared nowhere in it except an unrelated sentence about the write target, so the section
+    could have been dropped from the list entirely and the test would still have gone green. It
+    also passed ``README.md`` while its diagram was stale, because ``plan`` occurred twice naming
+    the orchestrator's plan-then-author-oracle recipe — a homonym. Markers cost four HTML comments
+    and remove both failure modes; the earlier objection that the README's diagram sits inside a
+    fenced code block is answered by putting the markers outside the fence.
 
-    Known weakness, measured rather than supposed: this scans each document *whole*, so a stem
-    already present in another sense satisfies it while the enumeration stays stale. Widening
-    this test caught CLAUDE.md and SKILL.md and left README.md green — its diagram still listed
-    four parts, but ``plan`` appeared twice elsewhere naming the orchestrator's
-    plan-then-author-oracle recipe, an unrelated homonym. That site was fixed by reading it, not
-    by this assertion. So it is a ratchet against a section whose stem is *new* to a document,
-    which is the failure that actually happened; it is not a proof that any enumeration is
-    complete. Scoping it tighter would need a marker in each document, and the README's
-    enumeration sits inside a fenced code block where an HTML comment would render as literal
-    text — so the honest limitation is cheaper than a fragile anchor.
+    Stems match on word boundaries: ``"explanation"`` contains ``"plan"``, so a substring test
+    would accept a document that never mentions the plan section.
+
+    An unterminated marker is its own failure rather than a silently skipped file, which is what
+    caught the one hazard this design introduces: prose that *pastes* the opening marker to talk
+    about it opens a region the scan then cannot close. Three primitive files did exactly that
+    describing this mechanism. Documentation names the marker; only the four documents paste it.
     """
     prefix_source = inspect.getsource(PromptBuilder.stable_prefix)
     sections = {name.lower() for name in re.findall(r"_([A-Z]+)_HEADER", prefix_source)}
     assert sections, "no prefix section constants found — the extraction itself is broken"
 
     root = Path(__file__).parents[1]
+    regions, unterminated = _marked_enumerations(root)
+    assert not unterminated, f"enumeration marker opened but never closed in: {unterminated}"
+
+    missing_documents = sorted(_DOCUMENTS_REQUIRED_TO_CARRY_AN_ENUMERATION - regions.keys())
+    assert not missing_documents, f"no marked enumeration in: {missing_documents}"
+
     stale: list[str] = []
-    for relative_path in _PREFIX_ENUMERATION_DOCUMENTS:
-        document = (root / relative_path).read_text(encoding="utf-8")
-        unmentioned = sorted(
-            s for s in sections if not re.search(rf"\b{re.escape(s)}\b", document, re.IGNORECASE)
-        )
-        if unmentioned:
-            stale.append(f"{relative_path} never names {unmentioned}")
+    for relative_path, found in sorted(regions.items()):
+        for index, region in enumerate(found):
+            unmentioned = sorted(
+                s for s in sections if not re.search(rf"\b{re.escape(s)}\b", region, re.IGNORECASE)
+            )
+            if unmentioned:
+                stale.append(f"{relative_path} region {index} never names {unmentioned}")
     assert not stale, "prefix section(s) missing from: " + "; ".join(stale)
 
 
