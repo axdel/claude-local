@@ -30,7 +30,7 @@ from claude_local.model_registry import generation_params_from_json
 from claude_local.prompt import TARGET_FILE_LABEL
 from claude_local.runner import OracleError
 from claude_local.sandbox import SandboxUnavailable
-from claude_local.session import ChatSession, ModelSession, model_session
+from claude_local.session import ModelSession, SessionHandle, model_session
 from claude_local.telemetry import slug_model_id
 from claude_local.types import Budget, ContextFile, Status, TaskSpec
 
@@ -41,12 +41,12 @@ __all__ = [
     "AttemptProgress",
     "BackendUnavailable",
     "Budget",
-    "ChatSession",
     "ContextFile",
     "ModelSession",
     "OracleError",
     "Outcome",
     "SandboxUnavailable",
+    "SessionHandle",
     "Status",
     "TaskSpec",
     "generation_params_from_json",

@@ -177,9 +177,9 @@ def _resolve_server(args: argparse.Namespace) -> tuple[str, str]:
         _UsageError: no server, or no model, was named.
     """
     if not args.base_url:
-        raise _UsageError("no server given (pass --base-url or set CLAUDE_LOCAL_BASE_URL)")
+        raise _UsageError(f"no server given (pass --base-url or set {BASE_URL_ENV})")
     if not args.model:
-        raise _UsageError("no model given (pass --model or set CLAUDE_LOCAL_MODEL)")
+        raise _UsageError(f"no model given (pass --model or set {MODEL_ENV})")
     return args.base_url, args.model
 
 
@@ -372,9 +372,18 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     # do not, so a scorecard is a whole record rather than half of a pair that must stay together.
     # One clock read serves both writers below, so their names carry the same stamp.
     stamp_ms = int(time.time() * 1000)
-    scorecard = replace(
-        scorecard, style_findings=_count_style_findings(results, scorecard, stamp_ms)
-    )
+    # The linter is a separate process, so a missing or broken one is the HOST failing — the same
+    # class as an interrupted run, reported through the same channel. Caught rather than allowed
+    # to propagate because everything above it is hours of decode, and an unmeasured style count
+    # is the one thing this run can lose without losing what it measured. The scorecard keeps its
+    # `None`, which already means not measured — a different answer from 0.
+    style_fault: Exception | None = None
+    try:
+        scorecard = replace(
+            scorecard, style_findings=_count_style_findings(results, scorecard, stamp_ms)
+        )
+    except (OSError, RuntimeError, ValueError) as unmeasurable:
+        style_fault = unmeasurable
     _print_scorecard(scorecard)
     if args.code_out is not None:
         code_directory = write_produced_code(results, scorecard.model, args.code_out, stamp_ms)
@@ -382,16 +391,37 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     if args.out is not None:
         written = scorecard.write(args.out, stamp_ms)
         print(f"scorecard written to {written}", file=sys.stderr)
-    if interruption is not None:
-        # Last, so it is what an operator reads after the artifact lines — and 3 outranks the
-        # pass/fail verdict below, because a partial ladder never earns a green.
-        print(f"error: benchmark harness fault: {interruption}", file=sys.stderr)
-        print(
-            f"the scorecard covers the {len(results)} case(s) that finished before it",
-            file=sys.stderr,
-        )
+    # Last, so a fault is what an operator reads after the artifact lines — and 3 outranks the
+    # pass/fail verdict below, because a run the host broke never earns a green.
+    if _report_harness_faults(interruption, style_fault, len(results)):
         return 3
     return 0 if scorecard.cases_passed == scorecard.cases_total else 1
+
+
+def _report_harness_faults(
+    interruption: BaseException | None,
+    style_fault: Exception | None,
+    scored_cases: int,
+) -> bool:
+    """Print each harness fault that occurred; return whether any did.
+
+    Each fault says what the scorecard beside it does and does not cover, because an interrupted
+    ladder and an unmeasured style count leave very different holes in the same file: one is
+    missing cases, the other is missing only a number about the cases it has.
+    """
+    if interruption is not None:
+        print(f"error: benchmark harness fault: {interruption}", file=sys.stderr)
+        print(
+            f"the scorecard covers the {scored_cases} case(s) that finished before it",
+            file=sys.stderr,
+        )
+    if style_fault is not None:
+        print(f"error: benchmark harness fault: {style_fault}", file=sys.stderr)
+        print(
+            "the scorecard covers every case that ran; only its style count is absent",
+            file=sys.stderr,
+        )
+    return interruption is not None or style_fault is not None
 
 
 def _count_style_findings(

@@ -96,9 +96,9 @@ model is gone when the block ends, including when it ends by exception:
 ```python
 from claude_local import model_session
 
-with model_session("gpt-oss-20b") as chat:
-    print(chat("write a haiku about static types"))
-    print(chat.last.tokens_per_second)  # the turn's metering, not just its text
+with model_session("gpt-oss-20b") as model:
+    print(model("write a haiku about static types"))
+    print(model.last.tokens_per_second)  # the turn's metering, not just its text
 ```
 
 One keep-alive client serves the whole session, and holding the `system=` prefix identical across

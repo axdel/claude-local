@@ -36,10 +36,10 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
     from contextlib import AbstractContextManager
 
-_CHAT_MAX_TOKENS = 4096
-"""Decode cap for one interactive turn — generous for a chat, far below a whole-file generation."""
+_TURN_MAX_TOKENS = 4096
+"""Decode cap for one interactive turn — generous for one, far below a whole-file generation."""
 
-_CHAT_GENERATION_TIMEOUT_S = 600.0
+_TURN_GENERATION_TIMEOUT_S = 600.0
 """Generation deadline for one interactive turn.
 
 Generous on purpose, and safe for the same reason the benchmark's is: a slow model producing
@@ -47,8 +47,12 @@ steadily is healthy, and silence — not elapsed time — is what the derail gua
 """
 
 
-class ChatSession:
-    """A live model you can call: ``chat("write a haiku")`` returns the text it produced.
+class SessionHandle:
+    """A live model you can call: ``model("write a haiku")`` returns the text it produced.
+
+    Named for the running half of a session the way ``ServerHandle`` is named for the running
+    half of a ``ModelServer`` — this is what ``ModelSession.open()`` yields, so the pair reads
+    the same way at both entry points.
 
     Callable rather than a plain function so one turn's metering survives it. ``__call__``
     returns the text, because printing a dataclass is not what a REPL wants; ``last`` keeps the
@@ -104,8 +108,8 @@ class ModelSession:
         cls,
         name: str,
         *,
-        max_tokens: int = _CHAT_MAX_TOKENS,
-        generation_timeout_s: float = _CHAT_GENERATION_TIMEOUT_S,
+        max_tokens: int = _TURN_MAX_TOKENS,
+        generation_timeout_s: float = _TURN_GENERATION_TIMEOUT_S,
     ) -> ModelSession:
         """Resolve a registered name into a session specification, spawning nothing.
 
@@ -127,10 +131,10 @@ class ModelSession:
             server=ModelServer.for_model(resolved),
             generation_params=resolved.generation_params,
             budget=Budget(
-                max_attempts=1,  # a chat turn is one generation; there is nothing to retry
+                max_attempts=1,  # one turn is one generation; there is nothing to retry
                 max_tokens=max_tokens,
                 generation_timeout_s=generation_timeout_s,
-                # Inert here: a chat runs no oracle. Budget requires it positive, so it takes the
+                # Inert here: a turn runs no oracle. Budget requires it positive, so it takes the
                 # sandbox's own default rather than a number invented for this call site.
                 oracle_timeout_s=DEFAULT_ORACLE_TIMEOUT_S,
             ),
@@ -139,7 +143,7 @@ class ModelSession:
     @contextmanager
     def open(
         self, *, startup_timeout_s: float = DEFAULT_STARTUP_TIMEOUT_S
-    ) -> Generator[ChatSession]:
+    ) -> Generator[SessionHandle]:
         """Serve the model and yield a callable, tearing the server down on the way out.
 
         One keep-alive HTTP client serves the whole session: local inference is
@@ -149,7 +153,7 @@ class ModelSession:
             startup_timeout_s: How long to wait for the server to answer before giving up.
 
         Yields:
-            A ``ChatSession`` bound to the running server.
+            A ``SessionHandle`` bound to the running server.
 
         Raises:
             PortUnavailable: The port is already bound.
@@ -161,23 +165,23 @@ class ModelSession:
             timeout = httpx.Timeout(HTTP_READ_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S)
             with httpx.Client(timeout=timeout) as http:
                 backend = HttpxBackend(handle.base_url, http, served, self.generation_params)
-                yield ChatSession(ModelClient(backend), self.budget, served)
+                yield SessionHandle(ModelClient(backend), self.budget, served)
 
 
 def model_session(
     name: str,
     *,
-    max_tokens: int = _CHAT_MAX_TOKENS,
-    generation_timeout_s: float = _CHAT_GENERATION_TIMEOUT_S,
+    max_tokens: int = _TURN_MAX_TOKENS,
+    generation_timeout_s: float = _TURN_GENERATION_TIMEOUT_S,
     startup_timeout_s: float = DEFAULT_STARTUP_TIMEOUT_S,
-) -> AbstractContextManager[ChatSession]:
+) -> AbstractContextManager[SessionHandle]:
     """Serve a registered model for the duration of a ``with`` block.
 
     The one-liner the REPL wants::
 
-        with model_session("gpt-oss-20b") as chat:
-            print(chat("write a haiku about static types"))
-            print(chat.last.tokens_per_second)
+        with model_session("gpt-oss-20b") as model:
+            print(model("write a haiku about static types"))
+            print(model.last.tokens_per_second)
 
     The server is spawned on entry and gone on exit, including when the block raises.
 
@@ -188,7 +192,7 @@ def model_session(
         startup_timeout_s: How long to wait for the server to answer before giving up.
 
     Returns:
-        A context manager yielding a callable ``ChatSession``.
+        A context manager yielding a callable ``SessionHandle``.
 
     Raises:
         ModelNotPresent: The name is registered but its weights are not in the store.

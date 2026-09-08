@@ -22,7 +22,7 @@ from ports import free_port, port_is_bound
 
 from claude_local.model_registry import ModelNotPresent, UnknownModel
 from claude_local.model_server import ModelServer, ServerNotReady
-from claude_local.session import ChatSession, ModelSession
+from claude_local.session import ModelSession, SessionHandle
 from claude_local.types import Budget
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "sse"
@@ -90,8 +90,8 @@ def _session(port: int, *, stream: str = "complete_stream.bytes") -> ModelSessio
 def test_a_session_yields_a_callable_that_returns_the_models_text() -> None:
     port = free_port()
 
-    with _session(port).open(startup_timeout_s=30.0) as chat:
-        reply = chat("write a haiku")
+    with _session(port).open(startup_timeout_s=30.0) as model:
+        reply = model("write a haiku")
 
     # Oracle: the concatenated content deltas of the recorded stream.
     assert reply == _FIXTURE_REPLY
@@ -100,10 +100,10 @@ def test_a_session_yields_a_callable_that_returns_the_models_text() -> None:
 def test_a_turn_records_its_metered_result_on_last() -> None:
     port = free_port()
 
-    with _session(port).open(startup_timeout_s=30.0) as chat:
-        assert chat.last is None  # nothing generated yet
-        chat("write a haiku")
-        first = chat.last
+    with _session(port).open(startup_timeout_s=30.0) as model:
+        assert model.last is None  # nothing generated yet
+        model("write a haiku")
+        first = model.last
 
     assert first is not None
     assert first.text == _FIXTURE_REPLY
@@ -118,10 +118,10 @@ def test_a_session_reuses_one_client_across_turns() -> None:
     """
     port = free_port()
 
-    with _session(port).open(startup_timeout_s=30.0) as chat:
-        chat("first")
-        chat("second")
-        calls = chat.total_calls
+    with _session(port).open(startup_timeout_s=30.0) as model:
+        model("first")
+        model("second")
+        calls = model.total_calls
 
     assert calls == 2
 
@@ -130,8 +130,8 @@ def test_a_session_reports_the_id_the_server_advertises() -> None:
     """The server names the model however it chose to, and every request must echo that back."""
     port = free_port()
 
-    with _session(port).open(startup_timeout_s=30.0) as chat:
-        advertised = chat.model_id
+    with _session(port).open(startup_timeout_s=30.0) as model:
+        advertised = model.model_id
 
     assert advertised == "substitute/store-path"
 
@@ -142,9 +142,9 @@ def test_a_session_reports_the_id_the_server_advertises() -> None:
 def test_the_server_is_gone_after_the_block() -> None:
     port = free_port()
 
-    with _session(port).open(startup_timeout_s=30.0) as chat:
+    with _session(port).open(startup_timeout_s=30.0) as model:
         assert port_is_bound(port)  # it really was up
-        chat("write a haiku")
+        model("write a haiku")
 
     assert not port_is_bound(port)
 
@@ -208,7 +208,7 @@ def test_for_model_resolves_without_spawning(
     spec = ModelSession.for_model("gpt-oss-20b")
 
     assert spawned == []
-    assert spec.budget.max_attempts == 1  # a chat turn is one generation
+    assert spec.budget.max_attempts == 1  # one interactive turn is one generation
     assert spec.server.host == "127.0.0.1"  # never mlx_vlm's 0.0.0.0 default
 
 
@@ -238,12 +238,12 @@ def test_a_registered_model_with_no_weights_is_refused_never_fetched(
     assert spawned == []
 
 
-# --- ChatSession in isolation ------------------------------------------------------
+# --- SessionHandle in isolation ------------------------------------------------------
 
 
-def test_chat_session_starts_with_no_recorded_turn() -> None:
+def test_a_session_handle_starts_with_no_recorded_turn() -> None:
     # Boundary: `last` is None before the first call, so a caller can tell "not yet" from a result.
-    chat = ChatSession(None, None, "substitute/store-path")  # type: ignore[arg-type]
+    handle = SessionHandle(None, None, "substitute/store-path")  # type: ignore[arg-type]
 
-    assert chat.last is None
-    assert chat.model_id == "substitute/store-path"
+    assert handle.last is None
+    assert handle.model_id == "substitute/store-path"

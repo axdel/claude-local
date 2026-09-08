@@ -376,6 +376,57 @@ def test_a_harness_fault_mid_run_still_writes_the_cases_that_finished(
     assert card["cases_passed"] == card["cases_total"] == 1
 
 
+def test_a_broken_style_linter_costs_the_count_but_never_the_completed_ladder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Oracle: two contracts already say a completed ladder outlives a host fault — neither
+    carves out the linter.
+
+    The Boundary Map's benchmark-harness row makes exit 3 this layer's harness-fault channel and
+    a written scorecard the thing that survives one, and ``main`` says the same in its own words:
+    the cases that finished are hours of decode already paid for. The style count is measured
+    from a scratch tree by a SEPARATE process, so the linter is one more piece of host that can
+    be missing or broken — and it is consulted before the scorecard is printed or written. A
+    ladder that ran green end to end must not be destroyed by the tool that was only ever there
+    to grade its readability.
+
+    ``RuntimeError`` is what the style layer raises for a linter that exited without judging, so
+    this is the declared fault rather than an invented one.
+    """
+    sources = _golden_sources()
+
+    def linter_that_will_not_judge(_directory: Path) -> tuple[object, ...]:
+        raise RuntimeError("style linter exited 2 instead of judging")
+
+    monkeypatch.setattr("benchmarks.run.collect_style_findings", linter_that_will_not_judge)
+
+    with replay_cases_http_client(sources) as http_client:
+        exit_code = main(
+            [
+                "--base-url",
+                "http://benchmark.local",
+                "--model",
+                "replay/green-ladder",
+                "--out",
+                str(tmp_path),
+            ],
+            http_client=http_client,
+        )
+
+    # A host fault is loud, and never a leaked traceback.
+    assert exit_code == 3
+    err = capsys.readouterr().err
+    assert "harness fault" in err
+    assert "Traceback" not in err
+
+    # And the ladder survives it whole — every case, not the empty set a traceback would leave.
+    (scorecard_path,) = tmp_path.glob("scorecard-*.json")
+    card = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert card["cases_passed"] == card["cases_total"] == len(sources)
+    # The one thing genuinely lost is the number the broken linter was asked for.
+    assert card["style_findings"] is None
+
+
 def test_print_scorecard_surfaces_a_faulted_case_and_a_capped_case(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
