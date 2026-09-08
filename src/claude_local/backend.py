@@ -45,6 +45,13 @@ recorded in only one copy; the other read as an arbitrary 600.0, which is how tw
 fact start to drift.
 """
 
+CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+"""The OpenAI-compatible generation endpoint, appended to whatever base URL a caller was given.
+
+Public because a probe that drives the transport by hand still has to reach the same path this
+backend does, and a path spelled at two callers is two claims about where the server listens.
+"""
+
 
 class Backend(Protocol):
     """A source of raw SSE byte chunks for one generation.
@@ -152,8 +159,6 @@ class HttpxBackend:
     mock transport, never a live server.
     """
 
-    _ENDPOINT = "/v1/chat/completions"
-
     def __init__(
         self,
         base_url: str,
@@ -161,7 +166,7 @@ class HttpxBackend:
         model: str,
         generation_params: Mapping[str, object] | None = None,
     ) -> None:
-        self._url = base_url.rstrip("/") + self._ENDPOINT
+        self._url = base_url.rstrip("/") + CHAT_COMPLETIONS_PATH
         self._client = client
         self._model = model
         self._generation_params = dict(generation_params or {})

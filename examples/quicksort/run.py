@@ -28,12 +28,16 @@ from claude_local import (
     implement,
 )
 from claude_local.cli import BASE_URL_ENV, MODEL_ENV
+from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S
 
 _HERE = Path(__file__).parent
 _IMPL_PATH = "src/quicksort.py"
 _EXPECTED_TESTS = 7
 _BUDGET = Budget(
-    max_attempts=5, max_tokens=4096, generation_timeout_s=300.0, oracle_timeout_s=120.0
+    max_attempts=5,
+    max_tokens=4096,
+    generation_timeout_s=300.0,
+    oracle_timeout_s=DEFAULT_ORACLE_TIMEOUT_S,
 )
 
 

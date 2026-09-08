@@ -35,7 +35,11 @@ import sys
 
 import httpx
 
-from claude_local.backend import HTTP_CONNECT_TIMEOUT_S, HTTP_READ_TIMEOUT_S
+from claude_local.backend import (
+    CHAT_COMPLETIONS_PATH,
+    HTTP_CONNECT_TIMEOUT_S,
+    HTTP_READ_TIMEOUT_S,
+)
 from claude_local.model_registry import ModelRegistry, is_unservable_combination
 from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
@@ -98,9 +102,10 @@ def _probe(
         "stream": True,
         **params,
     }
+    # Raw, not claude_local.sse: that decoder drops the unmodelled delta keys this probe reports.
     content, reasoning, other_keys = "", "", set()
     finish_reason: str | None = None
-    with http.stream("POST", f"{base_url}/v1/chat/completions", json=body) as response:
+    with http.stream("POST", f"{base_url}{CHAT_COMPLETIONS_PATH}", json=body) as response:
         response.raise_for_status()
         for line in response.iter_lines():
             if not line.startswith("data: ") or line == "data: [DONE]":

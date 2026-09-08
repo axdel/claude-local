@@ -44,6 +44,7 @@ from claude_local.backend import HttpxBackend
 from claude_local.entrypoint import BUNDLED_RULES_CARD
 from claude_local.model_registry import ModelRegistry
 from claude_local.model_server import (
+    DEFAULT_MAX_TOKENS,
     DEFAULT_STARTUP_TIMEOUT_S,
     ModelServer,
 )
@@ -67,8 +68,11 @@ itself is pinned against the real cases by ``tests/test_measure_first_byte.py``.
 """
 
 
-_REPLY_TOKENS = 32768
-"""The benchmark's own token budget, because the KV cache a server reserves is sized from it.
+_REPLY_TOKENS = DEFAULT_MAX_TOKENS
+"""The budget the served model was launched with — the KV cache it reserves is sized from it.
+
+Taken from ``model_server`` rather than restated: this probe serves at that module's default and
+then requests here, so a second spelling would have it measure a reservation it never asked for.
 
 Not "ask for almost nothing": the reply length is irrelevant here — the probe stops at the first
 byte — but the cap is not, since a server allocates cache for the budget it was handed before it

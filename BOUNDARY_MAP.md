@@ -54,6 +54,7 @@
 | entrypoint | types | may-import | Consumes TaskSpec and Status. | active |  |
 | examples | claude_local | may-import | The bundled example teaches the public API, so it consumes the top-level package exactly as a downstream caller would — implement, TaskSpec, Budget, Status and generation_params_from_json — reaching past it only for the two server-coordinate env keys its sibling row admits. The third top-level consumer alongside benchmarks and scripts, and declared in both directions like them. | active |  |
 | examples | claude_local.cli | may-import | Same two server-coordinate env keys as the benchmark runner, from the same owner; the example demonstrates the documented channel rather than restating its variable names. | active |  |
+| examples | claude_local.sandbox | may-import | The example fills its Budget's oracle deadline from DEFAULT_ORACLE_TIMEOUT_S rather than inventing a number, for the reason the scripts and model_session rows give: the sandbox that enforces the bound is the one that names it. | active |  |
 | loop | client | may-import | Drives one generation per attempt. | active |  |
 | loop | derail | may-import | Type-only under TYPE_CHECKING: DerailReason, carried onto the attempt record. | active |  |
 | loop | edits | may-import | Applies the whole-file reply the model produced. | active |  |

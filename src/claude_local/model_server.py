@@ -56,7 +56,12 @@ unauthenticated model server to every interface from a data-only edit.
 _READINESS_PATH = "/v1/models"
 """The endpoint that answers once weights are loaded; a bound port alone is not readiness."""
 
-_DEFAULT_MAX_TOKENS = 32768
+DEFAULT_MAX_TOKENS = 32768
+"""The budget a served model is launched with, and so the size of the KV cache it reserves.
+
+Public because a caller measuring that reservation has to request under the same budget it served
+under. Spelled at both ends, the two describe different servers and the measurement means nothing.
+"""
 
 DEFAULT_STARTUP_TIMEOUT_S = 900.0
 """Fifteen minutes: a 27-31B model at 6-bit streams off disk on a cold first load.
@@ -215,7 +220,7 @@ class ModelServer:
         cls,
         resolved: ResolvedModel,
         *,
-        max_tokens: int = _DEFAULT_MAX_TOKENS,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> ModelServer:
         """Build the launch specification for a registered model, bound to loopback.
 
