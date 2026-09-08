@@ -89,7 +89,7 @@ One scorecard describes one model's run over the whole ladder. `--out` writes it
 ```json
 {
   "model": "candidate-7b",
-  "rules_card_digest": "1a2694b6136d",
+  "rules_card_digest": "<card-digest>",
   "plan_first": false,
   "cases_passed": 5,
   "cases_total": 7,

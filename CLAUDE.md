@@ -80,8 +80,8 @@ and burned); the driving orchestrator (Claude Code) owns the comparison.
 Speed is a correctness-tier concern here, not finishing polish: a local model pays off only if
 the loop wrings maximum useful work from every token and every second of decode. Engineer the
 **inference hot path** — prefix construction, the generation call, derail detection, the
-per-attempt loop — for peak throughput, and back every optimization with the loop's own
-telemetry (measure, never guess; cold paths like init and record-writing stay simple).
+per-attempt loop — as the place where that is won or lost, and back every optimization with the
+loop's own telemetry (measure, never guess; cold paths like init and record-writing stay simple).
 
 Standing hot-path principles:
 

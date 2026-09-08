@@ -10,6 +10,15 @@ of whole-file implementations a model would return, replayed as schema-derived S
   root; the model may never modify it. It imports the model-written `calculator.add` from the
   worktree's `src/` and asserts three **hand-derived** sums (2+3=5, 7+0=7, −4+−6=−10) — pure
   specification oracles, so the test can detect a wrong implementation.
+- `oracle_volatile_render.txt` — a second immutable oracle, used only by the tail-determinism
+  ceremony. Its **verdict** is fixed at 1 passed / 2 failed against any correct implementation;
+  its **rendering** is deliberately volatile, because one assertion prints a bare holder class's
+  ASLR-bearing default repr and another prints a hash-randomized set order. Both failures are
+  **hand-derived** — a fresh object is never another fresh object, and the sums 5/7/−10 are not
+  the words alpha/beta/gamma — so the fixture cannot pass by accident. It exists to make INV-004
+  falsifiable: two loops over the same implementation in differently-named worktrees must produce
+  byte-equal tails, which a distiller that leaked an address, a set order, or a worktree name
+  could not do.
 - `impl_correct.txt` — the correct implementation (`a + b`): all three cases pass → green.
 - `impl_abs.txt` — `abs(a) + abs(b)`: passes the two non-negative cases, fails the negatives
   case → 2 of 3 (the least-bad partial).

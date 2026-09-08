@@ -418,7 +418,7 @@ class Loop:
 
         A plan the model failed to produce degrades to no plan rather than ending the run: the
         plan is an aid, never the oracle. It is frozen only when the generation decoded content
-        resolving to a non-empty assistant message, which a faulted or cap-cut one often has
+        resolving to non-empty assistant content, which a faulted or cap-cut one often has
         not: reasoning-channel output is metered but never appended, and an inline transcript
         cut before its final channel resolves to empty. So the budget can be spent for no plan
         at all. Either way the attempts that follow meet the same condition and terminate
