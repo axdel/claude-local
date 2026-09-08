@@ -61,7 +61,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # repo root has to be added before the benchmark harness that owns the scorecard location resolves.
 sys.path.insert(0, str(_REPO_ROOT))
 
-from benchmarks.harness.scorer import DEFAULT_SCORECARD_DIR  # noqa: E402
+from benchmarks.harness.scorer import DEFAULT_SCORECARD_DIR, scorecard_paths  # noqa: E402
 
 _PER_MODEL_CEILING_S = 4 * 60 * 60.0
 """Wall-clock ceiling for one model's whole chain — the sweep's failure boundary against a hang.
@@ -75,7 +75,7 @@ and exists purely so an unattended overnight sweep reaches model two.
 
 def _scorecards() -> set[Path]:
     """Every scorecard on disk now — the before/after sets whose difference is the verdict."""
-    return set(DEFAULT_SCORECARD_DIR.glob("*.json"))
+    return {path for path, _ in scorecard_paths(DEFAULT_SCORECARD_DIR)}
 
 
 def _bench_one(name: str, rules_card: Path | None) -> tuple[bool, str, float]:

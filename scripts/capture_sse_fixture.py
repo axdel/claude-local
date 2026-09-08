@@ -33,7 +33,11 @@ from pathlib import Path
 
 import httpx
 
-from claude_local.backend import HttpxBackend
+from claude_local.backend import (
+    HTTP_CONNECT_TIMEOUT_S,
+    HTTP_READ_TIMEOUT_S,
+    HttpxBackend,
+)
 from claude_local.model_registry import (
     ModelRegistry,
     UnservableCombination,
@@ -88,7 +92,10 @@ def main(argv: list[str] | None = None) -> int:
             generation_timeout_s=args.timeout,
             oracle_timeout_s=DEFAULT_ORACLE_TIMEOUT_S,
         )
-        with httpx.Client(timeout=args.timeout) as client:
+        # Transport bounds are the backend's; --timeout is the guard's wall clock above.
+        with httpx.Client(
+            timeout=httpx.Timeout(HTTP_READ_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S)
+        ) as client:
             # The row's PARAMS, so the recorded bytes are the wire shape the loop actually sees
             # rather than one the template happened to default to. What the capture was recorded
             # under is then stated by the command, never inferred from a flag nobody passed.

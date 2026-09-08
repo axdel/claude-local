@@ -34,7 +34,11 @@ from pathlib import Path
 
 import httpx
 
-from claude_local.backend import HttpxBackend
+from claude_local.backend import (
+    HTTP_CONNECT_TIMEOUT_S,
+    HTTP_READ_TIMEOUT_S,
+    HttpxBackend,
+)
 from claude_local.client import ModelClient
 from claude_local.edits import extract_file
 from claude_local.entrypoint import BUNDLED_RULES_CARD
@@ -143,7 +147,10 @@ def main(argv: list[str] | None = None) -> int:
 
     with server.running(startup_timeout_s=args.startup_timeout) as handle:
         served = handle.served_model_id()
-        with httpx.Client(timeout=args.generation_timeout) as http:
+        # Transport bounds are the backend's; --generation-timeout is the guard's wall clock.
+        with httpx.Client(
+            timeout=httpx.Timeout(HTTP_READ_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S)
+        ) as http:
             # The row's PARAMS too, not just its FLAGS: a probe that answers "what did the model
             # actually say" has to ask under the configuration the model is actually run with, or
             # it answers a question nobody asked. Which is also why the override exists: a

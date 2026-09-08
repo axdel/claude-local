@@ -13,7 +13,7 @@ model through ``model_server`` and tearing it down on the way out, then invoking
 below. Reach for it unless a server is already up. (Downloading is the one thing nothing here
 does: weights are user-initiated, always.)
 
-Sync the reference-app dependencies once (``uv sync --group bench``), point ``--base-url`` (or
+Sync the golden app's dependencies once (``uv sync --group bench``), point ``--base-url`` (or
 ``CLAUDE_LOCAL_BASE_URL``) at an already-running OpenAI-compatible server, name the resident model
 with ``--model`` (or ``CLAUDE_LOCAL_MODEL``), and run from the repository root::
 
