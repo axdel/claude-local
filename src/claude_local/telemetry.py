@@ -50,6 +50,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from claude_local.types import mean_tokens_per_second
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
@@ -115,7 +117,7 @@ class LocalEconomyRecord:
         """
         total_completion_tokens = sum(r.completion_tokens for r in results)
         total_model_seconds = sum((r.seconds for r in results), 0.0)
-        mean = total_completion_tokens / total_model_seconds if total_model_seconds > 0 else None
+        mean = mean_tokens_per_second(total_completion_tokens, total_model_seconds)
         return cls(
             model=model,
             rules_card_digest=rules_card_digest,

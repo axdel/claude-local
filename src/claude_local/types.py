@@ -6,6 +6,10 @@ Only genuinely cross-module types live here: ``Status`` (the terminal outcome),
 ``LocalEconomyRecord`` (telemetry), ``GenerationResult`` (client), and ``LoopResult``
 (loop) — live with their owners, so this module imports nothing from the package
 and stays a leaf every other module can depend inward on.
+
+``mean_tokens_per_second`` is here for the same reason it is not a method on any one
+record: three populations need the identical guarded quotient — one generation, one task,
+one benchmark run — and a leaf is the only place all three can reach it from.
 """
 
 from __future__ import annotations
@@ -101,3 +105,17 @@ class TaskSpec:
             raise ValueError("impl_path must name a file, got empty or whitespace")
         if self.expected_tests <= 0:
             raise ValueError(f"expected_tests must be >= 1, got {self.expected_tests}")
+
+
+def mean_tokens_per_second(completion_tokens: int, seconds: float) -> float | None:
+    """Decode rate over a span of generation, or ``None`` when no wall-clock time elapsed.
+
+    Args:
+        completion_tokens: Tokens decoded across the span.
+        seconds: Model seconds the span took.
+
+    Returns:
+        The quotient, or ``None`` for a zero-elapsed span — which keeps "never measured"
+        distinct from a rate that genuinely came out at zero.
+    """
+    return completion_tokens / seconds if seconds > 0 else None

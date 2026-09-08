@@ -31,6 +31,7 @@ from claude_local.backend import GenerationSilent
 from claude_local.derail import CHARS_PER_TOKEN, DerailGuard, DerailReason
 from claude_local.harmony import assistant_content
 from claude_local.sse import Delta, Error, Finish, Reasoning, Usage, decode_sse
+from claude_local.types import mean_tokens_per_second
 
 _LENGTH_FINISH_REASON = "length"
 
@@ -80,11 +81,11 @@ class GenerationResult:
     def tokens_per_second(self) -> float | None:
         """This generation's decode rate, or ``None`` when no wall-clock time elapsed.
 
-        Both terms are owned here, so the quotient is too — a reader that wants a speed asks
-        rather than dividing someone else's fields. ``None`` for a zero-elapsed generation, the
-        same guard ``LocalEconomyRecord`` applies to the run-wide mean.
+        Both terms are owned here, so the quotient is exposed here — a reader that wants a
+        speed asks rather than dividing someone else's fields. The arithmetic itself belongs to
+        ``mean_tokens_per_second``, shared with the per-task and per-run means.
         """
-        return self.completion_tokens / self.seconds if self.seconds > 0 else None
+        return mean_tokens_per_second(self.completion_tokens, self.seconds)
 
 
 class ModelClient:

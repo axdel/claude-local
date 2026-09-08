@@ -104,7 +104,7 @@ def test_run_cases_aggregates_a_passing_and_a_failing_case_in_order(tmp_path: Pa
     assert by_id["failing"].outcome.code == failing_source
     # The replay serves the identical corrupted file every call, so every attempt after the first
     # is a verbatim repeat. A repeat no longer ends the run: it escalates, walking the nudge ladder
-    # one rung per replay, and the run ends when the ladder is spent. At this budget the ladder
+    # one rung per repeat, and the run ends when the ladder is spent. At this budget the ladder
     # outlasts it — 1 first attempt + 1 unescalated repeat + 2 nudged repeats == 4 — so a
     # permanently stuck model spends the whole budget here. Ladder exhaustion is only observable at
     # a budget above that, which is where tests/test_loop.py pins it.

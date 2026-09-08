@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from claude_local import Status, slug_model_id
+from claude_local import Status, mean_tokens_per_second, slug_model_id
 
 DEFAULT_SCORECARD_DIR = Path(__file__).resolve().parents[1] / "scorecards"
 """Where scorecards are written and read from — one owner, so the ladder has one location.
@@ -57,10 +57,10 @@ class Scorecard:
 
     ``cases`` preserves run order. The economy totals are summed from each case's local economy
     record: ``total_completion_tokens`` and ``total_model_seconds`` across every case, and
-    ``mean_tokens_per_second`` as their guarded quotient — ``None`` when no model-seconds elapsed,
-    mirroring ``LocalEconomyRecord``'s per-task mean (shared formula, not a shared owner: Rule of
-    Three notes the second occurrence, extract at the third). ``cases_passed`` and ``cases_total``
-    are derived from ``cases``, never stored, so the pass count can never drift from the table.
+    ``mean_tokens_per_second`` as their guarded quotient — ``None`` when no model-seconds elapsed.
+    The quotient itself comes from the shared owner of that name, which the per-generation and
+    per-task means also call. ``cases_passed`` and ``cases_total`` are derived from ``cases``,
+    never stored, so the pass count can never drift from the table.
 
     ``style_findings`` counts the style problems in the code this run produced. It is supplied by
     the caller rather than derived here, because counting it means running a linter over files on
@@ -196,7 +196,7 @@ def score_cases(results: Sequence[CaseResult]) -> Scorecard:
     plan_first = _held_constant({record.plan_first for record in records}, "planning lever")
     total_completion_tokens = sum(record.total_completion_tokens for record in records)
     total_model_seconds = sum((record.total_model_seconds for record in records), 0.0)
-    mean = total_completion_tokens / total_model_seconds if total_model_seconds > 0 else None
+    mean = mean_tokens_per_second(total_completion_tokens, total_model_seconds)
     cases = tuple(
         CaseScore(
             case_id=result.case_id,

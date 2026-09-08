@@ -234,7 +234,7 @@ A weak model is only worth using if it is fast enough to be cheaper than your ow
   ladder answers both, no rung claims the file came back identical — that is false of a plateau,
   and a model handed a false premise about its own output argues with it instead of fixing the
   code. This is the only lever the runtime has: the server ignores temperature, top-p and seed,
-  and emptying the tail just replays the first attempt.
+  and emptying the tail just repeats the first attempt verbatim.
 
 ## Where It Fits
 

@@ -79,7 +79,7 @@ _NUDGE_LADDER = (
 # is nothing to explore) and about the interface (there is no tool to call), because a model in
 # this state has misread which of the two it is in.
 #
-# It POINTS AT the frame rules rather than restating them, for the same reason the repeat rungs
+# It POINTS AT the frame rules rather than restating them, for the same reason the stall rungs
 # point at their counterevidence: the rules card owns that shape, and a second copy here would be a
 # second writer free to drift from it on the next edit.
 _REFRAME = (
@@ -91,7 +91,7 @@ _REFRAME = (
 )
 
 # The unscorable reply, hoisted above the rung that answers it — the same counterevidence-then-
-# imperative shape the repeat ladder uses. The cap matches that one: enough to show the model the
+# imperative shape the stall ladder uses. The cap matches that one: enough to show the model the
 # opening it actually sent, never enough to push the imperative out of reach.
 UNSCORABLE_REPLY_BYTE_CAP = 512
 _UNSCORABLE_REPLY_HEADER = "## What you sent back — verbatim, and it is not a file."
@@ -99,8 +99,8 @@ _UNSCORABLE_REPLY_HEADER = "## What you sent back — verbatim, and it is not a 
 # The first failure's executed counterevidence, hoisted to sit directly above the rung it leads. It
 # is one statement and its result, so a small cap is generous; bounding it keeps a long assertion
 # diff from displacing the imperative that follows it.
-REPEAT_EVIDENCE_BYTE_CAP = 512
-_REPEAT_EVIDENCE_HEADER = (
+STALL_EVIDENCE_BYTE_CAP = 512
+_STALL_EVIDENCE_HEADER = (
     "## What your file actually does — the first failure, verbatim from the run."
 )
 
@@ -336,8 +336,8 @@ def _stall_escalation(nudge: str, raw_output: str) -> str:
     evidence = _first_failure_evidence(_strip_run_facts(raw_output))
     if not evidence:
         return nudge
-    capped = _cap_bytes(evidence, REPEAT_EVIDENCE_BYTE_CAP)
-    return f"{_REPEAT_EVIDENCE_HEADER}\n\n{capped}\n\n{nudge}"
+    capped = _cap_bytes(evidence, STALL_EVIDENCE_BYTE_CAP)
+    return f"{_STALL_EVIDENCE_HEADER}\n\n{capped}\n\n{nudge}"
 
 
 def _first_failure_evidence(text: str) -> str:

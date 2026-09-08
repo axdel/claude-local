@@ -447,7 +447,7 @@ def test_all_partial_reaches_exhausted(tmp_path: Path) -> None:
 
 
 def test_a_repeated_generation_is_nudged_rather_than_ending_the_run(tmp_path: Path) -> None:
-    """A replay means the question must change, not that the run is over.
+    """A verbatim repeat means the question must change, not that the run is over.
 
     Oracle: a byte-identical regeneration proves the prompt is an absorbing state — the same file
     scores the same, distils to the same brief, and so regenerates forever (INV-004). Stopping was
@@ -493,7 +493,7 @@ def test_a_repeat_and_the_nudge_that_answers_it_are_both_reported_live(tmp_path:
     with no trigger. Each attempt is also still a real scored attempt — reporting ``blocked`` for a
     perfectly usable file would name the wrong cause entirely.
 
-    The ladder is walked to its end here: three consecutive replays, so the run stops when the
+    The ladder is walked to its end here: three consecutive repeats, so the run stops when the
     escalation runs out rather than when the budget does.
     """
     worktree = _setup_worktree(tmp_path)
@@ -511,7 +511,7 @@ def test_a_repeat_and_the_nudge_that_answers_it_are_both_reported_live(tmp_path:
     loop.run(spec, worktree)
 
     assert [progress.attempt for progress in seen] == [1, 2, 3, 4]
-    # Attempt 1 has nothing to repeat; every later one replays it.
+    # Attempt 1 has nothing to repeat; every later one repeats it verbatim.
     assert [progress.repeats_previous for progress in seen] == [False, True, True, True]
     # A nudge is a response to a repeat, so it can only appear on the attempt AFTER one.
     assert [progress.nudged for progress in seen] == [False, False, True, True]
@@ -740,7 +740,7 @@ def test_one_bad_sample_between_two_good_ones_is_not_a_plateau(tmp_path: Path) -
 def test_the_run_ends_when_the_nudge_ladder_is_spent_not_when_the_budget_is(
     tmp_path: Path,
 ) -> None:
-    """A model that replays through every rung has been asked everything the card can ask.
+    """A model that repeats verbatim through every rung has been asked everything the card can ask.
 
     Oracle: the ladder is finite by design, so the run has to end somewhere other than the budget —
     otherwise a persistently deterministic model would spend every remaining attempt re-buying one

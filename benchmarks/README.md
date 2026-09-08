@@ -78,12 +78,8 @@ uv run python -m benchmarks.run --model <model-name> --base-url http://localhost
 The per-case table and benchmark totals print to stderr. The process exits `0` only when every case
 passed, `1` when any case failed, `2` for a usage error (no model named), and `3` when the
 benchmark harness itself faults. Exit `3` is a broken *host*, distinct from exit `1`'s model that
-simply failed the task, and it covers two kinds of break: one that interrupts the ladder — the
-prerequisite server is unreachable, the kernel sandbox is unavailable, an oracle is broken — and
-one the host raises against a side artifact once the ladder is already scored, refusing the style
-linter or either output directory (`D-BENCH-017`). The two compose: an interruption scores the cases
-that finished first, and the artifact steps then run over that partial set, so a refusal there still
-costs only itself. Neither destroys a measurement already taken (`INV-016`).
+simply failed the task; which breaks reach it, and why none of them can discard a score the run
+already took, are `D-BENCH-017` and `INV-016`.
 
 ## The scorecard
 

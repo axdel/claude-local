@@ -9,10 +9,11 @@ The oracle test is the judge — green means done.
 when needed, read-only ``ContextFile`` neighbors), the base URL of an already-running
 OpenAI-compatible server, and a model name; it returns an ``Outcome``.
 
-Two shared owners are also re-exported here so downstream consumers derive them through the
+Three shared owners are also re-exported here so downstream consumers derive them through the
 top-level API rather than reaching into a submodule (D-BENCH-002): ``slug_model_id`` (the single
-owner of model-id → filename slugging) and ``TARGET_FILE_LABEL`` (the prompt's target-file wire
-label, which a replay transport parses).
+owner of model-id → filename slugging), ``TARGET_FILE_LABEL`` (the prompt's target-file wire
+label, which a replay transport parses), and ``mean_tokens_per_second`` (the guarded decode-rate
+quotient every population shares — one generation, one task, one benchmark run).
 
 ``AttemptProgress`` is exported for the same reason: it is the event ``implement``'s ``on_attempt``
 observer receives, and a downstream consumer reaches the loop only through this public API.
@@ -32,7 +33,7 @@ from claude_local.prompt import TARGET_FILE_LABEL
 from claude_local.runner import OracleError
 from claude_local.sandbox import SandboxUnavailable
 from claude_local.telemetry import slug_model_id
-from claude_local.types import Budget, ContextFile, Status, TaskSpec
+from claude_local.types import Budget, ContextFile, Status, TaskSpec, mean_tokens_per_second
 
 __version__ = "0.1.0"
 
@@ -51,6 +52,7 @@ __all__ = [
     "TaskSpec",
     "generation_params_from_json",
     "implement",
+    "mean_tokens_per_second",
     "model_session",
     "slug_model_id",
 ]
