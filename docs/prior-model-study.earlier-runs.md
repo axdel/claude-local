@@ -378,7 +378,7 @@ finished (**16.9 min**) *faster* than Qwen v1's clean 11-call run (21.6 min), at
 identical **100% on the hidden oracle**. Had its self-review held (1–2 green
 attempts, like Qwen), it projects to **~8–10 min** — the real fast-and-correct
 ceiling here. Two levers make a local model fast without sacrificing correctness:
-**(a) MoE decode speed** (the dominant factor — 2.3× for free) and **(b)
+**(a) MoE decode rate** (the dominant factor — 2.3× for free) and **(b)
 non-thinking mode**, confirmed strictly better than thinking, which burned the
 whole budget on reasoning and emitted zero code (finding 3). Fewer output tokens is
 the third lever — which is where Q2 comes in.
@@ -406,7 +406,7 @@ rules-asymmetry (v2 proves better rules make the same model more concise). The t
 levers are complementary, not redundant.
 
 **The convergence claim — validated in direction.** More elegant → fewer tokens →
-faster is real: at a fixed decode speed, wall-clock is token-count-bound, and v2's
+faster is real: at a fixed decode rate, wall-clock is token-count-bound, and v2's
 conciseness rules cut the field-parser token count ~46%. So better distillation
 improves elegance *and* speed by the same mechanism — the two questions genuinely
 converge on one lever. But in *this* benchmark the largest speed win came from the
@@ -480,7 +480,7 @@ every instruct model** and was proven not to move any prior score.
 ## Results — the standings
 
 94-case hidden oracle + 2 efficiency probes, each model run **alone** on the same
-64 GB M-series box. Output tokens and decode speed are the driver's own
+64 GB M-series box. Output tokens and decode rate are the driver's own
 `run_meta.json`; `src_LOC` is `scripts/token_ledger.py` (raw line count — one
 consistent tool across all models):
 
@@ -504,7 +504,7 @@ oracle points.
 (11.6 min), and near-lowest output-token cost — *and* the cleanest failure profile
 (finding 7). GLM-4.7-Flash is a genuine, close second at 6-bit (93.6%, both probes).
 
-**Decode speed confirms the memory-bandwidth law cleanly.** Decode ≈ bandwidth ÷
+**Decode rate confirms the memory-bandwidth law cleanly.** Decode ≈ bandwidth ÷
 active-param-bytes, so MoEs (few active params) fly and dense models crawl: the four
 MoEs clock 64 / 59 / 46 / 37 tok/s while the **dense** Devstral-24B is slowest in the
 whole sweep at **12.1** — 5× slower than gpt-oss, and the reason its wall-clock (61.6

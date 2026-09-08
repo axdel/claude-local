@@ -326,7 +326,7 @@ def test_a_thinking_budget_beside_a_pulled_draft_is_refused_at_resolution(
 
     Refusing here rather than at the first generation is the whole point. The two columns are
     edited independently and by different motivations — one to bound a runaway reasoner, the
-    other to buy decode speed — so nothing about either edit hints at the other. Left to the
+    other to buy decode rate — so nothing about either edit hints at the other. Left to the
     server, the fault surfaces as a failed generation on a row that was valid yesterday.
     """
     registry = _budgeted_draft_registry(tmp_path, present=("Qwen3.8-27B", "Qwen3.8-27B-MTP"))

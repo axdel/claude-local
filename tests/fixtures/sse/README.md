@@ -6,8 +6,10 @@ verbatim as the decoder receives it.
 
 ## Source — two tiers, each labelled per file
 
-`harmony_channel_stream.bytes` is a **real capture** (highest trust) — see its
-entry under Files. Every other fixture is **schema-derived** from the published
+`harmony_channel_stream.bytes` and `reasoning_channel_stream.bytes` are **real
+captures** (highest trust) — see their entries under Files. Both record a server
+that emits a channel the plain format has no frame for, which is exactly what no
+schema can supply. Every other fixture is **schema-derived** from the published
 OpenAI-compatible streaming Chat Completions SSE format, the contract every
 target server (`mlx_lm.server`, llama.cpp, LM Studio, vLLM) implements. The
 derived ones are NOT authored from a mental model of the wire; the shape of every

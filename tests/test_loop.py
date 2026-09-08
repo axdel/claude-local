@@ -419,7 +419,7 @@ def test_red_then_green_reaches_done_in_two_attempts(tmp_path: Path) -> None:
     # Oracle: attempt 0 scores 2/3 (one_failure), attempt 1 scores 3/3 (all_pass) and stops.
     assert result.status is Status.DONE
     assert result.best_score is not None and result.best_score.is_green
-    assert client.total_calls == 2  # exactly two logical generations, no wasted third
+    assert client.total_calls == 2  # exactly two logical calls, no wasted third
     assert result.record.status is Status.DONE
     assert result.record.attempts == 2
     assert _widget(worktree) == "# widget v1\nVALUE = 1\n"  # the green attempt's whole-file body
@@ -647,6 +647,58 @@ def test_the_record_says_which_configuration_produced_its_token_total(tmp_path: 
 
     assert planned.record.plan_first is True
     assert unplanned.record.plan_first is False
+
+
+_TRUNCATED_PLAN_DELTAS = (
+    "<|channel|>",
+    "analysis",
+    "<|message|>",
+    "Let me think about step one. ",
+)
+
+
+def test_a_planning_reply_resolving_to_no_message_is_paid_for_and_freezes_nothing(
+    tmp_path: Path,
+) -> None:
+    """The plan budget can be spent in full for no plan at all, and the run is unaffected.
+
+    Oracle: derived from the two transforms a planning reply passes through, never from running
+    the loop. Reasoning-channel deltas are metered but never appended to the reply, and a leaked
+    channel transcript cut before its ``final`` channel resolves to the empty string — so a
+    reasoning model whose plan cap runs out mid-analysis burns the whole cap and yields nothing to
+    freeze. The delta framing below is the real wire's, not a guess: the capture in
+    ``tests/fixtures/sse/harmony_channel_stream.bytes`` emits that opener as three separate
+    content deltas exactly as scripted here.
+
+    Three things must hold together and no two imply the third — the call was made and paid for,
+    no plan section reached the prefix, and the run still completed. The prefix assertion is the
+    exact inverse of the well-formed case above: with nothing to freeze the attempt prefix is
+    byte-identical to the plan call's, where a real plan makes it strictly longer. So a build that
+    skipped the planning call fails the first pair, and one that froze the raw markup fails this.
+    """
+    worktree = tmp_path / "wt"
+    (worktree / "src").mkdir(parents=True)
+    backend = RecordingReplayBackend(
+        [_sse_script_parts(*_TRUNCATED_PLAN_DELTAS), _edit_script(_V2)]
+    )
+    spawn = ScriptedSpawn(_junit("all_pass.xml"))
+    loop, _ = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        budget=build_budget(max_attempts=1),
+        plan_first=True,
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert len(backend.calls) == 2  # the plan call was made
+    assert result.record.total_calls == 2
+    assert result.record.total_completion_tokens > 0  # and it burned real decode
+    plan_prefix, _ = backend.calls[0]
+    attempt_prefix, _ = backend.calls[1]
+    assert attempt_prefix == plan_prefix  # yet no plan section was appended
+    assert result.status is Status.DONE  # and the run finished regardless
 
 
 def test_plan_first_is_off_by_default_and_spends_no_extra_call(tmp_path: Path) -> None:

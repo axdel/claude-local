@@ -113,7 +113,7 @@ class ModelClient:
 
     @property
     def total_calls(self) -> int:
-        """Logical generations attempted — the count the economy record reconciles against."""
+        """Logical calls attempted — the count the economy record reconciles against."""
         return self._total_calls
 
     @staticmethod

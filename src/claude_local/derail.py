@@ -6,9 +6,9 @@ stream and ticks it on every transport chunk; both return the first bound that t
 
   TIMEOUT   — the injected clock passed ``start + generation_timeout_s`` (deterministic under
               a fake clock in tests; ``time.monotonic`` in production).
-  SILENT    — no content for ``SILENCE_TIMEOUT_S``, whatever kept the socket warm. Throughput, not
-              elapsed time, separates a slow model from a hung one, so this is the bound that lets
-              ``generation_timeout_s`` be generous without letting a hang spend it.
+  SILENT    — no content for ``SILENCE_TIMEOUT_S``, whatever kept the socket warm. Decode rate,
+              not elapsed time, separates a slow model from a hung one, so this is the bound
+              that lets ``generation_timeout_s`` be generous without letting a hang spend it.
   TOKEN_CAP — decoded chars exceeded ``max_tokens * CHARS_PER_TOKEN``. A lenient *client* backstop
               on decode length; the server's ``max_tokens`` is the primary hard bound (D-PERF-001).
   REPETITION — a large-n line repeated ``REPETITION_THRESHOLD`` times consecutively past a warmup
@@ -53,7 +53,7 @@ WARMUP_CHARS = 200
 # is the real hard bound (D-PERF-001); this proxy only needs to be chunking-invariant.
 CHARS_PER_TOKEN = 4
 # Seconds of no content, measured from the stream's FIRST BYTE, before a generation counts as
-# hung rather than working. Throughput, not elapsed time, is what separates the two: a stream at
+# hung rather than working. Decode rate, not elapsed time, is what separates the two: a stream at
 # 48 tok/s never approaches this bound however long it runs, while both measured pathologies
 # produced ONE content token in 447.2s and 338s respectively — bytes the whole time, content
 # almost never. Set between the two, cutting a hang at roughly half the time it took to surface.

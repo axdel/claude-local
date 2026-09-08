@@ -115,7 +115,7 @@ def _mock_client(*replies: bytes) -> httpx.Client:
     """An httpx client whose transport returns each scripted reply for successive POSTs.
 
     The mock transport is the doubled model — the one true-external seam. Exhausting the script
-    raises rather than silently replaying a response, so generation counts remain observable.
+    raises rather than silently replaying a response, so logical-call counts remain observable.
     """
     reply_script = iter(replies)
 

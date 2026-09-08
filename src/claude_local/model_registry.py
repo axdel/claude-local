@@ -188,7 +188,7 @@ class ResolvedModel:
             raise UnservableCombination(
                 f"{self.name}: {_THINKING_BUDGET} cannot be sent to a server running "
                 f"speculative decoding, and the draft weights at {self.draft_path} are present. "
-                f"Drop one — the budget bounds a runaway reasoner, the draft buys decode speed."
+                f"Drop one — the budget bounds a runaway reasoner, the draft buys decode rate."
             )
 
     def generation_params_with(

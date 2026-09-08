@@ -264,7 +264,7 @@ def test_silence_is_measured_from_the_first_byte_once_the_stream_has_started() -
 def test_a_stream_that_keeps_producing_survives_far_past_the_silence_bound() -> None:
     """Total elapsed time does not cut a producing stream — only silence does.
 
-    Oracle: the whole point of the bound is that throughput, not elapsed time, separates a model
+    Oracle: the whole point of the bound is that decode rate, not elapsed time, separates a model
     that is cooking from one that is hung. Ten rounds of just-under-the-bound silence accumulate
     to nine times the bound, so a guard measuring total elapsed time instead of the gap since the
     last content fails here — which is precisely the confusion the bound exists to remove.
