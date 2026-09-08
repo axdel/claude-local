@@ -35,7 +35,7 @@ from claude_local.paths import KeepOnlyViolation, resolve_within
 if TYPE_CHECKING:
     from pathlib import Path
 
-# Public: the replay transport encodes the header this parses; one owner spells it (D-BENCH-002).
+# Public: the replay transport encodes the header this parses; one owner spells it (D-EDITS-006).
 WHOLE_FILE_REPLY_PREFIX = "FILE: "
 _LINE_BREAK = "\n"
 _CARRIAGE_RETURN = "\r"

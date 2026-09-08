@@ -5,6 +5,7 @@
 | Module | Target | Rule | Notes | Status | Superseded By |
 |-|-|-|-|-|-|
 | __init__ | backend | may-import | Public front door re-exports BackendUnavailable, the transport failure a caller must distinguish from a model that merely failed the task. | active |  |
+| __init__ | edits | may-import | Public front door re-exports WHOLE_FILE_REPLY_PREFIX, the header a model's whole-file reply opens with — the benchmark's replay transport encodes it to stand in for a real generation and extract_file strips it, so producer and parser derive one literal (D-EDITS-006). | active |  |
 | __init__ | entrypoint | may-import | Public front door re-exports implement and Outcome. | active |  |
 | __init__ | loop | may-import | Public front door re-exports AttemptProgress, the live event implement's on_attempt observer receives. | active |  |
 | __init__ | model_registry | may-import | Public front door re-exports generation_params_from_json, the declaration reader every out-of-package front door needs: the CLI, the bundled example, and the benchmark each take --generation-params, and a parser at each would be one format with three readers. | active |  |
@@ -52,7 +53,7 @@
 | entrypoint | snapshot | may-import | Constructs SnapshotStore over the writable subtree. | active |  |
 | entrypoint | telemetry | may-import | Surfaces LocalEconomyRecord on the Outcome. | active |  |
 | entrypoint | types | may-import | Consumes TaskSpec and Status. | active |  |
-| examples | claude_local | may-import | The bundled example teaches the public API, so it consumes the top-level package exactly as a downstream caller would — implement, TaskSpec, Budget, Status and generation_params_from_json — reaching past it only for the two server-coordinate env keys its sibling row admits. The third top-level consumer alongside benchmarks and scripts, and declared in both directions like them. | active |  |
+| examples | claude_local | may-import | The bundled example teaches the public API, so it consumes the top-level package exactly as a downstream caller would — implement, TaskSpec, Budget, Status and generation_params_from_json — plus the two submodules with rows of their own: claude_local.cli for the server-coordinate env keys, and claude_local.sandbox for the oracle deadline its Budget declares. Name both, or this cell drifts the moment a third edge lands — as it did when the sandbox edge landed against a cell still admitting only the env keys. The third top-level consumer alongside benchmarks and scripts, and declared in both directions like them. | active |  |
 | examples | claude_local.cli | may-import | Same two server-coordinate env keys as the benchmark runner, from the same owner; the example demonstrates the documented channel rather than restating its variable names. | active |  |
 | examples | claude_local.sandbox | may-import | The example fills its Budget's oracle deadline from DEFAULT_ORACLE_TIMEOUT_S rather than inventing a number, for the reason the scripts and model_session rows give: the sandbox that enforces the bound is the one that names it. | active |  |
 | loop | client | may-import | Drives one generation per attempt. | active |  |

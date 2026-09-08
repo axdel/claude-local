@@ -306,7 +306,9 @@ def test_every_marked_prefix_enumeration_names_each_section_it_can_carry() -> No
     An unterminated marker is its own failure rather than a silently skipped file, which is what
     caught the one hazard this design introduces: prose that *pastes* the opening marker to talk
     about it opens a region the scan then cannot close. Three primitive files did exactly that
-    describing this mechanism. Documentation names the marker; only the four documents paste it.
+    describing this mechanism. Documentation inside the scanned set names the marker; only the
+    four documents paste it. Python sources are outside that set, which is why this module and
+    ``prompt``'s docstring spell it in full (D-DOC-001).
     """
     prefix_source = inspect.getsource(PromptBuilder.stable_prefix)
     sections = {name.lower() for name in re.findall(r"_([A-Z]+)_HEADER", prefix_source)}
