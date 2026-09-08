@@ -12,7 +12,9 @@ This is the one place that runs the exact commands users run with.
 
 import ast
 import os
+import shutil
 import subprocess  # nosec B404 (argv is a discovered script path, never shell-interpreted)
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -184,3 +186,52 @@ def test_no_shipped_client_collapses_the_owned_timeout_pair() -> None:
     ]
 
     assert collapsed == [], f"a scalar timeout overrides the owned connect bound: {collapsed}"
+
+
+_CONTRACT_HANDSHAKE = "claude-local/1"
+"""The handshake claude-protocol compares its own copy against — read off README, not the code."""
+
+
+def test_both_shipped_entry_points_answer_the_same_handshake() -> None:
+    """``python -m claude_local`` and the ``claude-local`` console script agree, byte for byte.
+
+    Two oracles, neither of them this project's own behaviour: the literal is the cross-repo
+    handshake README documents and claude-protocol probes, and the equality between the doors is a
+    differential. ``cli.CONTRACT_VERSION`` is deliberately not imported — comparing the code to
+    itself would pass with the constant set to anything at all, which is the one failure mode the
+    handshake exists to catch.
+
+    ``__main__.py`` raises ``SystemExit`` at import, so no in-process test can reach it and
+    coverage credits it nothing: measured, it is 3 statements at 0%, and it stays 0% under this
+    test because a subprocess carries no instrumentation. That is the whole gap. The module ships a
+    second spelling of the front door, its own docstring promises the two "cannot diverge", and
+    nothing held it to that — a checkout could answer a different handshake than PATH with every
+    test still green.
+    """
+    console_script = shutil.which("claude-local")
+    assert console_script is not None, "the claude-local console script is not on PATH"
+
+    doors = {
+        "console script": [console_script, "--contract-version"],
+        "python -m": [sys.executable, "-m", "claude_local", "--contract-version"],
+    }
+    answers: dict[str, str] = {}
+    for label, argv in doors.items():
+        completed = subprocess.run(  # noqa: S603
+            argv,
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, (
+            f"{label} exited {completed.returncode}:\n{completed.stderr}"
+        )
+        answers[label] = completed.stdout.strip()
+
+    assert answers["console script"] == _CONTRACT_HANDSHAKE, (
+        f"the dispatched front door answers {answers['console script']!r}"
+    )
+    assert answers["python -m"] == answers["console script"], (
+        f"the two entry points diverged: {answers}"
+    )
