@@ -26,13 +26,8 @@ the model's own raw text as it decodes. The per-case table and benchmark totals 
 end; ``--out DIR`` also writes the scorecard as JSON. The process exits 0 only when every case
 passed, 1 when any case failed, 2 for a usage error (no server or model named, or an unknown
 ``--only`` id), and 3 when the benchmark harness itself faults. Exit 3 is a broken *host*, distinct
-from exit 1's model that simply failed the task, and it covers two kinds of break: one that
-interrupts the ladder — the prerequisite server is unreachable, the kernel sandbox is unavailable,
-an oracle is broken — and one the host raises against a side artifact once the ladder is already
-scored, refusing the style linter or either output directory (D-BENCH-017). The two compose rather
-than exclude: an interruption scores the cases that finished first, and the artifact steps then run
-over that partial set, so a refusal there still costs only itself. Neither destroys a measurement
-already taken (INV-016).
+from exit 1's model that simply failed the task; which breaks reach it, and why none of them can
+discard a score the run already took, are ``D-BENCH-017`` and ``INV-016``.
 
 ``--only <case_id>`` narrows the run to the named cases and is repeatable. A scorecard is a claim
 about a whole ladder, so the full run stays the default — but when the question is why ONE case
@@ -340,12 +335,11 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     is watchable rather than silent until the end.
 
     Returns the process exit code: 0 when every case passed, 1 when any case failed, 2 for any
-    ``_UsageError`` the preparation phases raise, and 3 when the benchmark harness itself faults —
-    either a fault that interrupts the ladder (unreachable server, unavailable sandbox, broken
-    oracle) or the host refusing a side artifact once the ladder is scored, complete or partial
-    (D-BENCH-017). Exit 3 says the run broke, never that it measured nothing (INV-016). An injected
-    ``http_client`` is shared across the cases and left open for its caller (the tests replay the
-    transport through it); when omitted, each case owns a per-case client against the real server.
+    ``_UsageError`` the preparation phases raise, and 3 when the benchmark harness itself faults;
+    which faults those are is ``D-BENCH-017``, and exit 3 says the run broke, never that it
+    measured nothing (``INV-016``). An injected ``http_client`` is shared across the cases and left
+    open for its caller (the tests replay the transport through it); when omitted, each case owns a
+    per-case client against the real server.
     """
     args = _parse_args(argv)
     try:
