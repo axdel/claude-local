@@ -10,6 +10,7 @@ that imports the module in-process ever exercises that choice.
 This is the one place that runs the exact commands users run with.
 """
 
+import ast
 import os
 import subprocess  # nosec B404 (argv is a discovered script path, never shell-interpreted)
 from collections.abc import Callable
@@ -22,6 +23,11 @@ from examples.quicksort.run import main as example_main
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPTS = _REPO_ROOT / "scripts"
+_TRANSPORT_DIRECTORIES = (
+    _REPO_ROOT / "src" / "claude_local",
+    _SCRIPTS,
+    _REPO_ROOT / "benchmarks" / "harness",
+)
 
 
 def _executable_scripts() -> list[Path]:
@@ -115,3 +121,66 @@ def test_an_executable_script_runs_under_its_own_shebang(script: Path) -> None:
 
     assert completed.returncode == 0, f"{script.name} --help failed:\n{completed.stderr}"
     assert f"usage: {script.name}" in completed.stdout
+
+
+def client_timeout_arguments() -> list[tuple[str, int, str]]:
+    """Every ``httpx.Client(timeout=...)`` argument that ships, as ``(module, line, source)``.
+
+    A bare name is resolved to the expression bound to it in the same module, so the two
+    composition roots that build their ``httpx.Timeout`` on the line above the client read the
+    same as the probes passing one inline. A construction with no ``timeout=`` is not collected:
+    the replay transports pass only ``transport=`` and reach no socket.
+
+    Scope is read off the filesystem rather than listed here, for the reason the shebang scope
+    above is: a module added later is covered without editing this test.
+    """
+    arguments: list[tuple[str, int, str]] = []
+    for directory in _TRANSPORT_DIRECTORIES:
+        for path in sorted(directory.glob("*.py")):
+            tree = ast.parse(path.read_text())
+            bound = {
+                target.id: assignment.value
+                for assignment in ast.walk(tree)
+                if isinstance(assignment, ast.Assign)
+                for target in assignment.targets
+                if isinstance(target, ast.Name)
+            }
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or ast.unparse(node.func) != "httpx.Client":
+                    continue
+                for keyword in node.keywords:
+                    if keyword.arg != "timeout":
+                        continue
+                    value = keyword.value
+                    if isinstance(value, ast.Name):
+                        value = bound.get(value.id, value)
+                    module = str(path.relative_to(_REPO_ROOT))
+                    arguments.append((module, node.lineno, ast.unparse(value)))
+    return arguments
+
+
+def test_no_shipped_client_collapses_the_owned_timeout_pair() -> None:
+    """Every real transport client names its connect bound instead of letting a scalar set it.
+
+    Oracle: httpx's documented ``Timeout`` semantics, not this project's behavior — a scalar
+    passed as ``timeout`` applies to connect, read, write and pool alike. So a client handed one
+    number silently overrides ``backend.HTTP_CONNECT_TIMEOUT_S``, and the only construction that
+    cannot is one naming ``httpx.Timeout`` explicitly.
+
+    Those two bounds are owned as a pair precisely because they disagree: connect is short
+    because a refused local port fails at once, read is long because a cold weight load must fit
+    inside it. Collapsing them is therefore invisible in the shape a reviewer scans for — nothing
+    is missing, one number is simply doing two jobs.
+
+    This guards ``scripts/`` above all, where three probes shipped collapsed and each was caught
+    by hand at review. import-linter's contract is declared over ``containers=[claude_local]``
+    and structurally cannot see that directory, and every in-process test builds its client on
+    ``httpx.MockTransport``, which reaches no socket and so exercises no bound at all.
+    """
+    collapsed = [
+        (module, lineno, source)
+        for module, lineno, source in client_timeout_arguments()
+        if not source.startswith("httpx.Timeout(")
+    ]
+
+    assert collapsed == [], f"a scalar timeout overrides the owned connect bound: {collapsed}"

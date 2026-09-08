@@ -40,7 +40,7 @@ import time
 
 import httpx
 
-from claude_local.backend import HttpxBackend
+from claude_local.backend import HTTP_CONNECT_TIMEOUT_S, HttpxBackend
 from claude_local.entrypoint import BUNDLED_RULES_CARD
 from claude_local.model_registry import ModelRegistry
 from claude_local.model_server import (
@@ -81,7 +81,7 @@ emits anything. Measuring at 16 would measure a condition the loop never creates
 """
 
 _GENERATION_TIMEOUT_S = 1800.0
-"""Deliberately far past any plausible load — a bound here would censor the measurement."""
+"""The read bound, far past any plausible load — binding it would censor the measurement."""
 
 _REPORTED_TIMINGS = ("prompt_n", "prompt_ms", "prompt_per_second", "predicted_per_second")
 
@@ -142,7 +142,10 @@ def main(argv: list[str] | None = None) -> int:
         ready_s = time.monotonic() - ready
         served = handle.served_model_id()
         print(f"[first-byte] ready in {ready_s:.1f}s: {served}", file=sys.stderr)
-        with httpx.Client(timeout=_GENERATION_TIMEOUT_S) as client:
+        # Only the read bound is this probe's own; connect stays the transport owner's.
+        with httpx.Client(
+            timeout=httpx.Timeout(_GENERATION_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S)
+        ) as client:
             backend = HttpxBackend(base_url=handle.base_url, client=client, model=served)
             budget = Budget(
                 max_attempts=1,

@@ -10,13 +10,14 @@ and runs. The oracle test is the judge — green means done.
 when needed, read-only ``ContextFile`` neighbors), the base URL of an already-running
 OpenAI-compatible server, and a model name; it returns an ``Outcome``.
 
-Four shared owners are also re-exported here so downstream consumers derive them through the
+Shared owners are also re-exported here so downstream consumers derive them through the
 top-level API rather than reaching into a submodule (D-BENCH-002): ``slug_model_id`` (the single
 owner of model-id → filename slugging), ``TARGET_FILE_LABEL`` (the prompt's target-file wire
 label, which a replay transport parses), ``WHOLE_FILE_REPLY_PREFIX`` (the header of the reply a
-model writes, which that same transport encodes to stand in for one), and
-``mean_tokens_per_second`` (the guarded decode-rate quotient every population shares — one
-generation, one task, one benchmark run).
+model writes, which that same transport encodes to stand in for one), ``mean_tokens_per_second``
+(the guarded decode-rate quotient every population shares — one generation, one task, one
+benchmark run), and ``generation_params_from_json`` (the reader for the registry's PARAMS cell,
+which the bundled example and the benchmark each parse from --generation-params).
 
 ``AttemptProgress`` is exported for the same reason: it is the event ``implement``'s ``on_attempt``
 observer receives, and a downstream consumer reaches the loop only through this public API.
