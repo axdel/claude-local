@@ -9,7 +9,7 @@ recorded against the wrong body tests the decoder against a wire no server produ
 
 The request body is built by `HttpxBackend.generate` itself, not restated here, so the captured
 bytes are by construction the answer to the request the loop makes — stable prefix, user tail,
-streaming, usage accounting on, and the resolved row's own request-body fields. Only the
+streaming, usage accounting on, and the resolved model's own request-body fields. Only the
 transport is local to this script.
 
     scripts/capture_sse_fixture.py gpt-oss-20b tests/fixtures/sse/harmony_channel_stream.bytes \

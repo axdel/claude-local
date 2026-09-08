@@ -15,6 +15,11 @@ serving-agnostic (``implement()`` takes a ``base_url`` and starts nothing), so t
 an optional dependency group. Importing this module does not need it — the server is a
 subprocess, named but never imported — so only actually opening a session requires
 ``uv sync --group serve``.
+
+Reach it as ``from claude_local import model_session`` or ``from claude_local.model_session import
+ModelSession``. ``import claude_local.model_session as x`` does NOT work: the package re-exports
+the function of the same name, so that binds the function and ``x.ModelSession`` raises
+AttributeError. Module and entry point share a name because they are one concept (D-SESSION-001).
 """
 
 from __future__ import annotations

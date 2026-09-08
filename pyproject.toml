@@ -172,8 +172,8 @@ layers = [
     "__main__",
     "cli",
     # Two composition roots, siblings because neither reaches into the other: `entrypoint` wires
-    # the red→green loop for a machine caller, `session` serves a model for an interactive one.
-    "entrypoint | session",
+    # the red→green loop for a machine caller, `model_session` serves one for an interactive one.
+    "entrypoint | model_session",
     "loop",
     "telemetry",
     "client | prompt | snapshot",

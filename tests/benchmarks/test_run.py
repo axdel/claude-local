@@ -427,6 +427,87 @@ def test_a_broken_style_linter_costs_the_count_but_never_the_completed_ladder(
     assert card["style_findings"] is None
 
 
+def test_a_refused_code_out_costs_the_tree_but_never_the_completed_ladder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Oracle: the same two contracts, one artifact over — the produced-code tree is optional too.
+
+    ``--code-out`` is opt-in, and its own contract says the count is what makes the code optional:
+    "the judgement survives as a number even when the files it came from do not". So a host that
+    refuses the tree costs exactly that tree — never a case, and never the scorecard, which this
+    layer's Boundary Map row makes the thing a harness fault must not discard.
+
+    The fault is a real host refusal rather than a patched-in raise: a regular file standing where
+    the directory must be created makes ``mkdir`` raise ``NotADirectoryError``, so the fixture is
+    the operating system's own answer instead of one authored from memory.
+    """
+    sources = _golden_sources()
+    occupied = tmp_path / "occupied"
+    occupied.write_text("a file standing where the code tree must go", encoding="utf-8")
+    scorecards = tmp_path / "scorecards"
+
+    with replay_cases_http_client(sources) as http_client:
+        exit_code = main(
+            [
+                "--base-url",
+                "http://benchmark.local",
+                "--model",
+                "replay/green-ladder",
+                "--out",
+                str(scorecards),
+                "--code-out",
+                str(occupied),
+            ],
+            http_client=http_client,
+        )
+
+    assert exit_code == 3
+    err = capsys.readouterr().err
+    assert "harness fault" in err
+    assert "Traceback" not in err
+
+    # The ladder survives whole — only the tree the host refused is missing.
+    (scorecard_path,) = scorecards.glob("scorecard-*.json")
+    card = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert card["cases_passed"] == card["cases_total"] == len(sources)
+
+
+def test_a_refused_scorecard_directory_still_exits_3_with_the_numbers_on_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A host that refuses even the scorecard file gets the translated exit, not a traceback.
+
+    This is the one refusal that costs the persisted record, so the contract it has to keep is
+    narrower: the module docstring says exit 3 means the harness itself faulted, and the per-case
+    table is printed BEFORE any file is written precisely so a watcher has the numbers either way.
+    Asserting the table is on stdout is asserting that the run still told the operator what it
+    measured — the failure being ruled out is a raw traceback that reports nothing and exits 1.
+    """
+    sources = _golden_sources()
+    occupied = tmp_path / "occupied"
+    occupied.write_text("a file standing where the scorecard directory must go", encoding="utf-8")
+
+    with replay_cases_http_client(sources) as http_client:
+        exit_code = main(
+            [
+                "--base-url",
+                "http://benchmark.local",
+                "--model",
+                "replay/green-ladder",
+                "--out",
+                str(occupied),
+            ],
+            http_client=http_client,
+        )
+
+    assert exit_code == 3
+    captured = capsys.readouterr()
+    assert "harness fault" in captured.err
+    assert "Traceback" not in captured.err
+    # The measurement itself reached the operator, which is what makes the lost file survivable.
+    assert f"{len(sources)}/{len(sources)} cases passed" in captured.err
+
+
 def test_print_scorecard_surfaces_a_faulted_case_and_a_capped_case(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

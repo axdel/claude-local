@@ -1,4 +1,4 @@
-"""Tests for the interactive session (``claude_local.session``).
+"""Tests for the interactive model session (``claude_local.model_session``).
 
 The session's job is a sequence with five ways to leak a process — resolve, spawn, wait ready,
 build a client, tear down — so these drive a REAL subprocess HTTP server rather than a mocked
@@ -22,7 +22,7 @@ from ports import free_port, port_is_bound
 
 from claude_local.model_registry import ModelNotPresent, UnknownModel
 from claude_local.model_server import ModelServer, ServerNotReady
-from claude_local.session import ModelSession, SessionHandle
+from claude_local.model_session import ModelSession, SessionHandle
 from claude_local.types import Budget
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "sse"

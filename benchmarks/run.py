@@ -75,6 +75,13 @@ _BENCHMARK = _HERE / "schedule_manager"
 _CASES = _BENCHMARK / "cases"
 _GOLDEN_APP = _BENCHMARK / "golden" / "app"
 
+_SCORECARD_STILL_WHOLE = "the scorecard covers every case that ran; only {absent} is absent"
+"""What a refused side artifact costs — one thing the run could have had, never a case.
+
+Written once because it is a claim about what a scorecard MEANS, and every fault that leaves the
+ladder itself intact has to make the same claim in the same words to be worth reading.
+"""
+
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -372,42 +379,90 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     # do not, so a scorecard is a whole record rather than half of a pair that must stay together.
     # One clock read serves both writers below, so their names carry the same stamp.
     stamp_ms = int(time.time() * 1000)
-    # The linter is a separate process, so a missing or broken one is the HOST failing — the same
-    # class as an interrupted run, reported through the same channel. Caught rather than allowed
-    # to propagate because everything above it is hours of decode, and an unmeasured style count
-    # is the one thing this run can lose without losing what it measured. The scorecard keeps its
-    # `None`, which already means not measured — a different answer from 0.
-    style_fault: Exception | None = None
+    # Everything below runs against a ladder that is already MEASURED, so every step from here is
+    # one the host can refuse without costing a case. The linter is a separate process and the two
+    # writes below are directories the host may not accept; each is caught, collected, and
+    # reported through the same exit-3 channel an interrupted run uses, because everything above
+    # is hours of decode and none of it should die for an artifact ABOUT it. An unmeasured style
+    # count leaves the scorecard's `None`, which already means not measured — not 0.
+    artifact_faults: list[tuple[Exception, str]] = []
     try:
         scorecard = replace(
             scorecard, style_findings=_count_style_findings(results, scorecard, stamp_ms)
         )
     except (OSError, RuntimeError, ValueError) as unmeasurable:
-        style_fault = unmeasurable
+        artifact_faults.append(
+            (unmeasurable, _SCORECARD_STILL_WHOLE.format(absent="its style count"))
+        )
     _print_scorecard(scorecard)
-    if args.code_out is not None:
-        code_directory = write_produced_code(results, scorecard.model, args.code_out, stamp_ms)
-        print(f"produced code written to {code_directory}", file=sys.stderr)
-    if args.out is not None:
-        written = scorecard.write(args.out, stamp_ms)
-        print(f"scorecard written to {written}", file=sys.stderr)
+    artifact_faults += _write_run_artifacts(
+        scorecard, results, code_out=args.code_out, out=args.out, stamp_ms=stamp_ms
+    )
     # Last, so a fault is what an operator reads after the artifact lines — and 3 outranks the
     # pass/fail verdict below, because a run the host broke never earns a green.
-    if _report_harness_faults(interruption, style_fault, len(results)):
+    if _report_harness_faults(interruption, artifact_faults, len(results)):
         return 3
     return 0 if scorecard.cases_passed == scorecard.cases_total else 1
 
 
+def _write_run_artifacts(
+    scorecard: Scorecard,
+    results: Sequence[CaseResult],
+    *,
+    code_out: Path | None,
+    out: Path | None,
+    stamp_ms: int,
+) -> list[tuple[Exception, str]]:
+    """Write the run's opt-in files, returning one (fault, consequence) pair per host refusal.
+
+    Both writes happen after the ladder is scored and printed, so a host that refuses one costs
+    that file and nothing about the cases already measured. A refusal is therefore collected and
+    returned rather than left to end the run part-way through its own output — which is how a
+    green ladder was destroyed by a directory it could not create.
+
+    Args:
+        scorecard: The scored run, already printed.
+        results: One ``CaseResult`` per case, in benchmark order.
+        code_out: Where to save the produced code, or ``None`` to skip it.
+        out: Where to write the scorecard JSON, or ``None`` to skip it.
+        stamp_ms: The run's stamp, so both artifacts are named as a matched pair.
+
+    Returns:
+        A pair per refusal, each carrying the consequence line to print beneath it. Empty when
+        the host accepted every write asked of it.
+    """
+    faults: list[tuple[Exception, str]] = []
+    if code_out is not None:
+        try:
+            code_directory = write_produced_code(results, scorecard.model, code_out, stamp_ms)
+        except OSError as unwritable:
+            faults.append(
+                (unwritable, _SCORECARD_STILL_WHOLE.format(absent="the produced-code tree"))
+            )
+        else:
+            print(f"produced code written to {code_directory}", file=sys.stderr)
+    if out is not None:
+        try:
+            written = scorecard.write(out, stamp_ms)
+        except OSError as unwritable:
+            faults.append(
+                (unwritable, "the run's measurement is the scorecard printed above, unwritten")
+            )
+        else:
+            print(f"scorecard written to {written}", file=sys.stderr)
+    return faults
+
+
 def _report_harness_faults(
     interruption: BaseException | None,
-    style_fault: Exception | None,
+    artifact_faults: Sequence[tuple[Exception, str]],
     scored_cases: int,
 ) -> bool:
     """Print each harness fault that occurred; return whether any did.
 
-    Each fault says what the scorecard beside it does and does not cover, because an interrupted
-    ladder and an unmeasured style count leave very different holes in the same file: one is
-    missing cases, the other is missing only a number about the cases it has.
+    Each artifact fault carries the consequence line printed beneath it, because the holes these
+    faults leave are not the same: an interrupted ladder is missing cases, while a refused side
+    artifact is missing only something ABOUT the cases the scorecard already holds.
     """
     if interruption is not None:
         print(f"error: benchmark harness fault: {interruption}", file=sys.stderr)
@@ -415,13 +470,10 @@ def _report_harness_faults(
             f"the scorecard covers the {scored_cases} case(s) that finished before it",
             file=sys.stderr,
         )
-    if style_fault is not None:
-        print(f"error: benchmark harness fault: {style_fault}", file=sys.stderr)
-        print(
-            "the scorecard covers every case that ran; only its style count is absent",
-            file=sys.stderr,
-        )
-    return interruption is not None or style_fault is not None
+    for fault, consequence in artifact_faults:
+        print(f"error: benchmark harness fault: {fault}", file=sys.stderr)
+        print(consequence, file=sys.stderr)
+    return interruption is not None or bool(artifact_faults)
 
 
 def _count_style_findings(

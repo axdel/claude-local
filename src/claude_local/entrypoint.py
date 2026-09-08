@@ -44,13 +44,13 @@ from claude_local.telemetry import LocalEconomyRecord
 from claude_local.types import Status
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping
+    from collections.abc import Callable, Generator, Mapping
 
     from claude_local.derail import DerailReason
     from claude_local.types import TaskSpec
 
 BUNDLED_RULES_CARD = Path(__file__).parent / "rules_card.md"
-"""Default engineering-rules card — a static system prefix shipped beside the package."""
+"""Default engineering-rules card — part of the stable prefix, shipped beside the package."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,7 +259,7 @@ def _new_http_client() -> httpx.Client:
 
 
 @contextmanager
-def _scratch_worktree(worktree: Path | None) -> Iterator[Path]:
+def _scratch_worktree(worktree: Path | None) -> Generator[Path]:
     """Yield the worktree to run in — a caller-supplied one as-is, else a managed tempdir.
 
     A managed tempdir is created on entry and removed on exit, so the produced code MUST be read

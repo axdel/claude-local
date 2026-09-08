@@ -43,7 +43,7 @@ The loop engine decomposes into single-responsibility modules, dependencies flow
 (orchestration → adapters → stdlib/external):
 
 - **model client** — the httpx call to the local server; captures token usage and wall-clock timing.
-- **edit applier** — extracts the whole-file blocks from raw model text and writes ONLY the
+- **edit applier** — extracts the whole-file reply from raw model text and writes ONLY the
   permitted impl path; the oracle test is never in the model's writable set.
 - **loop** — RED (run the immutable test) → REPAIR feedback on failure → best-passing snapshot →
   GREEN, bounded by a hard token/attempt budget.
@@ -85,7 +85,7 @@ telemetry (measure, never guess; cold paths like init and record-writing stay si
 
 Standing hot-path principles:
 
-- **KV-cache prefix reuse.** The system prefix (rules card + spec + optional ordered context
+- **KV-cache prefix reuse.** The stable prefix (rules card + spec + optional ordered context
   files + immutable test) is byte-identical across a task's attempts — only the feedback tail
   changes. Stability is a hard invariant: any per-call mutation silently discards the server's
   prefill cache.

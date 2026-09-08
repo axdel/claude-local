@@ -103,7 +103,7 @@ def benchmark_command(
     if generation_params:
         # JSON because that is what the flag declares. The registry already owns the key=value
         # syntax these came from, so re-serializing to it here would give one format two writers.
-        # dict() because a resolved row hands over a read-only mapping and json.dumps takes dicts.
+        # dict() because a resolved model hands over a read-only mapping, json.dumps takes dicts.
         command.extend(("--generation-params", json.dumps(dict(generation_params))))
     if stream:
         command.append("--stream")

@@ -50,7 +50,7 @@ _THINKING_BUDGET = "thinking_budget"
 
 Named here because it is the one generation parameter this layer must recognise rather than
 merely forward: it is the only one the server refuses to run in some configurations, so a
-resolved row carrying it needs checking against the rest of the row.
+resolved model carrying it needs checking against the rest of its row.
 """
 
 
@@ -161,7 +161,7 @@ class ResolvedModel:
 
     Distinct from ``flags`` by destination, not by kind: these ride in each request rather than
     on the server's command line, which is the only way to countermand a chat template's own
-    default. Read-only, so one resolved row cannot be edited into a different configuration by
+    default. Read-only, so one resolved model cannot be edited into a different configuration by
     a consumer that forwards it.
     """
 
