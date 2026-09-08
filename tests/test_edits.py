@@ -257,8 +257,9 @@ def test_blank_lines_before_the_header_do_not_refuse_the_frame() -> None:
 
     Oracle: measured against a real model, and the reply is kept as a fixture rather than
     described. Qwen3.8-27B-abliterated, served with its thinking channel left on, emitted a
-    complete and well-formed frame preceded by two newlines — the residue of the reasoning channel
-    — and the whole attempt was refused for those two bytes, with ``finish_reason: stop`` and no
+    complete and well-formed frame preceded by two newlines — the residue a reasoning model left
+    in content — and the whole attempt was refused for those two bytes, with ``finish_reason:
+    stop`` and no
     derail. That is the same BLOCKED-with-nothing-to-repair-from outcome D-EDITS-004 weighed, at
     the other end of the header.
 

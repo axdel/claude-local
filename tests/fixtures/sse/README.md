@@ -92,7 +92,7 @@ granularity, marker placement, and the usage trailer are preserved exactly.
   `finish_reason:"stop"`, `usage.completion_tokens=29`. Every reasoning frame has
   `content:null` and puts its text on `reasoning_content`, with a duplicate `reasoning`
   alias beside it. Three facts this capture establishes that no derived fixture could:
-  - The thinking channel is a **separate wire field**, not markup inside `content` — the
+  - A reasoning delta arrives on a **separate wire field**, not as markup inside `content` — the
     structured twin of the harmony leak above, and invisible to `claude_local.harmony`.
   - The server bills the thinking: 29 completion tokens for a 2-character answer, so a
     loop that meters only content under-counts a reasoning model's real cost by 25/29ths.

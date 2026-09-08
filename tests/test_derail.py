@@ -229,7 +229,7 @@ def test_the_wait_for_the_first_byte_is_not_judged_as_silence() -> None:
     page cache, of which only 9.1s was prefill (``scripts/measure_first_byte.py``). That load
     exceeded this bound outright under the memory pressure of a full sweep, so a guard whose clock
     ran from construction would report a model that was loading normally as silent — the same
-    false verdict the reasoning-channel fix removed, re-entering through the clock instead of the
+    false verdict the reasoning-delta fix removed, re-entering through the clock instead of the
     decoder.
     """
     clock = FakeClock(0.0)

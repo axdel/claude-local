@@ -22,7 +22,7 @@ exists to avoid. Ask the benchmark instead, which drives the real case through t
 What is left here that the benchmark cannot do is asking under a configuration nothing else will
 send: `--raw` prints the reply before `assistant_content` normalizes it, which is where a
 reasoning model's channel markup is visible, and `--generation-params` sets aside the registry
-row's request-body fields, which is the only way to see a channel the row exists to suppress.
+row's request-body fields, which is the only way to see the markup a row's suppression hides.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def _print_provenance(
 
     The two facts every transcript needs are positional and the per-path ones ride in the mapping,
     so neither path can omit them. Which model answered is the obvious one; the generation
-    parameters are the one that bites: a reply recorded with the reasoning channel forced on and a
+    parameters are the one that bites: a reply recorded with reasoning forced on and a
     reply recorded under a row that disables it look nothing alike, and nothing in the transcript
     itself says which one this is.
     """
@@ -104,7 +104,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--raw",
         action="store_true",
-        help="Print the server's whole reply, reasoning channels included, before normalization.",
+        help=(
+            "Print the reply as content delivered it, channel-transcript markup included, "
+            "before normalization. A reasoning delta arrives on its own wire field and is not "
+            "shown here — scripts/probe_thinking_channel.py reports those."
+        ),
     )
     parser.add_argument(
         "--generation-params",
@@ -112,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "JSON object REPLACING the registry row's request-body fields, for asking what the "
             'model does under a configuration its row does not declare (e.g. \'{"enable_thinking"'
-            ": true}' to see the reasoning channel a row that disables it would hide). Replaces "
+            ": true}' to see the reasoning a row that disables it would hide). Replaces "
             "rather than merges: a row's hard cap is part of the configuration being set aside."
         ),
     )

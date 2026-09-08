@@ -83,7 +83,8 @@ class SessionHandle:
                 of discarding it; varying it per turn silently throws that reuse away.
 
         Returns:
-            The generated text, with any reasoning-channel markup already stripped.
+            The generated text, with any channel-transcript markup already recovered. A
+            reasoning delta never reaches it, so none is stripped here.
         """
         self.last = self._client.generate(system, user, self._budget)
         return self.last.text

@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --quiet python
-"""Serve one registered model and report, from the wire, whether it emits a reasoning channel.
+"""Serve one registered model and report, from the wire, whether it emits reasoning deltas.
 
 The question this answers cannot be answered by reading the request. `enable_thinking` is a
 *soft* request: mlx_vlm resolves it against the model's own chat template, and when no

@@ -108,10 +108,10 @@ def test_a_streamed_channel_transcript_yields_only_the_assistant_content() -> No
     assert result.tokens_estimated is False
 
 
-# --- Reasoning channel: thinking beside the reply, not inside it -------------------
+# --- Reasoning deltas: thinking beside the reply, not inside it --------------------
 
 
-def test_a_streamed_reasoning_channel_yields_only_the_answer() -> None:
+def test_streamed_reasoning_deltas_yield_only_the_answer() -> None:
     """The structured twin of the harmony capture: a separate wire field, not inline markup.
 
     ``reasoning_channel_stream.bytes`` is a real recorded session whose server streams

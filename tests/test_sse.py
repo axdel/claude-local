@@ -202,7 +202,7 @@ def test_role_chunk_with_empty_content_yields_no_delta() -> None:
     assert events == []
 
 
-# --- The reasoning channel: a second text field on the same delta -----------------
+# --- Reasoning deltas: a second text field on the same delta ----------------------
 
 
 def test_reasoning_content_decodes_as_reasoning_not_as_content() -> None:

@@ -663,7 +663,7 @@ def test_a_planning_reply_resolving_to_no_message_is_paid_for_and_freezes_nothin
     """The plan budget can be spent in full for no plan at all, and the run is unaffected.
 
     Oracle: derived from the two transforms a planning reply passes through, never from running
-    the loop. Reasoning-channel deltas are metered but never appended to the reply, and a leaked
+    the loop. Reasoning deltas are metered but never appended to the reply, and a leaked
     channel transcript cut before its ``final`` channel resolves to the empty string — so a
     reasoning model whose plan cap runs out mid-analysis burns the whole cap and yields nothing to
     freeze. The delta framing below is the real wire's, not a guess: the capture in
