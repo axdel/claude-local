@@ -50,7 +50,11 @@ from claude_local.model_server import (
 
 _BENCHMARK_MODULE = "benchmarks.run"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_SCORECARD_DIR = _REPO_ROOT / "benchmarks" / "scorecards"
+# Python seeds sys.path with the script's own directory rather than the working directory, so the
+# repo root has to be added before the benchmark harness that owns the scorecard location resolves.
+sys.path.insert(0, str(_REPO_ROOT))
+
+from benchmarks.harness.scorer import DEFAULT_SCORECARD_DIR  # noqa: E402
 
 
 def benchmark_command(
@@ -120,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--out",
         type=Path,
-        default=_DEFAULT_SCORECARD_DIR,
+        default=DEFAULT_SCORECARD_DIR,
         help="Directory the scorecard JSON is written into (created if absent).",
     )
     parser.add_argument(

@@ -30,6 +30,7 @@ from claude_local.model_server import (
     ModelServer,
     PortUnavailable,
     ServerExited,
+    ServerHandle,
     ServerModelUnknown,
     ServerNotReady,
 )
@@ -291,6 +292,23 @@ def test_a_server_advertising_no_models_is_named_rather_than_indexed_into() -> N
         _substitute(port, body=_NO_MODELS_BODY).running(startup_timeout_s=30.0) as handle,
         pytest.raises(ServerModelUnknown, match=r"/v1/models"),
     ):
+        handle.served_model_id()
+
+
+def test_a_server_that_stopped_answering_faults_as_a_named_type_not_a_transport_one() -> None:
+    """Oracle: the escape set two contracts already declare — no httpx type is in either.
+
+    `model_session` documents exactly three faults an interactive caller may see, and the
+    Boundary Map's model_server row lists the same named types, so a raw `httpx.HTTPError`
+    reaching a caller breaks a contract that is already written down rather than merely
+    surprising someone. The readiness probe already answers a dead socket with ServerNotReady;
+    the served-models probe is its sibling and owes the same answer, so a caller needs no
+    transport vocabulary to tell an unreachable server from one serving nothing.
+    """
+    port = free_port()
+    handle = ServerHandle(base_url=f"http://127.0.0.1:{port}", port=port, pid=os.getpid())
+
+    with pytest.raises(ServerNotReady, match=r"/v1/models"):
         handle.served_model_id()
 
 

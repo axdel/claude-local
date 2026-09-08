@@ -37,11 +37,11 @@ import json
 import math
 import sys
 import time
-from pathlib import Path
 
 import httpx
 
 from claude_local.backend import HttpxBackend
+from claude_local.entrypoint import BUNDLED_RULES_CARD
 from claude_local.model_registry import ModelRegistry
 from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
@@ -49,9 +49,6 @@ from claude_local.model_server import (
 )
 from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S
 from claude_local.types import Budget
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_RULES_CARD = _REPO_ROOT / "src" / "claude_local" / "rules_card.md"
 
 _TARGET_PREFIX_BYTES = 32_021
 """The largest stable prefix a real case builds — the one this probe has to reproduce.
@@ -87,7 +84,7 @@ _REPORTED_TIMINGS = ("prompt_n", "prompt_ms", "prompt_per_second", "predicted_pe
 
 def benchmark_sized_prefix() -> str:
     """The rules card repeated until it is at least as long as the largest real case prefix."""
-    card = _RULES_CARD.read_text(encoding="utf-8") + "\n"
+    card = BUNDLED_RULES_CARD.read_text(encoding="utf-8") + "\n"
     return card * math.ceil(_TARGET_PREFIX_BYTES / len(card.encode("utf-8")))
 
 

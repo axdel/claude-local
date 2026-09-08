@@ -50,13 +50,13 @@ from collections import Counter
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-# The repo root itself, not `src`: this is the one script importing the benchmark package, and
-# Python seeds sys.path with the script's own directory rather than the working directory.
+# The repo root itself, not `src`: the benchmark package is not installed, and Python seeds
+# sys.path with the script's own directory rather than the working directory.
 sys.path.insert(0, str(_REPO_ROOT))
 
+from benchmarks.harness.scorer import DEFAULT_SCORECARD_DIR  # noqa: E402
 from benchmarks.harness.style import StyleFinding, collect_style_findings  # noqa: E402
 
-_SCORECARDS = _REPO_ROOT / "benchmarks" / "scorecards"
 _USAGE_ERROR = 2
 
 
@@ -66,7 +66,7 @@ def _latest_code_directory() -> Path | None:
     Directory names end in a millisecond stamp, so the newest sorts last by name — which beats
     comparing modification times, since reading a tree can leave those unequal to write order.
     """
-    directories = sorted(path for path in _SCORECARDS.glob("code-*") if path.is_dir())
+    directories = sorted(path for path in DEFAULT_SCORECARD_DIR.glob("code-*") if path.is_dir())
     return directories[-1] if directories else None
 
 
@@ -116,7 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     if not directories:
         latest = _latest_code_directory()
         if latest is None:
-            print(f"no produced-code directory found under {_SCORECARDS}", file=sys.stderr)
+            print(
+                f"no produced-code directory found under {DEFAULT_SCORECARD_DIR}", file=sys.stderr
+            )
             return _USAGE_ERROR
         directories = [latest]
 

@@ -59,6 +59,7 @@ from benchmarks.harness import (
 )
 from benchmarks.harness.style import collect_style_findings
 from claude_local import generation_params_from_json
+from claude_local.cli import BASE_URL_ENV, MODEL_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -81,13 +82,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("CLAUDE_LOCAL_BASE_URL"),
-        help="OpenAI-compatible server base URL (env: CLAUDE_LOCAL_BASE_URL).",
+        default=os.environ.get(BASE_URL_ENV),
+        help=f"OpenAI-compatible server base URL (env: {BASE_URL_ENV}).",
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("CLAUDE_LOCAL_MODEL"),
-        help="Model name the server should serve (env: CLAUDE_LOCAL_MODEL).",
+        default=os.environ.get(MODEL_ENV),
+        help=f"Model name the server should serve (env: {MODEL_ENV}).",
     )
     parser.add_argument(
         "--out",

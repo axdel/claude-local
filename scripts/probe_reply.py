@@ -37,6 +37,7 @@ import httpx
 from claude_local.backend import HttpxBackend
 from claude_local.client import ModelClient
 from claude_local.edits import extract_file
+from claude_local.entrypoint import BUNDLED_RULES_CARD
 from claude_local.model_registry import (
     ModelRegistry,
     UnservableCombination,
@@ -50,9 +51,6 @@ from claude_local.prompt import PromptBuilder
 from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S
 from claude_local.sse import Delta, Finish, Usage, decode_sse
 from claude_local.types import Budget, TaskSpec
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_RULES_CARD = _REPO_ROOT / "src/claude_local/rules_card.md"
 
 _DERAIL_UNMEASURED = "not measured (--raw bypasses the derail guard)"
 """What ``derail_reason`` is on the raw path — never ``None``, which would claim the guard ran."""
@@ -156,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
             # The same prefix implement() sends — read from the builder and the bundled card,
             # never restated here, so a probe cannot answer a question about a prompt the loop
             # does not actually send.
-            prefix = PromptBuilder(_RULES_CARD).stable_prefix(spec)
+            prefix = PromptBuilder(BUNDLED_RULES_CARD).stable_prefix(spec)
             if args.raw:
                 # Straight off the wire: what the client would normalize away, which is where a
                 # reasoning model shows its working. Deliberately not ModelClient — the whole

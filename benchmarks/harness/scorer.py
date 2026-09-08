@@ -15,13 +15,20 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from claude_local import Status, slug_model_id
 
+DEFAULT_SCORECARD_DIR = Path(__file__).resolve().parents[1] / "scorecards"
+"""Where scorecards are written and read from — one owner, so the ladder has one location.
+
+Anchored to ``benchmarks/`` rather than to a repo root, so a caller that moved the checkout
+still resolves it. Every dev script defaults here instead of re-encoding the path.
+"""
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from .driver import CaseResult
 

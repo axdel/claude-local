@@ -1323,7 +1323,7 @@ def test_a_refused_edit_names_the_path_it_aimed_at(tmp_path: Path) -> None:
     assert "src/other.py" in seen[0].blocked_reason
 
 
-def test_an_unframed_reply_is_reported_as_blocked_for_a_different_reason(tmp_path: Path) -> None:
+def test_a_reply_carrying_no_frame_is_blocked_for_a_different_reason(tmp_path: Path) -> None:
     """The sibling structural cause, so the two are pinned apart rather than merely non-empty."""
     worktree = _setup_worktree(tmp_path)
     seen: list[AttemptProgress] = []
@@ -1406,7 +1406,8 @@ def test_an_attempt_reframed_rather_than_escalated_is_not_reported_as_nudged(
     watcher the loop paid for an escalation it never sent.
 
     The run: two identical scored attempts (the second stalls, setting the escalation), then an
-    unframed reply (which spends the one correction), then the reframed attempt under test.
+    reply carrying no frame (which spends the one correction), then the reframed attempt under
+    test.
     """
     worktree = _setup_worktree(tmp_path)
     seen: list[AttemptProgress] = []
@@ -1420,7 +1421,7 @@ def test_an_attempt_reframed_rather_than_escalated_is_not_reported_as_nudged(
                 _edit_script(_V0),
             ]
         ),
-        # Three scored attempts: the unframed reply never reaches the oracle.
+        # Three scored attempts: the reply carrying no frame never reaches the oracle.
         ScriptedSpawn(*([_junit("one_failure.xml")] * 3)),
         on_attempt=seen.append,
     )

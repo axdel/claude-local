@@ -140,8 +140,8 @@ def _run(args: argparse.Namespace) -> int:
         BackendUnavailable, SandboxUnavailable, OracleError: the host is broken, not the task.
     """
     spec = _task_from_json(_read_envelope(args.task))
-    base_url = _required_setting(args.base_url, _BASE_URL_ENV, "--base-url")
-    model = _required_setting(args.model, _MODEL_ENV, "--model")
+    base_url = _required_setting(args.base_url, BASE_URL_ENV, "--base-url")
+    model = _required_setting(args.model, MODEL_ENV, "--model")
     try:
         outcome = implement(
             spec,
@@ -168,8 +168,8 @@ def _run(args: argparse.Namespace) -> int:
     return exit_code_for(outcome.status)
 
 
-_BASE_URL_ENV = "CLAUDE_LOCAL_BASE_URL"
-_MODEL_ENV = "CLAUDE_LOCAL_MODEL"
+BASE_URL_ENV = "CLAUDE_LOCAL_BASE_URL"
+MODEL_ENV = "CLAUDE_LOCAL_MODEL"
 
 _ENVELOPE_HELP = (
     "JSON task envelope: impl_path, spec_text, test_text, expected_tests, "
@@ -199,12 +199,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--base-url",
         default=None,
-        help=f"An already-running OpenAI-compatible server. Defaults to ${_BASE_URL_ENV}.",
+        help=f"An already-running OpenAI-compatible server. Defaults to ${BASE_URL_ENV}.",
     )
     parser.add_argument(
         "--model",
         default=None,
-        help=f"The model name to request from that server. Defaults to ${_MODEL_ENV}.",
+        help=f"The model name to request from that server. Defaults to ${MODEL_ENV}.",
     )
     parser.add_argument(
         "--generation-params",

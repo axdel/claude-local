@@ -133,12 +133,19 @@ class ServerHandle:
             The id of the first model the server advertises at its served-models endpoint.
 
         Raises:
-            httpx.HTTPError: The server did not answer.
+            ServerNotReady: The server did not answer — the same named fault the readiness
+                probe raises for a socket that will not talk, so no caller needs transport
+                vocabulary to tell an unreachable server from one serving nothing.
             ServerModelUnknown: The server answered, but advertises no model this can address —
                 either an empty served-models list, or a body that is not one at all.
         """
         served_models_url = f"{self.base_url}{_READINESS_PATH}"
-        answer = httpx.get(served_models_url, timeout=_SERVED_MODELS_TIMEOUT_S).text
+        try:
+            answer = httpx.get(served_models_url, timeout=_SERVED_MODELS_TIMEOUT_S).text
+        except httpx.HTTPError as transport_failure:
+            raise ServerNotReady(
+                f"the model server did not answer {served_models_url}: {transport_failure}"
+            ) from transport_failure
         advertised = _advertised_models(served_models_url, answer)
         if not advertised:
             raise ServerModelUnknown(

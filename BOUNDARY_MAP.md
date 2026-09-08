@@ -18,8 +18,11 @@
 | backend | httpx | may-import | Only external transport dependency. | active |  |
 | backend | types | may-import | Transport consumes Budget. | active |  |
 | benchmarks | claude_local | may-import | Downstream benchmark consumes the top-level public package API, plus claude_local.paths for the shared path-shape rule (its own row). | active |  |
+| benchmarks | claude_local.cli | may-import | Reads BASE_URL_ENV and MODEL_ENV, the server-coordinate env keys the machine CLI owns, so all three front doors name one pair of variables rather than three copies of the literals. | active |  |
 | benchmarks | claude_local.paths | may-import | The one submodule reached past the public package API: the harness writes fixture trees, so it must apply the same path-shape rule the loop applies, not a second copy of it. | active |  |
+| benchmarks | httpx | may-import | The offline replay transport builds a real httpx.Client over httpx.MockTransport, so a benchmark run drives the package's own HTTP, SSE, edit and oracle path against schema-derived frames instead of a stubbed backend. Declared per-module like the backend, entrypoint, model_server, session and scripts rows: a harness that doubles the wire necessarily holds the wire. | active |  |
 | claude_local | benchmarks | must-not-import | Reusable loop never depends on benchmark subjects or harness code. | active |  |
+| claude_local | examples | must-not-import | The shipped library never depends on the example that demonstrates it; examples is a leaf consumer above the package, exactly as benchmarks and scripts are. | active |  |
 | claude_local | scripts | must-not-import | Dev tooling is a leaf consumer above the package; the shipped library never depends on it. | active |  |
 | cli | backend | may-import | Catches BackendUnavailable so a broken host exits apart from a failed task. | active |  |
 | cli | entrypoint | may-import | Adapts one invocation to a TaskSpec; implement stays the composition root. | active |  |
@@ -48,6 +51,8 @@
 | entrypoint | snapshot | may-import | Constructs SnapshotStore over the writable subtree. | active |  |
 | entrypoint | telemetry | may-import | Surfaces LocalEconomyRecord on the Outcome. | active |  |
 | entrypoint | types | may-import | Consumes TaskSpec and Status. | active |  |
+| examples | claude_local | may-import | The bundled example teaches the public API, so it consumes the top-level package exactly as a downstream caller would — implement, TaskSpec, Budget, Status and generation_params_from_json — reaching no submodule past it. The third top-level consumer alongside benchmarks and scripts, and declared in both directions like them. | active |  |
+| examples | claude_local.cli | may-import | Same two server-coordinate env keys as the benchmark runner, from the same owner; the example demonstrates the documented channel rather than restating its variable names. | active |  |
 | loop | client | may-import | Drives one generation per attempt. | active |  |
 | loop | derail | may-import | Type-only under TYPE_CHECKING: DerailReason, carried onto the attempt record. | active |  |
 | loop | edits | may-import | Applies whole-file blocks. | active |  |
@@ -63,10 +68,12 @@
 | prompt | runner | may-import | Distills feedback over the oracle TestScore. | active |  |
 | prompt | types | may-import | Assembles the stable prefix from TaskSpec. | active |  |
 | runner | sandbox | may-import | Runs the oracle under kernel confinement. | active |  |
+| scripts | benchmarks.harness.scorer | may-import | Four dev scripts default to DEFAULT_SCORECARD_DIR from the module owning Scorecard, so the ladder's output location has one owner instead of four repo-root-relative copies. | active |  |
 | scripts | benchmarks.harness.style | may-import | score_style re-lints a produced-code tree through the harness owner of the rule set, never a second ruff invocation. | active |  |
 | scripts | claude_local.backend | may-import | probe_reply, measure_first_byte and capture_sse_fixture drive the transport directly to measure it. | active |  |
 | scripts | claude_local.client | may-import | probe_reply reassembles the loop's wiring one layer at a time, so it holds the client itself. | active |  |
 | scripts | claude_local.edits | may-import | probe_reply reports whether a raw reply carried an applicable frame, using the same parser the loop uses. | active |  |
+| scripts | claude_local.entrypoint | may-import | probe_reply and measure_first_byte take BUNDLED_RULES_CARD from the module that resolves it beside the package, rather than each rebuilding a repo-root-relative path that breaks for an installed package. | active |  |
 | scripts | claude_local.model_registry | may-import | Dev-tooling probes above the package reach internal modules by design: their job is to exercise one seam in isolation, which the public API deliberately hides. Seven scripts resolve a model row before serving it. | active |  |
 | scripts | claude_local.model_server | may-import | Six scripts serve a resolved model through the owning context manager rather than assuming a running server. | active |  |
 | scripts | claude_local.prompt | may-import | probe_reply builds the stable prefix through its owner rather than restating it. | active |  |

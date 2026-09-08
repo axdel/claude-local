@@ -42,7 +42,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_SCORECARDS = _REPO_ROOT / "benchmarks" / "scorecards"
+# Python seeds sys.path with the script's own directory rather than the working directory, so the
+# repo root has to be added before the benchmark harness that owns the scorecard location resolves.
+sys.path.insert(0, str(_REPO_ROOT))
+
+from benchmarks.harness.scorer import DEFAULT_SCORECARD_DIR  # noqa: E402
+
 _USAGE_ERROR = 2
 
 # What a scorecard written before the rules card became a benchmark variable reports as its card.
@@ -75,7 +80,7 @@ class LoadedScorecard:
         return self.model.rstrip("/").rsplit("/", 1)[-1]
 
 
-def _load_scorecards(scorecard_directory: Path = _SCORECARDS) -> list[LoadedScorecard]:
+def _load_scorecards(scorecard_directory: Path = DEFAULT_SCORECARD_DIR) -> list[LoadedScorecard]:
     """Every complete scorecard in ``scorecard_directory``, with its produced code's style count.
 
     Completeness is defined by the scorecards themselves — the widest case ladder any of them
@@ -333,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
 
     scorecards = _load_scorecards()
     if not scorecards:
-        print(f"error: no complete scorecard found under {_SCORECARDS}", file=sys.stderr)
+        print(f"error: no complete scorecard found under {DEFAULT_SCORECARD_DIR}", file=sys.stderr)
         return _USAGE_ERROR
 
     rows = _drop_duplicated_unstamped(_latest_per_configuration(scorecards))

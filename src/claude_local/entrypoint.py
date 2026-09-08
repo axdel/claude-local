@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from claude_local.derail import DerailReason
     from claude_local.types import TaskSpec
 
-_BUNDLED_RULES_CARD = Path(__file__).parent / "rules_card.md"
+BUNDLED_RULES_CARD = Path(__file__).parent / "rules_card.md"
 """Default engineering-rules card — a static system prefix shipped beside the package."""
 
 
@@ -168,7 +168,7 @@ def implement(
         OracleError: the oracle produced no verdict — a broken oracle, propagated as a fault.
     """
     subtree = _writable_subtree(spec.impl_path)
-    card = rules_card_path if rules_card_path is not None else _BUNDLED_RULES_CARD
+    card = rules_card_path if rules_card_path is not None else BUNDLED_RULES_CARD
     owns_client = http_client is None
     client = _new_http_client() if owns_client else http_client
     try:

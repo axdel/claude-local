@@ -1,7 +1,8 @@
 """Drive the bundled quicksort task through claude-local's ``implement()`` entry point.
 
-This is an EXAMPLE that teaches the API surface — not a command-line tool (claude-local ships
-no CLI). It reads the task's spec and its immutable oracle test from the files beside it,
+This is an EXAMPLE that teaches the API surface — not the machine-cli an orchestrator spawns,
+which is the ``claude-local`` console script and takes its task as one JSON envelope on stdin.
+It reads the task's spec and its immutable oracle test from the files beside it,
 composes a ``TaskSpec`` + ``Budget``, and runs one bounded red→green loop against an
 already-running OpenAI-compatible server. The produced implementation is written to stdout; the
 human-readable outcome and the local-economy summary go to stderr — so ``run.py > quicksort.py``
@@ -26,6 +27,7 @@ from claude_local import (
     generation_params_from_json,
     implement,
 )
+from claude_local.cli import BASE_URL_ENV, MODEL_ENV
 
 _HERE = Path(__file__).parent
 _IMPL_PATH = "src/quicksort.py"
@@ -52,13 +54,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("CLAUDE_LOCAL_BASE_URL"),
-        help="OpenAI-compatible server base URL (env: CLAUDE_LOCAL_BASE_URL).",
+        default=os.environ.get(BASE_URL_ENV),
+        help=f"OpenAI-compatible server base URL (env: {BASE_URL_ENV}).",
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("CLAUDE_LOCAL_MODEL"),
-        help="Model name the server should serve (env: CLAUDE_LOCAL_MODEL).",
+        default=os.environ.get(MODEL_ENV),
+        help=f"Model name the server should serve (env: {MODEL_ENV}).",
     )
     parser.add_argument(
         "--generation-params",
@@ -83,12 +85,12 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if not args.base_url:
         print(
-            "error: no server given (pass --base-url or set CLAUDE_LOCAL_BASE_URL)",
+            f"error: no server given (pass --base-url or set {BASE_URL_ENV})",
             file=sys.stderr,
         )
         return 2
     if not args.model:
-        print("error: no model given (pass --model or set CLAUDE_LOCAL_MODEL)", file=sys.stderr)
+        print(f"error: no model given (pass --model or set {MODEL_ENV})", file=sys.stderr)
         return 2
 
     outcome = implement(
