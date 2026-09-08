@@ -286,7 +286,8 @@ class Loop:
         once the nudge ladder is spent on a model that has stopped making progress (D-LOOP-004).
 
         Progress has two failure shapes and both feed that one ladder. A generation that comes
-        back byte-identical is a replay of an answer already scored, not a repair. A *plateau* is
+        back byte-identical is a *verbatim-repeat* of an answer already scored, not a repair. A
+        *plateau* is
         the same failure in different words — consecutive attempts that never clear the best score
         — and it is the commoner one, so a loop watching only for identical text spends its whole
         budget re-deriving one wrong answer. On exit the best-passing snapshot is restored

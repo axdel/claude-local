@@ -485,7 +485,7 @@ def test_a_repeated_generation_is_nudged_rather_than_ending_the_run(tmp_path: Pa
 
 
 def test_a_repeat_and_the_nudge_that_answers_it_are_both_reported_live(tmp_path: Path) -> None:
-    """The live view shows both halves: which attempt replayed, and which was asked differently.
+    """The live view shows both halves: which attempt repeated, and which was asked differently.
 
     Oracle: the two facts have different consumers. ``repeats_previous`` explains why the model
     produced nothing new; ``nudged`` explains why the loop kept paying anyway. A watcher given only
@@ -746,7 +746,7 @@ def test_the_run_ends_when_the_nudge_ladder_is_spent_not_when_the_budget_is(
     otherwise a persistently deterministic model would spend every remaining attempt re-buying one
     answer, which is the exact waste the original stop-on-repeat rule existed to prevent. This
     keeps that saving and narrows it to the case where it is actually true: after the escalation is
-    exhausted, not on the first sign of a replay. The budget here is six and the ladder ends it at
+    exhausted, not on the first sign of a stall. The budget here is six and the ladder ends it at
     four, so nothing but the ladder can be what stopped it.
     """
     worktree = _setup_worktree(tmp_path)
@@ -863,7 +863,7 @@ def test_the_correction_carries_the_reply_that_earned_it(tmp_path: Path) -> None
     """The re-ask shows the model its own reply, then states what to do instead.
 
     Oracle: the nudge contract is counterevidence followed by the imperative it leads — the same
-    shape the repeat ladder uses (``_repeat_escalation``). Without the evidence the model is told
+    shape the stall ladder uses (``_stall_escalation``). Without the evidence the model is told
     it did something wrong and cannot see what, so the correction reads as a repetition of the
     instructions it has already failed to follow once.
     """
@@ -1125,7 +1125,7 @@ def test_backend_unavailable_propagates_and_is_not_masked(tmp_path: Path) -> Non
 
 
 def test_each_attempt_is_reported_while_the_run_is_still_in_flight(tmp_path: Path) -> None:
-    """A progress report must arrive DURING the run, not be replayed after it.
+    """A progress report must arrive DURING the run, not be re-emitted after it.
 
     Oracle: the impl file's on-disk text is loop-external state that changes between attempts —
     attempt 1 writes _V1 and attempt 2 writes _V2. Reading it inside each report therefore

@@ -5,10 +5,10 @@ human one. ``model_session("gpt-oss-20b")`` resolves the name in the store, spaw
 for it to answer, builds a warm client against it, and yields a callable — then guarantees the
 server is gone when the block ends, whether it ended normally or by exception.
 
-The point is that a REPL session should not have to know that sequence. Resolution, spawn,
-readiness polling, model-id negotiation, client construction, and teardown are five steps with
-five ways to leak a process; they live here once instead of in every shell that wants to try a
-prompt against a local model.
+The point is that a caller at an interactive prompt should not have to know that sequence.
+Resolution, spawn, readiness polling, model-id negotiation, client construction, and teardown are
+five steps with five ways to leak a process; they live here once instead of in every shell that
+wants to try a prompt against a local model.
 
 Serving is what separates this module from the rest of the package: the loop is deliberately
 serving-agnostic (``implement()`` takes a ``base_url`` and starts nothing), so the MLX stack stays
@@ -59,10 +59,10 @@ class SessionHandle:
     half of a ``ModelServer`` — this is what ``ModelSession.open()`` yields, so the pair reads
     the same way at both entry points.
 
-    Callable rather than a plain function so one turn's metering survives it. ``__call__``
-    returns the text, because printing a dataclass is not what a REPL wants; ``last`` keeps the
-    full ``GenerationResult`` — tokens, seconds, the derail reason — which is the whole point of
-    tuning a model interactively rather than just talking to it.
+    Callable rather than a plain function so one turn's metering survives it. ``__call__`` returns
+    the text, because printing a dataclass is not what an interactive prompt wants; ``last`` keeps
+    the full ``GenerationResult`` — tokens, seconds, the derail reason — which is the whole point
+    of tuning a model interactively rather than just talking to it.
     """
 
     def __init__(self, client: ModelClient, budget: Budget, model_id: str) -> None:
@@ -182,7 +182,7 @@ def model_session(
 ) -> AbstractContextManager[SessionHandle]:
     """Serve a registered model for the duration of a ``with`` block.
 
-    The one-liner the REPL wants::
+    The one-liner an interactive prompt wants::
 
         with model_session("gpt-oss-20b") as model:
             print(model("write a haiku about static types"))

@@ -352,7 +352,7 @@ def test_a_long_unscorable_reply_cannot_push_the_correction_out_of_reach(tmp_pat
 def test_the_nudge_ladder_escalates_and_is_finite(tmp_path: Path) -> None:
     """Each rung asks a different question, and the ladder ends rather than repeating.
 
-    Oracle: a nudge exists only to make the next prompt differ from the one that produced a replay,
+    Oracle: a nudge exists only to make the next prompt differ from the one that produced a stall,
     so two rungs with the same text would be no perturbation at all — the second would reproduce
     the first's absorbing state exactly. And the ladder has to end: past the last rung there is no
     further question this card knows how to ask, and continuing would spend the remaining budget
@@ -499,9 +499,10 @@ def test_only_the_first_failures_evidence_leads_the_nudge(tmp_path: Path) -> Non
 
     Oracle: the captured run holds two independent failures — an assertion and a ``TypeError``. The
     rung says "make that path produce the value the test expects", which is a single-target
-    instruction; leading it with every failure at once contradicts it and asks a model that already
-    replayed once to fix everything simultaneously. The second failure stays reachable in the
-    diagnostics above, so nothing is hidden — it is only not what the imperative points at.
+    instruction; leading it with every failure at once contradicts it and asks a model that has
+    already repeated itself once to fix everything simultaneously. The second failure stays
+    reachable in the diagnostics above, so nothing is hidden — it is only not what the imperative
+    points at.
 
     Both halves are asserted. "The second failure is absent" is vacuously true of an escalation
     that quoted nothing, so on its own it would pass against the very defect it exists to catch.

@@ -80,10 +80,10 @@ passed, `1` when any case failed, `2` for a usage error (no model named), and `3
 benchmark harness itself faults. Exit `3` is a broken *host*, distinct from exit `1`'s model that
 simply failed the task, and it covers two kinds of break: one that interrupts the ladder — the
 prerequisite server is unreachable, the kernel sandbox is unavailable, an oracle is broken — and
-one the host raises against a side artifact after every case is already scored, refusing the style
-linter or either output directory (`D-BENCH-017`). Neither costs a measurement: an interrupted run
-still scores and writes the cases that finished first, and a refused artifact costs only itself,
-leaving the scorecard whole.
+one the host raises against a side artifact once the ladder is already scored, refusing the style
+linter or either output directory (`D-BENCH-017`). The two compose: an interruption scores the cases
+that finished first, and the artifact steps then run over that partial set, so a refusal there still
+costs only itself. Neither destroys a measurement already taken (`INV-016`).
 
 ## The scorecard
 

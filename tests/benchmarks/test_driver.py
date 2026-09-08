@@ -199,7 +199,7 @@ def test_replay_cases_client_rejects_a_request_without_a_target_file() -> None:
 class RecordingProgress:
     """A ``BenchmarkProgress`` that records the event SEQUENCE, not merely the totals.
 
-    Order is the property under test: a run that collected events and replayed them at the end
+    Order is the property under test: a run that collected events and re-emitted them at the end
     would produce the same multiset and a different sequence.
     """
 

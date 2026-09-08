@@ -78,7 +78,7 @@ def test_clean_stream_reports_server_usage_and_full_text() -> None:
 # --- A leaked channel transcript is normalized at this seam -----------------------
 
 
-def test_a_streamed_harmony_transcript_yields_only_the_assistant_message() -> None:
+def test_a_streamed_channel_transcript_yields_only_the_assistant_message() -> None:
     """The captured wire, end to end: transcript in over SSE, assistant content out.
 
     `harmony_channel_stream.bytes` is a real recorded session, so this is the seam test the

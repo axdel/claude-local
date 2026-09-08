@@ -128,7 +128,7 @@ def sandboxed_spawn(
         cmd: The command to execute (orchestrator-supplied; no model input on argv).
         cwd: Working directory for the child (the read-only worktree in production).
         write_box: The one directory the child may write to (the disposable report dir).
-        timeout_s: Wall-clock budget; on overrun the whole process group is SIGKILLed.
+        timeout_s: The oracle deadline; on overrun the whole process group is SIGKILLed.
 
     Raises:
         SandboxUnavailable: ``sandbox-exec`` is not present on this host.
@@ -177,7 +177,7 @@ def sandboxed_spawn(
         stderr = _read_tail(stderr_file)
         if timeout_error is not None:
             raise SandboxKilled(
-                f"oracle exceeded the {timeout_s:g}s wall-clock budget",
+                f"oracle exceeded its {timeout_s:g}s deadline",
                 stdout=stdout,
                 stderr=stderr,
             ) from timeout_error

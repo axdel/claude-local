@@ -28,10 +28,11 @@ passed, 1 when any case failed, 2 for a usage error (no server or model named, o
 ``--only`` id), and 3 when the benchmark harness itself faults. Exit 3 is a broken *host*, distinct
 from exit 1's model that simply failed the task, and it covers two kinds of break: one that
 interrupts the ladder — the prerequisite server is unreachable, the kernel sandbox is unavailable,
-an oracle is broken — and one the host raises against a side artifact after every case is already
-scored, refusing the style linter or either output directory (D-BENCH-017). Neither costs a
-measurement: an interrupted run still scores and writes the cases that finished first, and a
-refused artifact costs only itself, leaving the scorecard whole.
+an oracle is broken — and one the host raises against a side artifact once the ladder is already
+scored, refusing the style linter or either output directory (D-BENCH-017). The two compose rather
+than exclude: an interruption scores the cases that finished first, and the artifact steps then run
+over that partial set, so a refusal there still costs only itself. Neither destroys a measurement
+already taken (INV-016).
 
 ``--only <case_id>`` narrows the run to the named cases and is repeatable. A scorecard is a claim
 about a whole ladder, so the full run stays the default — but when the question is why ONE case
@@ -273,10 +274,11 @@ class ConsoleProgress:
 
     def attempt(self, progress: AttemptProgress) -> None:
         rate = progress.generation.tokens_per_second
-        # Two facts the score alone cannot show: that an attempt replayed its predecessor (the
-        # repeat), and that its prompt carried an escalation (the loop's answer to one). Both are
-        # additive to the verdict — without them a watcher sees a run end short of its budget with
-        # no visible cause. "repeat" describes what this attempt WROTE; "nudged" what it was ASKED.
+        # Two facts the score alone cannot show: that an attempt repeated its predecessor verbatim
+        # (the repeat), and that its prompt carried an escalation (the loop's answer to one). Both
+        # are additive to the verdict — without them a watcher sees a run end short of its budget
+        # with no visible cause. "repeat" describes what this attempt WROTE; "nudged" what it was
+        # ASKED.
         marks = [
             label
             for label, fired in (
@@ -340,9 +342,8 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     Returns the process exit code: 0 when every case passed, 1 when any case failed, 2 for any
     ``_UsageError`` the preparation phases raise, and 3 when the benchmark harness itself faults —
     either a fault that interrupts the ladder (unreachable server, unavailable sandbox, broken
-    oracle) or the host refusing a side artifact once every case is scored (D-BENCH-017). Exit 3
-    says the run broke, never that it measured nothing: an interruption still scores the cases
-    that finished first, and a refused artifact leaves the scorecard itself whole. An injected
+    oracle) or the host refusing a side artifact once the ladder is scored, complete or partial
+    (D-BENCH-017). Exit 3 says the run broke, never that it measured nothing (INV-016). An injected
     ``http_client`` is shared across the cases and left open for its caller (the tests replay the
     transport through it); when omitted, each case owns a per-case client against the real server.
     """

@@ -210,7 +210,7 @@ def test_run_maps_a_sandbox_timeout_to_a_zero_verdict_with_feedback(tmp_path: Pa
     def hanging_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> tuple[bytes, bytes]:
         del cmd, cwd, write_box
         raise SandboxKilled(
-            "oracle exceeded its wall-clock budget",
+            "oracle exceeded its deadline",
             stdout=b"setup reached\n",
             stderr=b"waiting forever\n",
         )
@@ -220,6 +220,4 @@ def test_run_maps_a_sandbox_timeout_to_a_zero_verdict_with_feedback(tmp_path: Pa
     assert oracle_run.score == TestScore(0, 0, 0, 0, 0, 3)
     assert oracle_run.score.is_valid is False
     assert oracle_run.score.is_green is False
-    assert oracle_run.output == (
-        "setup reached\nwaiting forever\noracle exceeded its wall-clock budget"
-    )
+    assert oracle_run.output == ("setup reached\nwaiting forever\noracle exceeded its deadline")

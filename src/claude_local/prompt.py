@@ -8,9 +8,10 @@ the prefix also blocks the model from rewriting or importing it away. Only the t
 repair brief — the file the last attempt wrote, then how it failed — each section byte-capped and
 path-stripped so neither can starve the other or prime a derail.
 
-Assembly is a pure function of (card, spec): ``stable_prefix`` returns identical bytes for the
-same spec, which is what the prefill cache keys on. The card is read once at construction (a
-committed static asset), never per call, so no filesystem read sits on the per-attempt path.
+Assembly is a pure function of (card, spec, plan): ``stable_prefix`` returns identical bytes for
+the same spec and the same plan, which is what the prefill cache keys on. The card is read once at
+construction (a committed static asset), never per call, so no filesystem read sits on the
+per-attempt path.
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ _PREVIOUS_SOURCE_HEADER = "## Your previous attempt — the complete file you wr
 # passes, which matters: a case sitting at six of seven oracle tests must not be told to start
 # over. The second gives up on the shape once narrowing has failed twice.
 #
-# Each rung POINTS AT the counterevidence hoisted above it (``_repeat_escalation``) rather than
+# Each rung POINTS AT the counterevidence hoisted above it (``_stall_escalation``) rather than
 # asking the model to go find it. That split is deliberate: a controlled study of repair prompting
 # on frozen small code models found executed counterevidence carries the repair signal while
 # generic retry instructions have minimal independent effect, so the rung's job is to say what to
@@ -232,17 +233,17 @@ class PromptBuilder:
             parts.extend(("\n", _PLAN_HEADER, "\n\n", plan, "\n"))
         return "".join(parts)
 
-    def nudge_for(self, repeat_count: int) -> str | None:
-        """The escalation for the ``repeat_count``-th replay, or ``None`` past the last rung.
+    def nudge_for(self, stall_count: int) -> str | None:
+        """The escalation for the ``stall_count``-th stall, or ``None`` past the last rung.
 
         ``None`` is the loop's stop signal, and it is what keeps the original saving of stopping on
-        a replay: after every rung has been tried, there is no further question this card knows how
+        a stall: after every rung has been tried, there is no further question this card knows how
         to ask, and continuing would spend the rest of the budget re-buying an answer already given
-        three ways. ``repeat_count`` is 1-based — the first replay takes the first rung.
+        three ways. ``stall_count`` is 1-based — the first stall takes the first rung.
         """
-        if repeat_count < 1 or repeat_count > len(_NUDGE_LADDER):
+        if stall_count < 1 or stall_count > len(_NUDGE_LADDER):
             return None
-        return _NUDGE_LADDER[repeat_count - 1]
+        return _NUDGE_LADDER[stall_count - 1]
 
     def reframe_for(self, raw_output: str) -> str:
         """The correction for a reply that produced no file: its own words, then what to send.
@@ -280,15 +281,15 @@ class PromptBuilder:
         rendering an empty file under the header would state something false about the model's own
         work. Each section is capped separately (see ``PREVIOUS_SOURCE_BYTE_CAP``).
 
-        ``nudge`` is the escalation for a model that replayed its last answer (``nudge_for``). It
+        ``nudge`` is the escalation for a model that stalled (``nudge_for``). It
         goes last, closest to generation: everything above it is context, and it is the only
         imperative about what to do differently, and it is led by the first failure's own
-        counterevidence (``_repeat_escalation``). It is short and bounded, so it cannot displace
+        counterevidence (``_stall_escalation``). It is short and bounded, so it cannot displace
         anything the caps kept.
 
         Every fact about the run — as opposed to about the code — is stripped, so one unchanged
         failure distills to one unchanged brief (INV-004). The nudge is a function of how many
-        times the model has replayed, never of the run, so that property survives it.
+        times the model has stalled, never of the run, so that property survives it.
         """
         sections = []
         if previous_attempt_source:
@@ -296,7 +297,7 @@ class PromptBuilder:
             sections.append(f"{_PREVIOUS_SOURCE_HEADER}\n\n{shown}")
         sections.append(_failure_brief(score, raw_output))
         if nudge:
-            sections.append(_repeat_escalation(nudge, raw_output))
+            sections.append(_stall_escalation(nudge, raw_output))
         return "\n\n".join(sections)
 
 
@@ -320,11 +321,11 @@ def _failure_brief(score: TestScore, raw_output: str) -> str:
     return _cap_bytes("\n\n".join(sections), FEEDBACK_BYTE_CAP)
 
 
-def _repeat_escalation(nudge: str, raw_output: str) -> str:
+def _stall_escalation(nudge: str, raw_output: str) -> str:
     """Lead the ``nudge`` with the first failure's executed counterevidence.
 
-    A replay means the model has already read the failure brief above and answered it with the same
-    file, so restating that brief is not what breaks the tie — but an instruction on its own is the
+    A stall means the model has already read the failure brief above and got no further against it,
+    so restating that brief is not what breaks the tie — but an instruction on its own is the
     weakest available intervention. Hoisting the one concrete expected-vs-actual to sit directly
     above the imperative puts executed counterevidence at the point of maximum salience and gives
     the rung something specific to point at.

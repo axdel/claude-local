@@ -1,7 +1,7 @@
 """The assistant's reply, read out of a channel transcript when a server leaks one.
 
 An OpenAI-compatible server is supposed to return the assistant's user-facing message as
-``content``. Some return the model's whole harmony transcript instead — the chain-of-thought in
+``content``. Some return the model's whole channel transcript instead — the chain-of-thought in
 an ``analysis`` channel, the answer in a ``final`` one, wrapped in channel markup. gpt-oss served
 through mlx_vlm does exactly this, so a correct answer arrives inside markup that makes it
 unparseable.
@@ -37,7 +37,7 @@ def assistant_content(text: str) -> str:
         text: One model reply, as assembled from the server's stream.
 
     Returns:
-        The last final channel's content for a harmony transcript; ``text`` unchanged when it does
+        The last final channel's content for a channel transcript; ``text`` unchanged when it does
         not open as one; the empty string when it does but reaches no final channel, which the
         caller reads as a blocked task rather than offering reasoning to the file parser.
     """
