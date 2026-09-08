@@ -8,9 +8,11 @@ orchestrator-owned immutable oracle test, the derail guard, and the measurement/
 
 A deterministic loop — not an agent — hands a local model a distilled rules card, a tight
 spec, any optional ordered, read-only neighbor files, and a frontier-authored **failing test the
-model may never write**. The model returns a complete implementation file as raw text; the loop
-applies it to the one permitted impl path — never a context file — runs the test, and feeds the
-failure back under a hard token budget and a derail guard. The test is the oracle: green means
+model may never write**. It may first spend one generation on a plan — the model's own, frozen
+into the prefix last and re-read on every attempt after. The model returns a complete
+implementation file as raw text; the loop applies it to the one permitted impl path — never a
+context file — runs the test, and feeds the failure back under a hard token budget and a derail
+guard. The test is the oracle: green means
 done — against a model that is wrong, not one that is hostile, because the verdict is computed in
 the same process that runs the model's file (D-ORACLE-004, D-ORACLE-006). Every task is metered,
 so the system can tell — per task
@@ -45,8 +47,10 @@ The loop engine decomposes into single-responsibility modules, dependencies flow
 - **model client** — the httpx call to the local server; captures token usage and wall-clock timing.
 - **edit applier** — extracts the whole-file reply from raw model text and writes ONLY the
   permitted impl path; the oracle test is never in the model's writable set.
-- **loop** — RED (run the immutable test) → REPAIR feedback on failure → best-passing snapshot →
-  GREEN, bounded by a hard token/attempt budget.
+- **loop** — optional PLAN (one generation per task, frozen into the prefix; a plan the model
+  fails to produce degrades to no plan rather than ending the run) → RED (run the immutable test)
+  → REPAIR feedback on failure → best-passing snapshot → GREEN, bounded by a hard token/attempt
+  budget.
 - **derail guard** — repetition penalty + hard token cap + repetition-loop detector + graceful
   timeout. Thinking is not defaulted here or anywhere: each registry row declares its own controls,
   because one field zeroes one model's reasoning and is inert on another (D-THINKING-001).

@@ -142,6 +142,7 @@ author-oracle → implement-local → verify recipe.
 ```
 distilled rules card + tight spec + optional ordered read-only context + FAILING TEST
         |                                                         (frontier-authored, immutable)
+        |  (optional: one generation first — the model's own plan, frozen in for every attempt)
         v
    local model  -->  a complete implementation file  (raw text, no tool calls)
         |

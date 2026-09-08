@@ -228,39 +228,62 @@ def test_real_card_prefix_has_no_volatile_tokens() -> None:
         assert sub not in prefix, f"forbidden volatile substring: {sub}"
 
 
-def test_the_walkthrough_names_every_section_the_stable_prefix_can_carry() -> None:
-    """The published walkthrough must not fall behind the prefix whose caching it explains.
+# Every document that enumerates what the model is handed. Each carries its own copy of the
+# composition — prose, an ASCII diagram, a bullet — and each is a place the list can go stale
+# independently of the builder that actually assembles it.
+_PREFIX_ENUMERATION_DOCUMENTS = (
+    "docs/how-the-loop-works.html",
+    "README.md",
+    "CLAUDE.md",
+    "skills/claude-local/SKILL.md",
+)
+
+
+def test_every_document_enumerating_the_prefix_names_each_section_it_can_carry() -> None:
+    """No published enumeration of the prefix may fall behind the builder that assembles it.
 
     Oracle: the section set is read out of ``stable_prefix``'s own source rather than listed
     here — every ``_<NAME>_HEADER`` the method references is a section it can emit, and the
     constant's stem is the word a reader scans for. A sixth section added to the builder
-    therefore reddens this test until the walkthrough names it, which a hand-copied list here
+    therefore reddens this test until every document names it, which a hand-copied list here
     could not do.
 
-    This is a differential test because the prose is the half that rots: the walkthrough's list
-    went stale exactly once already, when plan-first added a fifth section and the paragraph
-    kept describing four — in the one section whose entire subject is what the cached prefix
-    holds. The rules card is the prefix's remaining member and is deliberately not covered here;
-    it is pinned instead by the card-digest chain (D-CARD-003), which a prose edit cannot move.
+    This is a differential test because the prose is the half that rots, and it rots in more
+    than one place at a time: plan-first added a fifth section and *four* documents kept
+    describing four parts. Guarding only the walkthrough fixed one site of a class, so the
+    document list above is the class. The rules card is the prefix's remaining member and is
+    deliberately not covered here; it is pinned instead by the card-digest chain (D-CARD-003),
+    which a prose edit cannot move.
 
     The stem is matched on word boundaries, not as a substring: ``"explanation"`` contains
     ``"plan"``, so a substring test would have gone green on a document that never mentions the
-    plan section at all. What this cannot catch is an existing stem dropped from the enumeration
-    while the same word survives elsewhere in the page — ``test`` appears 29 times independently.
-    It is a ratchet against a NEW section shipping undocumented, which is the failure that
-    actually happened, not a proof that the enumeration is complete.
+    plan section at all.
+
+    Known weakness, measured rather than supposed: this scans each document *whole*, so a stem
+    already present in another sense satisfies it while the enumeration stays stale. Widening
+    this test caught CLAUDE.md and SKILL.md and left README.md green — its diagram still listed
+    four parts, but ``plan`` appeared twice elsewhere naming the orchestrator's
+    plan-then-author-oracle recipe, an unrelated homonym. That site was fixed by reading it, not
+    by this assertion. So it is a ratchet against a section whose stem is *new* to a document,
+    which is the failure that actually happened; it is not a proof that any enumeration is
+    complete. Scoping it tighter would need a marker in each document, and the README's
+    enumeration sits inside a fenced code block where an HTML comment would render as literal
+    text — so the honest limitation is cheaper than a fragile anchor.
     """
     prefix_source = inspect.getsource(PromptBuilder.stable_prefix)
     sections = {name.lower() for name in re.findall(r"_([A-Z]+)_HEADER", prefix_source)}
     assert sections, "no prefix section constants found — the extraction itself is broken"
 
-    walkthrough = (Path(__file__).parents[1] / "docs" / "how-the-loop-works.html").read_text(
-        encoding="utf-8"
-    )
-    unmentioned = sorted(
-        s for s in sections if not re.search(rf"\b{re.escape(s)}\b", walkthrough, re.IGNORECASE)
-    )
-    assert not unmentioned, f"walkthrough never names prefix section(s): {unmentioned}"
+    root = Path(__file__).parents[1]
+    stale: list[str] = []
+    for relative_path in _PREFIX_ENUMERATION_DOCUMENTS:
+        document = (root / relative_path).read_text(encoding="utf-8")
+        unmentioned = sorted(
+            s for s in sections if not re.search(rf"\b{re.escape(s)}\b", document, re.IGNORECASE)
+        )
+        if unmentioned:
+            stale.append(f"{relative_path} never names {unmentioned}")
+    assert not stale, "prefix section(s) missing from: " + "; ".join(stale)
 
 
 # The card is a fixed cost paid on every attempt of every task, so "token-budgeted" has to be a
