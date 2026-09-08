@@ -45,12 +45,7 @@ _PREVIOUS_SOURCE_HEADER = "## Your previous attempt — the complete file you wr
 # ask something else, and under a deterministic decoder that is the ONLY lever there is: sampling
 # knobs are ignored by the server, and an emptied tail just reproduces the first attempt.
 #
-# A rung must be true of BOTH stall shapes, because the loop escalates on both and the model can
-# check which one it sent. So no rung claims the file was identical: that is true of a verbatim
-# repeat and false of a plateau, where the model wrote something genuinely new that got no further.
-# What holds either way is the consequence — the score did not move — so that is what each rung
-# asserts. Telling a model it repeated itself when it did not is a false premise about its own
-# work, and a weak model given one argues with it instead of fixing the code.
+# No rung claims an identical file — each asserts only that the score did not move (D-LOOP-008).
 #
 # The rungs escalate in what they license the model to discard. The first keeps work that already
 # passes, which matters: a case sitting at six of seven oracle tests must not be told to start

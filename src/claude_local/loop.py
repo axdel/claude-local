@@ -106,8 +106,9 @@ class AttemptProgress:
 
     ``repeats_previous`` marks a generation that came back byte-identical to the one before it,
     ``plateaued`` marks one whose score failed to clear the best so far for a second consecutive
-    attempt, and ``nudged`` marks one generated under an escalation because an earlier attempt did
-    (D-LOOP-005). All three are carried here rather than inferred, because only the loop holds the
+    attempt (D-LOOP-007), and ``nudged`` marks one generated under an escalation because an earlier
+    attempt did (D-LOOP-005). All three are carried here rather than inferred, because only the
+    loop holds the
     previous attempts, and each answers a question the others cannot: the first two are the two
     shapes of "the model made no progress" — identical words, and different words that get no
     further — while the third says why the loop kept paying anyway. A watcher given only some of
