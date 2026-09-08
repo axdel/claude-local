@@ -623,3 +623,35 @@ def test_the_economy_record_is_written_where_the_caller_asks(
     written = list(records.glob("*.json"))
     assert len(written) == 1
     assert json.loads(written[0].read_text(encoding="utf-8"))["status"] == Status.DONE.value
+
+
+def test_a_refused_record_directory_costs_the_record_but_not_the_verdict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A host that will not take the record must not overwrite what the run achieved.
+
+    Oracle: the exit code comes from this CLI's own published mapping — only DONE exits zero
+    (D-CLI-003) — so the expected value is 0 regardless of what the write does. The refusal is
+    constructed rather than observed: ``Path.mkdir(parents=True, exist_ok=True)`` raises
+    ``FileExistsError`` when the last component is an existing non-directory file, which the
+    stdlib documents as the one case ``exist_ok`` does not suppress.
+
+    Both halves are asserted because neither implies the other. The write sits ahead of the status
+    mapping, so an escaping ``OSError`` exited 1 — a code ``exit_code_for`` never returns — on a
+    run that had already finished; and under dispatch stderr is ``DEVNULL``, so the traceback
+    naming the unwritable directory was discarded along with the verdict it replaced. A build that
+    swallows the refusal silently fails the second assertion, and one that still lets it escape
+    fails the first (D-CLI-006).
+    """
+    records = tmp_path / "records"
+    records.write_text("a file where the caller asked for a directory", encoding="utf-8")
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps(build_envelope()), encoding="utf-8")
+    monkeypatch.setattr(cli, "implement", RecordingImplement())
+
+    exit_code = main(
+        ["--task", str(task_file), "--worktree", str(tmp_path), "--record-dir", str(records)]
+    )
+
+    assert exit_code == 0  # the completed task keeps its verdict
+    assert "record not written" in capsys.readouterr().err  # and the refusal is still reported

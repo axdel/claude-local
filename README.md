@@ -215,8 +215,8 @@ A weak model is only worth using if it is fast enough to be cheaper than your ow
 - **Bounded decode by construction** — the derail guard holds hard token, attempt and wall-clock
   caps. Whether a model thinks is its own registry row's declaration, never a default applied
   across models: the same field that zeroes one model's reasoning is inert on another.
-- **Stable-prefix prompting** — card + spec + optional ordered context files + test stay fixed;
-  only the tail changes, so the prefill is KV-cache-reused across attempts.
+- **Stable-prefix prompting** — everything `PromptBuilder.stable_prefix` assembles stays fixed for
+  a task; only the tail changes, so the prefill is KV-cache-reused across attempts.
 - **The tail is a repair brief, not a bug report** — it carries the complete file the last attempt
   wrote alongside the failure that file produced, because the card asks the model to correct its
   file and keep what already passed, and neither is possible against code it cannot see.

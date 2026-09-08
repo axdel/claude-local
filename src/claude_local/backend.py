@@ -49,10 +49,9 @@ fact start to drift.
 class Backend(Protocol):
     """A source of raw SSE byte chunks for one generation.
 
-    ``prefix`` is the byte-identical KV-cacheable head (rules card + spec + optional
-    ordered context files + immutable test); ``tail`` is the per-attempt feedback.
-    Splitting them lets a caller hold the prefix constant across a task's attempts
-    so the server can reuse its prefill cache.
+    ``prefix`` is the byte-identical KV-cacheable head that ``PromptBuilder.stable_prefix``
+    assembles; ``tail`` is the per-attempt feedback. Splitting them lets a caller hold the
+    prefix constant across a task's attempts so the server can reuse its prefill cache.
     """
 
     def generate(self, prefix: str, tail: str, budget: Budget) -> Iterator[bytes]:

@@ -1,9 +1,12 @@
 """Prompt assembly — the byte-stable KV-cacheable prefix and the bounded volatile tail.
 
-D-PROMPT-001, amended by D-CONTEXT-001: the loop reuses the server's prefill KV cache by
-sending a prefix that is byte-identical across a task's attempts — the static rules card,
-the task spec, any ordered read-only context files, and the IMMUTABLE test, in a fixed layout
-with no builder-generated timestamps, run ids, or absolute worktree paths. Pinning the test in
+D-PROMPT-001, amended by D-CONTEXT-001 and D-PROMPT-004: the loop reuses the server's prefill KV
+cache by sending a prefix that is byte-identical across a task's attempts — the static rules card,
+the task spec, any ordered read-only context files, the IMMUTABLE test, and the plan frozen once
+per task, in a fixed layout with no builder-generated timestamps, run ids, or absolute worktree
+paths. This docstring and ``stable_prefix`` below are the enumeration; every other mention of the
+prefix's composition cites them rather than copying the list, because a copied list is what went
+stale when the plan was added (INV-017). Pinning the test in
 the prefix also blocks the model from rewriting or importing it away. Only the tail varies: the
 repair brief — the file the last attempt wrote, then how it failed — each section byte-capped and
 path-stripped so neither can starve the other or prime a derail.

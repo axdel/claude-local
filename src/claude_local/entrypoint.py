@@ -143,9 +143,9 @@ def implement(
             created and removed around the run (the produced code is read back before removal).
         http_client: An HTTP client to reuse. When omitted, one is created for the call and closed
             on exit; an injected client is the caller's and is never closed here.
-        on_delta: Optional live-decode observer, called with each raw content delta as it arrives.
-            Raw means pre-normalisation: a reasoning model's channel markup streams verbatim
-            (D-PROGRESS-002).
+        on_delta: Optional live-decode observer, called with every raw delta as it arrives —
+            content and reasoning deltas alike. Raw means pre-normalisation: a leaked channel
+            transcript streams verbatim (D-PROGRESS-002).
         on_attempt: Optional live-progress observer, called with one ``AttemptProgress`` per
             attempt the moment it resolves.
 

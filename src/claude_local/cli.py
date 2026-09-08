@@ -164,7 +164,11 @@ def _run(args: argparse.Namespace) -> int:
     if outcome.status is Status.DONE:
         print(SELF_JUDGED_VERDICT, file=sys.stderr)
     if args.record_dir is not None:
-        outcome.record.write(args.record_dir)
+        try:
+            outcome.record.write(args.record_dir)
+        except OSError as unwritable:
+            # A refused record directory costs the accounting, never the verdict (D-CLI-006).
+            print(f"claude-local: record not written: {unwritable}", file=sys.stderr)
     return exit_code_for(outcome.status)
 
 

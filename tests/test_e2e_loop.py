@@ -59,7 +59,7 @@ _CHUNK: dict[str, object] = {"id": "chatcmpl-e2e", "object": "chat.completion.ch
 
 
 def _read_fixture(name: str) -> str:
-    """Read a captured e2e fixture (an oracle test or an implementation template) as text."""
+    """Read a hand-authored e2e fixture (an oracle test or an implementation template) as text."""
     return (_FIXTURES / name).read_text(encoding="utf-8")
 
 

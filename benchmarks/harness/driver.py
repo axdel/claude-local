@@ -63,7 +63,7 @@ class BenchmarkProgress(Protocol):
         """A case is about to run; ``index`` is its 1-based position among ``total`` cases."""
 
     def delta(self, text: str) -> None:
-        """One raw content delta, as the model decodes it (pre-normalisation — D-PROGRESS-002)."""
+        """One raw delta — content or reasoning — as the model decodes it (D-PROGRESS-002)."""
 
     def attempt(self, progress: AttemptProgress) -> None:
         """One attempt of the running case has resolved."""

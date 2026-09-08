@@ -85,10 +85,9 @@ loop's own telemetry (measure, never guess; cold paths like init and record-writ
 
 Standing hot-path principles:
 
-- **KV-cache prefix reuse.** The stable prefix (rules card + spec + optional ordered context
-  files + immutable test) is byte-identical across a task's attempts — only the feedback tail
-  changes. Stability is a hard invariant: any per-call mutation silently discards the server's
-  prefill cache.
+- **KV-cache prefix reuse.** The stable prefix `PromptBuilder.stable_prefix` assembles is
+  byte-identical across a task's attempts — only the feedback tail changes. Stability is a hard
+  invariant (INV-017): any per-call mutation silently discards the server's prefill cache.
 - **One warm client, one resident model.** Reuse a single keep-alive httpx client; never
   reconnect per attempt. Local inference is memory-bandwidth-bound — keep one model resident.
 - **Stream and abort early.** Consume tokens as they decode, so the derail guard kills a
