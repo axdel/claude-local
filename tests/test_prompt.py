@@ -9,6 +9,7 @@ its declared byte cap and for preserving the failing node id after absolute-path
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 
@@ -210,11 +211,56 @@ def test_real_card_prefix_has_no_volatile_tokens() -> None:
     # timestamp/run-id/absolute path in the prefix silently discards the server prefill cache. A
     # CLEAN fixture spec is used, so any hit comes from the card or scaffolding, not provided text.
     builder = PromptBuilder(REAL_CARD)
-    prefix = builder.stable_prefix(_spec(spec_text="clean spec", test_text="clean test"))
+    # The MAXIMAL prefix: both optional sections supplied, because each is appended only when it
+    # is, so a minimal spec leaves the context-file and plan scaffolding entirely unscanned. A
+    # stamp there passes every byte-identity assertion too, since one is constant within a run.
+    prefix = builder.stable_prefix(
+        _spec(
+            spec_text="clean spec",
+            test_text="clean test",
+            context_files=(build_context_file(path="src/pkg/neighbor.py", content="clean ctx"),),
+        ),
+        plan="clean plan",
+    )
     for pat in _TIMESTAMP_PATTERNS:
         assert pat.search(prefix) is None, f"volatile timestamp-like token: {pat.pattern}"
     for sub in _FORBIDDEN_SUBSTRINGS:
         assert sub not in prefix, f"forbidden volatile substring: {sub}"
+
+
+def test_the_walkthrough_names_every_section_the_stable_prefix_can_carry() -> None:
+    """The published walkthrough must not fall behind the prefix whose caching it explains.
+
+    Oracle: the section set is read out of ``stable_prefix``'s own source rather than listed
+    here — every ``_<NAME>_HEADER`` the method references is a section it can emit, and the
+    constant's stem is the word a reader scans for. A sixth section added to the builder
+    therefore reddens this test until the walkthrough names it, which a hand-copied list here
+    could not do.
+
+    This is a differential test because the prose is the half that rots: the walkthrough's list
+    went stale exactly once already, when plan-first added a fifth section and the paragraph
+    kept describing four — in the one section whose entire subject is what the cached prefix
+    holds. The rules card is the prefix's remaining member and is deliberately not covered here;
+    it is pinned instead by the card-digest chain (D-CARD-003), which a prose edit cannot move.
+
+    The stem is matched on word boundaries, not as a substring: ``"explanation"`` contains
+    ``"plan"``, so a substring test would have gone green on a document that never mentions the
+    plan section at all. What this cannot catch is an existing stem dropped from the enumeration
+    while the same word survives elsewhere in the page — ``test`` appears 29 times independently.
+    It is a ratchet against a NEW section shipping undocumented, which is the failure that
+    actually happened, not a proof that the enumeration is complete.
+    """
+    prefix_source = inspect.getsource(PromptBuilder.stable_prefix)
+    sections = {name.lower() for name in re.findall(r"_([A-Z]+)_HEADER", prefix_source)}
+    assert sections, "no prefix section constants found — the extraction itself is broken"
+
+    walkthrough = (Path(__file__).parents[1] / "docs" / "how-the-loop-works.html").read_text(
+        encoding="utf-8"
+    )
+    unmentioned = sorted(
+        s for s in sections if not re.search(rf"\b{re.escape(s)}\b", walkthrough, re.IGNORECASE)
+    )
+    assert not unmentioned, f"walkthrough never names prefix section(s): {unmentioned}"
 
 
 # The card is a fixed cost paid on every attempt of every task, so "token-budgeted" has to be a
