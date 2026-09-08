@@ -81,15 +81,9 @@ def _scorecards() -> set[Path]:
 def _bench_one(name: str, rules_card: Path | None) -> tuple[bool, str, float]:
     """Run the per-model chain for ``name``. Returns (scored, how it ended, wall-clock seconds).
 
-    The verdict is "a new scorecard exists", never the exit code. Exit 1 is ambiguous by design:
-    `benchmark_model.py` returns the benchmark's own 1 when a CASE failed — a real measurement —
-    and also exits 1 when it raises before serving anything, which is no measurement at all.
-    Reading the exit code alone reports an unknown model as "scored". The artifact cannot lie.
-
-    The exit code is still read, because it is the only thing that can NAME a failure the missing
-    artifact merely proves. It decides nothing and describes everything: without it, every one of
-    nine overnight rows reads "no scorecard", and absent weights, an unreachable server and a
-    broken oracle are indistinguishable in the morning.
+    The verdict is "a new scorecard exists", never the exit code, which is ambiguous by design.
+    The exit code is still read, because it alone can NAME a failure the missing artifact merely
+    proves: it decides nothing and describes everything (D-SWEEP-001).
 
     The startup budget is not passed: the per-model script defaults to the same
     ``DEFAULT_STARTUP_TIMEOUT_S`` the server module owns, so re-stating it here would be a second

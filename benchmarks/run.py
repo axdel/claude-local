@@ -25,11 +25,13 @@ and a scorecard printed only at the end leaves a watcher with nothing to watch. 
 the model's own raw text as it decodes. The per-case table and benchmark totals still print at the
 end; ``--out DIR`` also writes the scorecard as JSON. The process exits 0 only when every case
 passed, 1 when any case failed, 2 for a usage error (no server or model named, or an unknown
-``--only`` id),
-and 3 when the benchmark harness itself faults — the prerequisite server is unreachable, the kernel
-sandbox is unavailable, or an oracle is broken. Exit 3 is a broken *host*, distinct from exit 1's
-model that simply failed the task. A fault partway through still scores and writes the cases that
-finished first: the run did not complete, but what it measured before stopping is not thrown away.
+``--only`` id), and 3 when the benchmark harness itself faults. Exit 3 is a broken *host*, distinct
+from exit 1's model that simply failed the task, and it covers two kinds of break: one that
+interrupts the ladder — the prerequisite server is unreachable, the kernel sandbox is unavailable,
+an oracle is broken — and one the host raises against a side artifact after every case is already
+scored, refusing the style linter or either output directory (D-BENCH-017). Neither costs a
+measurement: an interrupted run still scores and writes the cases that finished first, and a
+refused artifact costs only itself, leaving the scorecard whole.
 
 ``--only <case_id>`` narrows the run to the named cases and is repeatable. A scorecard is a claim
 about a whole ladder, so the full run stays the default — but when the question is why ONE case
@@ -336,13 +338,13 @@ def main(argv: list[str] | None = None, *, http_client: httpx.Client | None = No
     is watchable rather than silent until the end.
 
     Returns the process exit code: 0 when every case passed, 1 when any case failed, 2 for any
-    ``_UsageError`` the preparation phases raise, and 3 when the benchmark harness itself faults
-    (unreachable server,
-    unavailable sandbox, or broken oracle) — writing a scorecard for the cases that finished before
-    the fault, since exit 3 says the run stopped, not that it measured nothing. An injected
-    ``http_client`` is shared across the cases
-    and left open for its caller (the tests replay the transport through it); when omitted, each
-    case owns a per-case client against the real server.
+    ``_UsageError`` the preparation phases raise, and 3 when the benchmark harness itself faults —
+    either a fault that interrupts the ladder (unreachable server, unavailable sandbox, broken
+    oracle) or the host refusing a side artifact once every case is scored (D-BENCH-017). Exit 3
+    says the run broke, never that it measured nothing: an interruption still scores the cases
+    that finished first, and a refused artifact leaves the scorecard itself whole. An injected
+    ``http_client`` is shared across the cases and left open for its caller (the tests replay the
+    transport through it); when omitted, each case owns a per-case client against the real server.
     """
     args = _parse_args(argv)
     try:

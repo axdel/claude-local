@@ -77,9 +77,13 @@ uv run python -m benchmarks.run --model <model-name> --base-url http://localhost
 
 The per-case table and benchmark totals print to stderr. The process exits `0` only when every case
 passed, `1` when any case failed, `2` for a usage error (no model named), and `3` when the
-benchmark harness itself faults — the prerequisite server is unreachable, the kernel sandbox is
-unavailable, or an oracle is broken. Exit `3` is a broken *host*, distinct from exit `1`'s model
-that simply failed the task.
+benchmark harness itself faults. Exit `3` is a broken *host*, distinct from exit `1`'s model that
+simply failed the task, and it covers two kinds of break: one that interrupts the ladder — the
+prerequisite server is unreachable, the kernel sandbox is unavailable, an oracle is broken — and
+one the host raises against a side artifact after every case is already scored, refusing the style
+linter or either output directory (`D-BENCH-017`). Neither costs a measurement: an interrupted run
+still scores and writes the cases that finished first, and a refused artifact costs only itself,
+leaving the scorecard whole.
 
 ## The scorecard
 
@@ -115,8 +119,9 @@ One scorecard describes one model's run over the whole ladder. `--out` writes it
 - `cases_passed` / `cases_total` — the headline: how many cases reached `done`.
 - `total_completion_tokens` / `total_model_seconds` / `mean_tokens_per_second` — the economy of the
   run, summed across cases. The mean is `null` when no model-seconds elapsed.
-- `style_findings` — how many style findings the run's produced code drew, or `null` when the run
-  predates the field. `null` and `0` are different answers: not measured, versus measured and clean.
+- `style_findings` — how many style findings the run's produced code drew, or `null` when it was
+  not measured: the run predates the field, or the host refused the linter (`D-BENCH-017`). `null`
+  and `0` are different answers: not measured, versus measured and clean.
 - `cases[]` — one line per case in ladder order: its `case_id`, terminal `status` (`done` when the
   oracle passed, otherwise the loop's failure status), how many loop `attempts` it took, and
   `length_capped` — how many of those attempts the server ended at its own token cap (a budget

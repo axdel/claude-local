@@ -198,9 +198,7 @@ class ResolvedModel:
 
         The single answer to "what configuration is this run using", because the alternative is
         each caller pairing a null check with a servability check and one of them eventually
-        pairing it wrong. An override REPLACES rather than merges: a row's fields are one
-        configuration, and merging would leave a hard cap standing inside the configuration a
-        caller is explicitly setting aside.
+        pairing it wrong. An override REPLACES rather than merges (D-REGISTRY-006).
 
         Raises:
             UnservableCombination: the override pairs a thinking budget with draft weights that

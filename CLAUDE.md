@@ -62,13 +62,13 @@ Serving and the front doors sit above that engine, and the loop depends on none 
   registered model with no weights is refused, never fetched.
 - **model server** — spawns a resolved model on 127.0.0.1, waits until it answers, and guarantees
   teardown on success and failure alike. Opt-in (`uv sync --group serve`); the loop never calls it.
-- **session** — the interactive surface: one `with` block yields a callable that serves a model,
+- **model session** — the interactive surface: one `with` block yields a callable that serves a model,
   meters each turn, and reaps the process afterwards.
 - **cli** — the machine front door claude-protocol dispatches to, taking one JSON envelope on
   stdin. Its contract version is the cross-repo handshake.
 
 The **loop** has one entry point, `implement()` — it owns the whole red→green cycle behind that
-single typed seam (see README). The CLI and the session above are front doors too; neither runs
+single typed seam (see README). The CLI and the model session above are front doors too; neither runs
 the loop, which is why one seam still holds (D-ENTRYPOINT-004). One thing stays **external to
 claude-local**: the **orchestrator half** of the
 economy record — the frontier-token accounting and the net-savings verdict that decide whether

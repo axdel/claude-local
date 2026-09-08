@@ -134,8 +134,8 @@ are the one optional input:</p>
       instead; <code>oracle_timeout_s</code> bounds one sandboxed test run and stays tight, because
       nothing legitimate takes long there. All strictly positive.</li>
   <li><strong>context_files</strong> &mdash; optional neighbor files, kept in caller order and shown to the
-      model as read-only context. Their content enters the prompt, but the path guard still permits
-      writes only to <code>impl_path</code>.</li>
+      model as read-only context. Their content enters the prompt, but <code>keep_only</code> still
+      permits writes only to <code>impl_path</code>.</li>
 </ul>
 
 <hr>
@@ -204,10 +204,10 @@ then repeats a tight cycle until the test passes or the budget runs out.</p>
   <li><strong>Generate.</strong> Send the stable prefix plus (after the first try) a distilled feedback
       tail. Stream the tokens back.</li>
   <li><strong>Guard the decode.</strong> If the derail guard trips mid-stream (see &sect;6), abort and stop &mdash; this run is <em>DERAILED</em>.</li>
-  <li><strong>Extract the whole file.</strong> Pull the complete file block out of the raw text. If the
-      model returned only prose with no usable block, stop &mdash; <em>BLOCKED</em>.</li>
+  <li><strong>Extract the whole file.</strong> Pull the whole-file reply out of the raw text. If the
+      model returned only prose with no usable reply, stop &mdash; <em>BLOCKED</em>.</li>
   <li><strong>Apply it &mdash; to one path only.</strong> Write it to <code>impl_path</code>. If the extracted
-      edit aims anywhere else, the path guard refuses it and the run stops &mdash; <em>BLOCKED</em>.</li>
+      edit aims anywhere else, <code>keep_only</code> refuses it and the run stops &mdash; <em>BLOCKED</em>.</li>
   <li><strong>Run the oracle.</strong> Execute the frozen test in a subprocess and read a structured score.</li>
   <li><strong>Snapshot.</strong> Capture the attempt and its score (see &sect;5).</li>
   <li><strong>Decide.</strong> Green &rarr; break, we&rsquo;re <em>DONE</em>. Otherwise loop again with the failure as feedback.</li>
