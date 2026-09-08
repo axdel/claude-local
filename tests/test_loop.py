@@ -606,7 +606,7 @@ def test_the_plan_step_is_paid_for_in_the_record_without_inflating_attempts(
 
     Oracle: the plan burns real decode, so a record omitting it would understate what the task
     cost and corrupt the net-savings comparison the orchestrator makes. It is not an attempt at
-    the implementation, so counting it as one would misreport how many tries the model needed.
+    the implementation, so counting it as one would misreport how many attempts the model needed.
     Both halves are asserted; either alone passes against the bug the other catches.
     """
     _, result = _plan_first_run(tmp_path)

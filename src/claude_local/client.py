@@ -1,6 +1,6 @@
 """The model client — one warm generation call: stream, decode, watch, and meter.
 
-``ModelClient.generate`` runs a single logical generation: it streams raw bytes from a
+``ModelClient.generate`` is a single logical call: it streams raw bytes from a
 ``Backend``, decodes them with ``sse``, feeds each content delta to a fresh ``DerailGuard``,
 and aborts the stream the instant a bound trips. Every call yields a ``GenerationResult`` — the
 decoded text, a completion-token count, and wall-clock timing — for the local half of the
@@ -10,7 +10,7 @@ The token count is never guessed away: a cleanly finished stream carries the ser
 ``usage`` count; a stream with no usage block (transport truncation, an upstream error frame, or
 a derail cut before the trailer) falls back to a char-count proxy flagged ``tokens_estimated``.
 An aborted call still cost decode time, so its tokens are counted, never dropped (D-TELEMETRY-001).
-``total_calls`` counts logical generations — incremented at entry so it survives a mid-call raise.
+``total_calls`` counts logical calls — incremented at entry so it survives a mid-call raise.
 
 An optional ``on_delta`` observer makes a decode watchable: it receives each content delta as it
 arrives, so a caller can render generation live instead of waiting minutes for one result object.

@@ -90,7 +90,7 @@ class SessionHandle:
 
     @property
     def total_calls(self) -> int:
-        """How many generations this session has issued — the client's own count."""
+        """How many logical calls this session has issued — the client's own count."""
         return self._client.total_calls
 
 

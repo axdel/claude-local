@@ -417,9 +417,11 @@ class Loop:
         (D-PROMPT-001) — the same freeze-once shape context files already have.
 
         A plan the model failed to produce degrades to no plan rather than ending the run: the
-        plan is an aid, never the oracle. If the server faulted or the guard cut the generation,
-        the attempts that follow meet the same condition and terminate through the existing
-        precedence, so a second termination path here would only duplicate it.
+        plan is an aid, never the oracle. Only a generation that decoded nothing yields no plan,
+        though — one the server faulted or the token cap cut contributes the text it did decode,
+        since every delta is appended before the verdict is read. Either way the attempts that
+        follow meet the same condition and terminate through the existing precedence, so a second
+        termination path here would only duplicate it.
         """
         if not spec.plan_first:
             return [], ""

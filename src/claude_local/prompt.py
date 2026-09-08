@@ -168,8 +168,9 @@ _DIGEST_CHARS = 12
 class PromptBuilder:
     """Assembles the byte-stable prefix and the bounded feedback tail from a static rules card.
 
-    The card is read once at construction; ``stable_prefix`` is a pure function of the card and
-    the spec, so identical inputs yield identical bytes — the property the prefill cache reuses.
+    The card is read once at construction; ``stable_prefix`` is a pure function of the card, the
+    spec, and the frozen plan, so identical inputs yield identical bytes — the property the
+    prefill cache reuses.
     """
 
     def __init__(self, card_path: Path) -> None:
