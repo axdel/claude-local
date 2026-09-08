@@ -57,9 +57,10 @@ CHARS_PER_TOKEN = 4
 # 48 tok/s never approaches this bound however long it runs, while both measured pathologies
 # produced ONE content token in 447.2s and 338s respectively — bytes the whole time, content
 # almost never. Set between the two, cutting a hang at roughly half the time it took to surface.
-# It does NOT have to clear the slowest model's startup: that is time-to-first-BYTE, dominated by
-# a lazy weight load (50.1s cold on the registry's largest model, against 9.1s of prefill within
-# it), and `backend.HTTP_READ_TIMEOUT_S` owns that window — see `scripts/measure_first_byte.py`.
+# It does NOT have to clear the slowest model's startup: that wait is the first-byte deadline,
+# dominated by a lazy weight load (50.1s cold on the registry's largest model, against 9.1s
+# of prefill within it), owned by `backend.HTTP_READ_TIMEOUT_S` and measured by
+# `scripts/measure_first_byte.py`.
 SILENCE_TIMEOUT_S = 180.0
 
 
