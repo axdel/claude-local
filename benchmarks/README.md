@@ -38,7 +38,7 @@ the next case starts, so no case can observe another's files or rows.
 
 ## The case ladder
 
-Seven cases, in dependency order — each builds on the layers below it:
+The cases, in dependency order — each builds on the layers below it:
 
 | Case | Hole | What it exercises |
 |-|-|-|

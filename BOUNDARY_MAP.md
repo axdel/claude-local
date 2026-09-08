@@ -8,7 +8,7 @@
 | __init__ | edits | may-import | Public front door re-exports WHOLE_FILE_REPLY_PREFIX, the header a model's whole-file reply opens with — the benchmark's replay transport encodes it to stand in for a real generation and extract_file strips it, so producer and parser derive one literal (D-EDITS-006). | active |  |
 | __init__ | entrypoint | may-import | Public front door re-exports implement and Outcome. | active |  |
 | __init__ | loop | may-import | Public front door re-exports AttemptProgress, the live event implement's on_attempt observer receives. | active |  |
-| __init__ | model_registry | may-import | Public front door re-exports generation_params_from_json, the declaration reader every out-of-package front door needs: the CLI, the bundled example, and the benchmark each take --generation-params, and a parser at each would be one format with three readers. | active |  |
+| __init__ | model_registry | may-import | Public front door re-exports generation_params_from_json, the declaration reader every out-of-package front door needs: the CLI, the bundled example, and the benchmark each take --generation-params, and a parser at each would be one format with a reader apiece. | active |  |
 | __init__ | model_session | may-import | Public front door re-exports model_session, the interactive surface. | active |  |
 | __init__ | prompt | may-import | Public front door re-exports TARGET_FILE_LABEL, the header a caller prints to describe the frame it expects back. | active |  |
 | __init__ | runner | may-import | Public front door re-exports OracleError, raised when the immutable test itself is broken rather than merely red. | active |  |
