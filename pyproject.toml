@@ -152,7 +152,9 @@ DEP001 = ["quicksort"]
 
 [tool.importlinter]
 # BOUNDARY_MAP.md declares the per-module import directions in prose; this layers contract is the
-# mechanical enforcement of the one-way flow it documents (orchestration → adapters → leaves).
+# mechanical enforcement of the one-way flow it documents INSIDE THE PACKAGE (orchestration →
+# adapters → leaves). It does not reach the map's scripts/ rows: scripts/ is not a package and is
+# not shipped, so grimp cannot graph it, and those rows are reviewed prose (D-BOUNDARY-002).
 # grimp builds the STATIC import graph, so an upward import or a cycle fails the contract even when
 # it would import cleanly at runtime. `exhaustive` makes an unplaced new module a hard failure, so
 # the contract and the package stay in lockstep. Verified against import-linter 2.13: `|` marks
