@@ -14,7 +14,9 @@ never that a human-readable message reached the parent.
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -319,6 +321,110 @@ def test_an_envelope_that_is_not_a_json_object_is_refused(
     monkeypatch.setattr(cli, "implement", runner)
 
     assert main(["--task", str(task_file)]) == EXIT_REJECTED_TASK
+    assert runner.specs == []
+
+
+# --- Envelope intake: the declared dispatch channel and the ways it can be refused -------------
+#
+# Every test above reaches the CLI through `--task <file>`, which the module docstring calls the
+# convenience door. The dispatch channel is stdin, and until these tests it had no coverage at
+# all: the one path an orchestrator actually takes was the one path nothing exercised.
+
+
+class _TerminalStdin(io.StringIO):
+    """A stdin that reports itself a terminal and fails loudly if anything reads it.
+
+    Reading it IS the defect under test, and a real terminal expresses that as an unbounded block
+    — which a test cannot reproduce without hanging the suite. Raising converts the hang into an
+    immediate, legible failure. Without this the test would be vacuous: an empty stub read returns
+    "", whose JSON parse fails, so a build with the terminal guard deleted would still exit
+    rejected and still look green.
+    """
+
+    def isatty(self) -> bool:
+        return True
+
+    def read(self, size: int | None = -1) -> str:
+        raise AssertionError("stdin was read despite reporting itself a terminal")
+
+
+def test_the_envelope_is_read_from_stdin_which_is_the_dispatch_channel(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Oracle: the module declares stdin the dispatch channel and argv never one, so this is the
+    path a dispatching orchestrator takes; a green suite that only ever passed ``--task`` said
+    nothing about it.
+
+    The assertion is on the spec that crossed the seam, not on the exit code, because an exit code
+    cannot tell "read stdin and parsed it" from "read nothing and defaulted". Recovering
+    ``expected_tests`` proves the bytes on stdin became the task that ran.
+    """
+    runner = RecordingImplement()
+    monkeypatch.setattr(cli, "implement", runner)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(build_envelope(expected_tests=7))))
+
+    assert main(["--worktree", str(tmp_path)]) == 0
+    assert [spec.expected_tests for spec in runner.specs] == [7]
+
+
+def test_a_bare_invocation_at_a_terminal_is_refused_rather_than_hanging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Oracle: a terminal stdin yields no envelope and never EOFs, so reading it blocks forever.
+
+    A hang is the worst refusal: it consumes the dispatch slot and reports nothing. The stand-in
+    records that no work began, which is what separates "refused" from "ran and produced nothing".
+    """
+    runner = RecordingImplement()
+    monkeypatch.setattr(cli, "implement", runner)
+    monkeypatch.setattr(sys, "stdin", _TerminalStdin())
+
+    assert main(["--worktree", str(tmp_path)]) == EXIT_REJECTED_TASK
+    assert runner.specs == []
+
+
+def test_a_task_path_that_cannot_be_read_is_refused_like_a_malformed_envelope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Oracle: a directory is a real, un-mocked OSError from ``read_text`` — IsADirectoryError.
+
+    The refusal is the point rather than the errno: an unreadable envelope is a task the caller
+    described wrongly, so it belongs in the same channel as one whose JSON will not parse, not in
+    the harness-fault channel that tells an orchestrator its host is broken and to re-dispatch.
+    """
+    unreadable = tmp_path / "envelope_dir"
+    unreadable.mkdir()
+    runner = RecordingImplement()
+    monkeypatch.setattr(cli, "implement", runner)
+
+    assert main(["--task", str(unreadable), "--worktree", str(tmp_path)]) == EXIT_REJECTED_TASK
+    assert runner.specs == []
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        build_envelope(budget={**build_envelope()["budget"], "generation_timeout_s": "30"}),  # type: ignore[dict-item]
+        build_envelope(context_files=["src/neighbor.py"]),
+    ],
+    ids=["timeout-is-a-string", "context-file-is-a-bare-string"],
+)
+def test_a_field_of_the_wrong_type_is_refused_before_any_work_begins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, envelope: dict[str, object]
+) -> None:
+    """Oracle: both fields have a declared shape the envelope contract names — a number, and an
+    array of objects carrying ``path`` and ``content``.
+
+    Both cases are the plausible near-miss rather than nonsense: a caller that JSON-encodes every
+    value as a string, and one that sends a list of paths where a list of file objects is
+    declared. A bare path would otherwise reach ``ContextFile`` as a positional string and be
+    rejected far from the field that was wrong.
+    """
+    runner = RecordingImplement()
+    monkeypatch.setattr(cli, "implement", runner)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(envelope)))
+
+    assert main(["--worktree", str(tmp_path)]) == EXIT_REJECTED_TASK
     assert runner.specs == []
 
 
