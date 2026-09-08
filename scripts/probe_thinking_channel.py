@@ -35,6 +35,7 @@ import sys
 
 import httpx
 
+from claude_local.backend import HTTP_CONNECT_TIMEOUT_S, HTTP_READ_TIMEOUT_S
 from claude_local.model_registry import ModelRegistry, is_unservable_combination
 from claude_local.model_server import (
     DEFAULT_STARTUP_TIMEOUT_S,
@@ -143,7 +144,9 @@ def main(argv: list[str] | None = None) -> int:
 
     with server.running(startup_timeout_s=args.startup_timeout) as handle:
         served = handle.served_model_id()
-        with httpx.Client(timeout=httpx.Timeout(300.0, connect=10.0)) as http:
+        with httpx.Client(
+            timeout=httpx.Timeout(HTTP_READ_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S)
+        ) as http:
             for label, prompt in _PROMPTS:
                 print(f"\n==== prompt: {label}")
                 for params in _CONTROLS:

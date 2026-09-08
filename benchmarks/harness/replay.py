@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 
 import httpx
 
-from claude_local import TARGET_FILE_LABEL
+from claude_local import TARGET_FILE_LABEL, WHOLE_FILE_REPLY_PREFIX
 
 _REPLAY_MODEL = "benchmark-replay"
 _CHUNK_BASE: dict[str, object] = {
@@ -123,7 +123,7 @@ def _requested_impl_path(request: httpx.Request) -> str:
 
 def _completion_stream(implementation_source: str, impl_path: str) -> bytes:
     """Encode one framed completion with role, content, finish, usage, and terminator."""
-    file_reply = f"FILE: {impl_path}\n\n{implementation_source}"
+    file_reply = f"{WHOLE_FILE_REPLY_PREFIX}{impl_path}\n\n{implementation_source}"
     frames = (
         {
             **_CHUNK_BASE,

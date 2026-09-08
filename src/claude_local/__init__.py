@@ -10,11 +10,13 @@ and runs. The oracle test is the judge — green means done.
 when needed, read-only ``ContextFile`` neighbors), the base URL of an already-running
 OpenAI-compatible server, and a model name; it returns an ``Outcome``.
 
-Three shared owners are also re-exported here so downstream consumers derive them through the
+Four shared owners are also re-exported here so downstream consumers derive them through the
 top-level API rather than reaching into a submodule (D-BENCH-002): ``slug_model_id`` (the single
 owner of model-id → filename slugging), ``TARGET_FILE_LABEL`` (the prompt's target-file wire
-label, which a replay transport parses), and ``mean_tokens_per_second`` (the guarded decode-rate
-quotient every population shares — one generation, one task, one benchmark run).
+label, which a replay transport parses), ``WHOLE_FILE_REPLY_PREFIX`` (the header of the reply a
+model writes, which that same transport encodes to stand in for one), and
+``mean_tokens_per_second`` (the guarded decode-rate quotient every population shares — one
+generation, one task, one benchmark run).
 
 ``AttemptProgress`` is exported for the same reason: it is the event ``implement``'s ``on_attempt``
 observer receives, and a downstream consumer reaches the loop only through this public API.
@@ -26,6 +28,7 @@ lacks the kernel sandbox), and ``OracleError`` (the oracle produced no verdict).
 """
 
 from claude_local.backend import BackendUnavailable
+from claude_local.edits import WHOLE_FILE_REPLY_PREFIX
 from claude_local.entrypoint import Outcome, implement
 from claude_local.loop import AttemptProgress
 from claude_local.model_registry import generation_params_from_json
@@ -40,6 +43,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "TARGET_FILE_LABEL",
+    "WHOLE_FILE_REPLY_PREFIX",
     "AttemptProgress",
     "BackendUnavailable",
     "Budget",

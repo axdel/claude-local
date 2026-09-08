@@ -27,6 +27,13 @@ Anchored to ``benchmarks/`` rather than to a repo root, so a caller that moved t
 still resolves it. Every dev script defaults here instead of re-encoding the path.
 """
 
+_SCORECARD_PREFIX = "scorecard-"
+"""The filename prefix ``Scorecard.write`` composes and ``scorecard_paths`` globs back.
+
+Spelled once, for the same reason the directory above is: the artifact name is a format with a
+writer, and a reader that spells it itself drifts the moment the name gains a field.
+"""
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -102,7 +109,7 @@ class Scorecard:
                 between the two calls, and the pairing silently becomes an mtime correlation.
         """
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"scorecard-{slug_model_id(self.model)}-{stamp_ms}.json"
+        path = directory / f"{_SCORECARD_PREFIX}{slug_model_id(self.model)}-{stamp_ms}.json"
         path.write_text(json.dumps(self._as_dict(), indent=2), encoding="utf-8")
         return path
 
@@ -216,3 +223,17 @@ def score_cases(results: Sequence[CaseResult]) -> Scorecard:
         total_model_seconds=total_model_seconds,
         mean_tokens_per_second=mean,
     )
+
+
+def scorecard_paths(directory: Path) -> list[tuple[Path, int]]:
+    """Every scorecard in ``directory``, name-sorted, each paired with the stamp its name carries.
+
+    The inverse of ``Scorecard.write``, and here rather than at a consumer because the filename is
+    the only record of when a run happened: the module that composes that name is the one that
+    takes it apart. A reader globbing the prefix and splitting on the last hyphen would be a second
+    writer to the format, and the two only stay agreed for as long as nobody edits either.
+    """
+    return [
+        (path, int(path.stem.rsplit("-", 1)[1]))
+        for path in sorted(directory.glob(f"{_SCORECARD_PREFIX}*.json"))
+    ]

@@ -54,20 +54,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # sys.path with the script's own directory rather than the working directory.
 sys.path.insert(0, str(_REPO_ROOT))
 
+from benchmarks.harness.produced_code import latest_run_directory  # noqa: E402
 from benchmarks.harness.scorer import DEFAULT_SCORECARD_DIR  # noqa: E402
 from benchmarks.harness.style import StyleFinding, collect_style_findings  # noqa: E402
 
 _USAGE_ERROR = 2
-
-
-def _latest_code_directory() -> Path | None:
-    """The most recently written produced-code directory, or ``None`` when none exists.
-
-    Directory names end in a millisecond stamp, so the newest sorts last by name — which beats
-    comparing modification times, since reading a tree can leave those unequal to write order.
-    """
-    directories = sorted(path for path in DEFAULT_SCORECARD_DIR.glob("code-*") if path.is_dir())
-    return directories[-1] if directories else None
 
 
 def _report(findings: tuple[StyleFinding, ...], cases: list[str]) -> None:
@@ -114,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
 
     directories: list[Path] = arguments.code_directories
     if not directories:
-        latest = _latest_code_directory()
+        latest = latest_run_directory(DEFAULT_SCORECARD_DIR)
         if latest is None:
             print(
                 f"no produced-code directory found under {DEFAULT_SCORECARD_DIR}", file=sys.stderr

@@ -46,7 +46,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # repo root has to be added before the benchmark harness that owns the scorecard location resolves.
 sys.path.insert(0, str(_REPO_ROOT))
 
-from benchmarks.harness.scorer import DEFAULT_SCORECARD_DIR  # noqa: E402
+from benchmarks.harness.scorer import DEFAULT_SCORECARD_DIR, scorecard_paths  # noqa: E402
 
 _USAGE_ERROR = 2
 
@@ -92,18 +92,17 @@ def _load_scorecards(scorecard_directory: Path = DEFAULT_SCORECARD_DIR) -> list[
     scorecard.
     """
     documents = [
-        (path, json.loads(path.read_text(encoding="utf-8")))
-        for path in sorted(scorecard_directory.glob("scorecard-*.json"))
+        (stamp_ms, json.loads(path.read_text(encoding="utf-8")))
+        for path, stamp_ms in scorecard_paths(scorecard_directory)
     ]
     if not documents:
         return []
     full_ladder = max(document["cases_total"] for _, document in documents)
 
     scorecards: list[LoadedScorecard] = []
-    for path, loaded in documents:
+    for stamp_ms, loaded in documents:
         if loaded["cases_total"] < full_ladder:
             continue
-        stamp_ms = int(path.stem.rsplit("-", 1)[1])
         scorecards.append(
             LoadedScorecard(
                 model=loaded["model"],

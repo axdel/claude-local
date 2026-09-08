@@ -35,7 +35,8 @@ from claude_local.paths import KeepOnlyViolation, resolve_within
 if TYPE_CHECKING:
     from pathlib import Path
 
-_FILE_PREFIX = "FILE: "
+# Public: the replay transport encodes the header this parses; one owner spells it (D-BENCH-002).
+WHOLE_FILE_REPLY_PREFIX = "FILE: "
 _LINE_BREAK = "\n"
 _CARRIAGE_RETURN = "\r"
 _FENCE = "```"
@@ -72,9 +73,13 @@ def extract_file(text: str) -> WholeFileReply | None:
         The framed whole-file reply, or ``None`` when the reply is not one well-formed frame.
     """
     header, separator, payload = text.lstrip(_LINE_BREAK).partition(_LINE_BREAK)
-    if not separator or _CARRIAGE_RETURN in header or not header.startswith(_FILE_PREFIX):
+    if (
+        not separator
+        or _CARRIAGE_RETURN in header
+        or not header.startswith(WHOLE_FILE_REPLY_PREFIX)
+    ):
         return None
-    path = header.removeprefix(_FILE_PREFIX)
+    path = header.removeprefix(WHOLE_FILE_REPLY_PREFIX)
     if not path.strip():
         return None
     try:
