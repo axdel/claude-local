@@ -270,9 +270,21 @@ refuses to dispatch until both hold.
 Put the CLI on `PATH`:
 
 ```bash
-uv tool install --from . claude-local
+uv tool install --editable --from . claude-local
 claude-local --contract-version   # → claude-local/1
 ```
+
+`--editable` is load-bearing rather than a convenience. The handshake above reports the *contract*
+version, which does not move when the CLI's flag surface does, so a pinned snapshot keeps
+answering it unchanged long after it has stopped accepting the flags a dispatch sends — a
+missing `--generation-params` leaves a model's `PARAMS` unapplied, which is the half-configured
+run the Quickstart warns about, reached through an install that looked authorized. An editable
+install resolves `claude_local` out of this checkout's `src/` instead of copying it, and
+development never happens there — `claude-protocol start` branches into a worktree outside the
+repository — so the CLI on `PATH` is always trunk, and stays usable while a branch is in
+progress. Dependencies are still resolved at install time: a commit that adds a runtime
+dependency needs a reinstall, and says so as an `ImportError` from the bare `claude-local` until
+it gets one.
 
 Then declare it in the consuming project's `.claude-protocol.toml`:
 
