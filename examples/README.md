@@ -17,8 +17,9 @@ that composes a `TaskSpec` and drives one bounded red→green loop.
 
 ### Prerequisite
 
-An already-running OpenAI-compatible server for a model under `models/`. claude-local infers
-against it over HTTP; it never downloads or serves a model itself.
+An already-running OpenAI-compatible server for a model under `models/`. The loop infers against
+it over HTTP and never downloads or serves a model itself — though claude-local does ship an
+optional `model_server` you can start one with.
 
 ### Run it
 

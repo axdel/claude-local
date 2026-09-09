@@ -478,7 +478,7 @@ def test_a_containment_refusal_exits_as_a_rejected_task_not_an_uncaught_crash(
 def test_missing_server_coordinates_are_refused_rather_than_guessed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Oracle: ``implement`` needs a base URL and a model; claude-local never serves one itself.
+    """Oracle: ``implement`` needs a base URL and a model; the loop never serves one itself.
 
     Deliberately runs with the environment cleared — the confined child's environment is stripped
     to an allowlist, so an unset variable is the normal case, not an exotic one. A default here

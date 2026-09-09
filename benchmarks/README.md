@@ -61,9 +61,10 @@ uv sync --group bench
 
 ## Running a model
 
-A running server is a **prerequisite**: claude-local never downloads or serves a model. Start an
-OpenAI-compatible server with your candidate model resident, then point the benchmark at it. Run
-from the repository root:
+A running server is a **prerequisite** for the benchmark: the loop never downloads or serves a
+model. Start an OpenAI-compatible server with your candidate model resident — by hand, or with
+the optional `model_server` claude-local ships — then point the benchmark at it. Run from the
+repository root:
 
 ```bash
 uv run python -m benchmarks.run --model <model-name> --base-url http://localhost:8081

@@ -2,8 +2,8 @@
 """Serve one registered model and run the standing benchmark against it, end to end.
 
 `benchmarks/run.py` scores a model over the whole case ladder, but takes an already-running server
-as a prerequisite — claude-local never downloads or serves a model on the benchmark's behalf. This
-supplies exactly that prerequisite and nothing else: resolve a name through the model registry,
+as a prerequisite — the loop never downloads a model and never serves one. This supplies exactly
+that prerequisite and nothing else: resolve a name through the model registry,
 spawn the MLX server for it, run the documented benchmark command against the server that just came
 up, and tear the server down on the way out. Teardown is structural rather than remembered, on
 success and on failure alike, so a 20 GB resident model cannot outlive the run that needed it.

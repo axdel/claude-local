@@ -22,14 +22,17 @@ same loop at your own task.
 - **Test-first and supervised.** *You* (the orchestrator) author the oracle test; the model
   never writes or edits it. That is what makes green trustworthy — the model could not have
   changed the test to pass it.
-- **Inference only.** claude-local never touches the network or the filesystem outside the one
-  implementation path, and it never downloads or serves a model. It just infers against a
-  server you point it at.
+- **Inference only.** The loop never touches the network or the filesystem outside the one
+  implementation path, never downloads a model, and never serves one — it just infers against a
+  server you point it at. Serving is a separate, optional capability claude-local *does* own
+  (`model_server`, and `model_session` for an interactive turn); the loop simply never calls it.
 
 ## Prerequisite: a running model server
 
-claude-local talks to an already-running **OpenAI-compatible** server; standing one up is the
-orchestrator's job, not claude-local's. Before running the example:
+The loop talks to an already-running **OpenAI-compatible** server. Standing one up is a choice,
+not a prerequisite you must satisfy elsewhere: claude-local ships `model_server` for it (opt-in,
+`uv sync --group serve`), and starting one yourself works equally well. Before running the
+example:
 
 1. Put a model's weights under `models/` (downloads are explicit and user-initiated).
 2. Start an OpenAI-compatible server for it — for MLX weights, for example, `mlx_lm.server`;
