@@ -13,7 +13,7 @@ imports nothing from the package, so nothing it depends on can weaken the rule.
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # Resolution touches the filesystem (lstat/realpath), so a malformed path, a
 # symlink loop, or a missing component can raise any of these. All are treated
@@ -32,6 +32,45 @@ class KeepOnlyViolation(Exception):
         self.candidate = candidate
         self.reason = reason
         super().__init__(f"refused {candidate!r}: {reason}")
+
+
+def require_nested_relative_file(candidate: str) -> PurePosixPath:
+    """Return ``candidate`` parsed, refusing any shape that cannot safely name a written file.
+
+    ``resolve_within`` contains a path against the root it is handed. That guarantee is only
+    as good as the path it is asked to permit: ``src/../test_loop_oracle.py`` resolves back
+    INSIDE the worktree root, so containment holds while the path names the immutable oracle
+    test. This is the prior check that guarantee rests on — the permitted path must mean what
+    its text says before its top segment can be read as the subtree it declares.
+
+    Four independent refusals, none redundant with another:
+
+    * absolute — ignores the root it would be joined to, so it can name anything;
+    * fewer than two components — the oracle test is written to the worktree root, so a flat
+      path would place the implementation beside it;
+    * not already normalized — a ``.`` or doubled separator means the text and the target
+      disagree (``PurePosixPath`` collapses both, so comparing against ``as_posix`` finds them);
+    * any ``..`` component — the one climb normalization does NOT collapse, and the one that
+      turns a contained write into an escape.
+
+    Args:
+        candidate: An untrusted relative path from a task envelope or a case fixture.
+
+    Returns:
+        The parsed path, whose ``parts[0]`` is the subtree it may be written under.
+
+    Raises:
+        ValueError: ``candidate`` is not a normalized, nested, relative file path.
+    """
+    path = PurePosixPath(candidate)
+    if (
+        path.is_absolute()
+        or len(path.parts) < 2
+        or candidate != path.as_posix()
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise ValueError(f"path must name a nested relative file, got {candidate!r}")
+    return path
 
 
 def resolve_within(root: Path, candidate: str) -> Path:

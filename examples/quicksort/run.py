@@ -1,7 +1,8 @@
 """Drive the bundled quicksort task through claude-local's ``implement()`` entry point.
 
-This is an EXAMPLE that teaches the API surface — not a command-line tool (claude-local ships
-no CLI). It reads the task's spec and its immutable oracle test from the files beside it,
+This is an EXAMPLE that teaches the API surface — not the machine-cli an orchestrator spawns,
+which is the ``claude-local`` console script and takes its task as one JSON envelope on stdin.
+It reads the task's spec and its immutable oracle test from the files beside it,
 composes a ``TaskSpec`` + ``Budget``, and runs one bounded red→green loop against an
 already-running OpenAI-compatible server. The produced implementation is written to stdout; the
 human-readable outcome and the local-economy summary go to stderr — so ``run.py > quicksort.py``
@@ -19,13 +20,25 @@ import os
 import sys
 from pathlib import Path
 
-from claude_local import Budget, Status, TaskSpec, implement
+from claude_local import (
+    Budget,
+    Status,
+    TaskSpec,
+    generation_params_from_json,
+    implement,
+)
+from claude_local.cli import BASE_URL_ENV, MODEL_ENV
+from claude_local.sandbox import DEFAULT_ORACLE_TIMEOUT_S
 
 _HERE = Path(__file__).parent
 _IMPL_PATH = "src/quicksort.py"
 _EXPECTED_TESTS = 7
-_DEFAULT_BASE_URL = "http://localhost:8080"
-_BUDGET = Budget(max_attempts=5, max_tokens=4096, timeout_s=120.0)
+_BUDGET = Budget(
+    max_attempts=5,
+    max_tokens=4096,
+    generation_timeout_s=300.0,
+    oracle_timeout_s=DEFAULT_ORACLE_TIMEOUT_S,
+)
 
 
 def _build_spec() -> TaskSpec:
@@ -45,29 +58,51 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("CLAUDE_LOCAL_BASE_URL", _DEFAULT_BASE_URL),
-        help="OpenAI-compatible server base URL (env: CLAUDE_LOCAL_BASE_URL).",
+        default=os.environ.get(BASE_URL_ENV),
+        help=f"OpenAI-compatible server base URL (env: {BASE_URL_ENV}).",
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("CLAUDE_LOCAL_MODEL"),
-        help="Model name the server should serve (env: CLAUDE_LOCAL_MODEL).",
+        default=os.environ.get(MODEL_ENV),
+        help=f"Model name the server should serve (env: {MODEL_ENV}).",
+    )
+    parser.add_argument(
+        "--generation-params",
+        type=generation_params_from_json,
+        default={},
+        metavar="JSON",
+        help=(
+            "JSON object of request-body fields sent with every generation, e.g. "
+            "'{\"enable_thinking\": false}'. Copy it from the model registry's PARAMS column for "
+            "the model being served — several models need it to answer with a file at all."
+        ),
     )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the quicksort task; print the produced code (stdout) + outcome summary (stderr).
+    """Run the quicksort task; print the produced implementation (stdout) + summary (stderr).
 
     Returns the process exit code: 0 when the oracle went green (``Status.DONE``), 1 for any
     other terminal status, 2 for a usage error (no model named).
     """
     args = _parse_args(argv)
+    if not args.base_url:
+        print(
+            f"error: no server given (pass --base-url or set {BASE_URL_ENV})",
+            file=sys.stderr,
+        )
+        return 2
     if not args.model:
-        print("error: no model given (pass --model or set CLAUDE_LOCAL_MODEL)", file=sys.stderr)
+        print(f"error: no model given (pass --model or set {MODEL_ENV})", file=sys.stderr)
         return 2
 
-    outcome = implement(_build_spec(), base_url=args.base_url, model=args.model)
+    outcome = implement(
+        _build_spec(),
+        base_url=args.base_url,
+        model=args.model,
+        generation_params=args.generation_params,
+    )
 
     record = outcome.record
     estimated = "  (tokens estimated)" if record.tokens_estimated else ""

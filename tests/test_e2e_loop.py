@@ -3,9 +3,10 @@
 This is the branch's FULL-tier live-test for a library surface (a pytest/REPL driver). It exercises
 the real chain end to end: schema-derived SSE bytes -> the real ModelClient decode -> real
 whole-file extraction -> a REAL immutable oracle run by a REAL `python -m pytest` subprocess in a
-temp worktree -> real best-snapshot restore -> real telemetry aggregation and JSON write. The ONLY
-seam doubled is the model: ReplayBackend replays pre-built streams, so no model is downloaded (the
-branch's standing No-Go) yet the full path is proven — the loop's "prove it offline" design.
+temp worktree -> real best-passing-snapshot restore -> real telemetry aggregation and JSON write.
+The ONLY seam doubled is the model: ReplayBackend replays pre-built streams, so no model is
+downloaded (the branch's standing No-Go) yet the full path is proven — the loop's "prove it
+offline" design.
 
 Three scenarios cover the terminal outcomes that do real work: (A) a partial then a green reply
 reaches DONE with the green snapshot restored; (B) three partials exhaust the budget and the
@@ -21,6 +22,7 @@ the production child environment from an external `tmp_path` worktree without am
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -57,7 +59,7 @@ _CHUNK: dict[str, object] = {"id": "chatcmpl-e2e", "object": "chat.completion.ch
 
 
 def _read_fixture(name: str) -> str:
-    """Read a captured e2e fixture (an oracle test or an implementation template) as text."""
+    """Read a hand-authored e2e fixture (an oracle test or an implementation template) as text."""
     return (_FIXTURES / name).read_text(encoding="utf-8")
 
 
@@ -176,8 +178,22 @@ def _assert_record_written(record: LocalEconomyRecord, directory: Path, *, statu
 # --- Scenario A: partial -> worse partial -> green reaches DONE ---------------------
 
 
-def test_e2e_retry_carries_pytest_failure_not_prior_implementation(tmp_path: Path) -> None:
-    """Attempt two receives real sandboxed pytest diagnostics and never echoes model source."""
+def test_e2e_retry_carries_the_pytest_failure_and_the_file_that_failed(tmp_path: Path) -> None:
+    """Attempt two receives real sandboxed pytest diagnostics AND the file that produced them.
+
+    Oracle: ``rules_card.md`` tells the model to "return the corrected complete file. Change what
+    the failure points to; keep what already passed." Both clauses name the previous file, so a
+    brief without it asks for a repair of an artifact the model was never handed.
+
+    This overturns an earlier assertion that the prior implementation stays out of the tail. That
+    assertion had no rationale behind it and no decision record; the shipped card is the stronger
+    authority, being the instruction actually sent. The prefix half is unchanged and still asserted
+    below: the source rides in the tail, so KV-cache reuse is untouched (D-PROMPT-001).
+
+    Strongest of the three tests covering this because nothing here is stubbed but the model: the
+    source travels through real SSE decoding, real whole-file extraction, a real containment write,
+    and a real ``python -m pytest``, and is read back off the wire the second call actually sent.
+    """
     worktree = _make_worktree(tmp_path)
     oracle = _read_fixture("oracle_test.txt")
     prior_implementation = _read_fixture("impl_abs.txt").strip()
@@ -194,8 +210,8 @@ def test_e2e_retry_carries_pytest_failure_not_prior_implementation(tmp_path: Pat
     second_prefix, second_tail = backend.calls[1]
     assert first_prefix == second_prefix
     assert first_tail == ""
-    assert "assert 10 == -10" in second_tail
-    assert prior_implementation not in second_tail
+    assert "assert 10 == -10" in second_tail  # how it broke
+    assert prior_implementation in second_tail  # and what broke it
 
 
 def test_e2e_partial_then_green_reaches_done(tmp_path: Path) -> None:
@@ -348,3 +364,44 @@ def test_runner_rescores_fresh_source_after_same_size_rewrite(tmp_path: Path) ->
     probe.write_text("VALUE = 2\n", encoding="utf-8")  # same byte length; the correcting attempt
     second = runner.run(oracle, worktree, expected=1)
     assert second.score.is_green  # must compile the NEW source, not reuse stale bytecode
+
+
+# --- Feedback determinism: one unchanged failure asks one unchanged question --------
+
+_ADDRESS = re.compile(r"0x[0-9a-f]{6,}")
+
+
+def test_e2e_one_unchanged_failure_distills_identically_in_two_worktrees(tmp_path: Path) -> None:
+    """One unchanged implementation must ask the model the same question in any worktree.
+
+    The stable prefix is fixed by construction (D-PROMPT-001), so the distilled tail is the ONLY
+    part of a repair prompt that varies — and a tail carrying a fact about the RUN rather than the
+    CODE makes an identical failure a different question every time (INV-004). Measured on the
+    standing benchmark: run 2 scored 0/7 where run 1 scored 1/7 on the same model and the same
+    commit, because four run facts reached the tail — the temp worktree name in every node id, the
+    ``rootdir`` header, an ASLR object address, and a hash-randomized set order.
+
+    Two full loops run here over the same replayed implementation in DIFFERENTLY NAMED worktrees,
+    with an oracle whose verdict is fixed at 1 passed / 2 failed but whose rendering carries an
+    address and a set order. The tails must be byte-equal.
+    """
+    oracle = _read_fixture("oracle_volatile_render.txt")
+    tails: list[str] = []
+    for worktree_name in ("first-run", "a-longer-second-run"):
+        root = tmp_path / worktree_name
+        root.mkdir()
+        worktree = _make_worktree(root)
+        backend = RecordingReplayBackend([_impl_reply("impl_correct.txt")] * 2)
+        loop, _ = _build_loop(worktree, backend)
+
+        loop.run(_spec(oracle, max_attempts=2), worktree)
+
+        tails.append(backend.calls[1][1])
+
+    assert tails[0] == tails[1]
+    # Equal because every run fact is gone — not because the tail was emptied of diagnosis.
+    assert "test_each_sum_is_a_distinct_object" in tails[0]
+    assert "alpha" in tails[0]
+    for run_fact in ("first-run", "a-longer-second-run", "rootdir"):
+        assert run_fact not in tails[0]
+    assert _ADDRESS.search(tails[0]) is None

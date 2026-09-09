@@ -1,7 +1,7 @@
 """The model client — one warm generation call: stream, decode, watch, and meter.
 
-``ModelClient.generate`` runs a single logical generation: it streams raw bytes from a
-``Backend``, decodes them with ``sse``, feeds each content delta to a fresh ``DerailGuard``,
+``ModelClient.generate`` is a single logical call: it streams raw bytes from a
+``Backend``, decodes them with ``sse``, feeds every decoded delta to a fresh ``DerailGuard``,
 and aborts the stream the instant a bound trips. Every call yields a ``GenerationResult`` — the
 decoded text, a completion-token count, and wall-clock timing — for the local half of the
 economy record.
@@ -10,7 +10,16 @@ The token count is never guessed away: a cleanly finished stream carries the ser
 ``usage`` count; a stream with no usage block (transport truncation, an upstream error frame, or
 a derail cut before the trailer) falls back to a char-count proxy flagged ``tokens_estimated``.
 An aborted call still cost decode time, so its tokens are counted, never dropped (D-TELEMETRY-001).
-``total_calls`` counts logical generations — incremented at entry so it survives a mid-call raise.
+``total_calls`` counts logical calls — incremented at entry so it survives a mid-call raise.
+
+An optional ``on_delta`` observer makes a decode watchable: it receives every decoded delta as it
+arrives — reasoning deltas included, since reasoning is metered and watched exactly like content —
+so a caller can render generation live instead of waiting minutes for one result object.
+Deltas are reported RAW — before ``assistant_content`` recovers the reply from a channel
+transcript — because the markup is what a reasoning model spends most of its decode on, and a
+watcher that only saw the recovered reply would see nothing until the very end (D-PROGRESS-002).
+Each delta is reported BEFORE the guard judges it, so the delta that trips a derail is the last
+thing the observer sees rather than the one thing it misses.
 """
 
 from __future__ import annotations
@@ -19,16 +28,18 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from claude_local.derail import CHARS_PER_TOKEN, DerailGuard
-from claude_local.sse import Delta, Error, Finish, Usage, decode_sse
+from claude_local.backend import GenerationSilent
+from claude_local.derail import CHARS_PER_TOKEN, DerailGuard, DerailReason
+from claude_local.harmony import assistant_content
+from claude_local.sse import Delta, Error, Finish, Reasoning, Usage, decode_sse
+from claude_local.types import mean_tokens_per_second
 
 _LENGTH_FINISH_REASON = "length"
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable, Iterator
 
     from claude_local.backend import Backend
-    from claude_local.derail import DerailReason
     from claude_local.types import Budget
 
 
@@ -63,14 +74,19 @@ class GenerationResult:
     finish_reason: str | None = None
 
     @property
-    def is_incomplete(self) -> bool:
-        """Whether no terminal finish arrived or the server stopped at its length cap."""
-        return self.finish_reason is None or self.finish_reason == _LENGTH_FINISH_REASON
-
-    @property
     def is_length_capped(self) -> bool:
         """Whether the server stopped this generation at its own token limit."""
         return self.finish_reason == _LENGTH_FINISH_REASON
+
+    @property
+    def tokens_per_second(self) -> float | None:
+        """This generation's decode rate, or ``None`` when no wall-clock time elapsed.
+
+        Both terms are owned here, so the quotient is exposed here — a reader that wants a
+        speed asks rather than dividing someone else's fields. The arithmetic itself belongs to
+        ``mean_tokens_per_second``, shared with the per-task and per-run means.
+        """
+        return mean_tokens_per_second(self.completion_tokens, self.seconds)
 
 
 class ModelClient:
@@ -78,7 +94,9 @@ class ModelClient:
 
     Construct once and reuse: the backend holds the warm connection, and this client only owns
     the per-call orchestration and the ``total_calls`` ledger. The clock and the guard factory
-    are injected so timing and derail behavior are deterministic under test.
+    are injected so timing and derail behavior are deterministic under test. ``on_delta`` is the
+    optional live-decode observer; the client neither formats nor throttles what it reports —
+    rendering is the caller's, which is what keeps this module free of I/O.
     """
 
     def __init__(
@@ -86,16 +104,37 @@ class ModelClient:
         backend: Backend,
         derail_factory: Callable[[Budget, Callable[[], float]], DerailGuard] = DerailGuard,
         now: Callable[[], float] = time.monotonic,
+        on_delta: Callable[[str], None] | None = None,
     ) -> None:
         self._backend = backend
         self._derail_factory = derail_factory
         self._now = now
+        self._on_delta = on_delta
         self._total_calls = 0
 
     @property
     def total_calls(self) -> int:
-        """Logical generations attempted — the count the economy record reconciles against."""
+        """Logical calls attempted — the count the economy record reconciles against."""
         return self._total_calls
+
+    @staticmethod
+    def _ticking(chunks: Iterable[bytes], guard: DerailGuard) -> Iterator[bytes]:
+        """Yield transport chunks, driving the guard's clock on each and stopping when one trips.
+
+        The guard's time bounds are otherwise checked only inside ``feed``, which cannot run until
+        a chunk decodes to content. A server holding the socket open with keepalive comments, or
+        with ``event:``/``id:`` lines the SSE decoder drops, therefore keeps every bound asleep —
+        measured as one content token in 447.2s against a 120s budget. Judging arrival here closes
+        that gap at the only layer that sees the bytes.
+
+        The tick precedes the yield so it judges the gap this chunk is ending, and the stream
+        stops rather than raising: the caller's loop then finishes normally and reads the latched
+        verdict, keeping the abort path identical to the one every other bound already uses.
+        """
+        for chunk in chunks:
+            if guard.tick() is not None:
+                return
+            yield chunk
 
     def generate(self, prefix: str, tail: str, budget: Budget) -> GenerationResult:
         """Stream one generation, aborting on the first derail; return its metered result.
@@ -113,23 +152,41 @@ class ModelClient:
         derail_reason: DerailReason | None = None
         fault: str | None = None
         finish_reason: str | None = None
-        for event in decode_sse(self._backend.generate(prefix, tail, budget)):
-            if isinstance(event, Delta):
-                parts.append(event.text)
-                chars += len(event.text)
-                derail_reason = guard.feed(event.text)
-                if derail_reason is not None:
-                    break  # abort early — stop decoding the moment a bound trips
-            elif isinstance(event, Usage):
-                server_tokens = event.completion_tokens
-            elif isinstance(event, Finish):
-                finish_reason = event.reason  # the server's own terminal reason (stop / length)
-            elif isinstance(event, Error):
-                # An upstream error frame is terminal: surface its message and stop decoding, so
-                # content streamed after it is never read (a server fault, not a derail).
-                fault = event.message
-                break
+        chunks = self._ticking(self._backend.generate(prefix, tail, budget), guard)
+        try:
+            for event in decode_sse(chunks):
+                if isinstance(event, Delta | Reasoning):
+                    # Reasoning is metered and watched exactly like content — it is decode the
+                    # model really performed, which the server's own usage trailer bills — but it
+                    # is never appended to the reply, or the file parser would read
+                    # chain-of-thought as source.
+                    if isinstance(event, Delta):
+                        parts.append(event.text)
+                    chars += len(event.text)
+                    if self._on_delta is not None:  # before the verdict, so a derail's cause shows
+                        self._on_delta(event.text)
+                    derail_reason = guard.feed(event.text)
+                    if derail_reason is not None:
+                        break  # abort early — stop decoding the moment a bound trips
+                elif isinstance(event, Usage):
+                    server_tokens = event.completion_tokens
+                elif isinstance(event, Finish):
+                    finish_reason = event.reason  # the server's own terminal reason (stop/length)
+                elif isinstance(event, Error):
+                    # An upstream error frame is terminal: surface its message and stop decoding,
+                    # so content streamed after it is never read (a server fault, not a derail).
+                    fault = event.message
+                    break
+        except GenerationSilent:
+            # The transport reporting the one silence the guard cannot: with no chunk ever
+            # arriving, tick never ran, so there is no latched verdict to read below. Whatever
+            # bytes did arrive stay in parts and chars, so a partial decode is still metered.
+            derail_reason = DerailReason.SILENT
         seconds = self._now() - start
+        # A silence trips in the chunk layer, which ends the stream without ever reaching an event,
+        # so the loop above has no verdict to report. Reading the latch is what makes a generation
+        # that produced nothing at all distinguishable from one that ended cleanly and empty.
+        derail_reason = derail_reason or guard.tripped
         if server_tokens is None:
             # No trustworthy server count (truncation, upstream error, or a derail cut the stream
             # before the trailer). Proxy from decoded chars, ceil so any content reports >= 1 token
@@ -140,7 +197,10 @@ class ModelClient:
             completion_tokens = server_tokens
             estimated = False
         return GenerationResult(
-            text="".join(parts),
+            # A server that leaks the model's channel transcript instead of its user-facing
+            # message is normalized here, at the one place the reply text is assembled. Text from
+            # a server that behaves passes through byte-identically.
+            text=assistant_content("".join(parts)),
             completion_tokens=completion_tokens,
             tokens_estimated=estimated,
             seconds=seconds,

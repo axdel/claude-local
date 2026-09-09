@@ -8,6 +8,7 @@ a test specifies only the field it exercises and takes sensible defaults for the
 from __future__ import annotations
 
 from claude_local.client import GenerationResult
+from claude_local.loop import AttemptProgress
 from claude_local.runner import TestScore
 from claude_local.telemetry import LocalEconomyRecord
 from claude_local.types import Budget, ContextFile, Status, TaskSpec
@@ -15,8 +16,7 @@ from claude_local.types import Budget, ContextFile, Status, TaskSpec
 
 def build_whole_file_reply(implementation_path: str, implementation_source: str) -> str:
     """Frame implementation source exactly as the model-facing whole-file reply protocol."""
-    payload_size = len(implementation_source.encode("utf-8"))
-    return f"FILE: {implementation_path}\nUTF8-BYTES: {payload_size}\n\n{implementation_source}"
+    return f"FILE: {implementation_path}\n\n{implementation_source}"
 
 
 def build_generation_result(**overrides: object) -> GenerationResult:
@@ -38,7 +38,12 @@ def build_generation_result(**overrides: object) -> GenerationResult:
 
 def build_budget(**overrides: object) -> Budget:
     """Canonical valid Budget; a test overrides only the field it exercises."""
-    fields: dict[str, object] = {"max_attempts": 3, "max_tokens": 2048, "timeout_s": 30.0}
+    fields: dict[str, object] = {
+        "max_attempts": 3,
+        "max_tokens": 2048,
+        "generation_timeout_s": 30.0,
+        "oracle_timeout_s": 30.0,
+    }
     fields.update(overrides)
     return Budget(**fields)  # type: ignore[arg-type]
 
@@ -84,6 +89,21 @@ def build_test_score(**overrides: object) -> TestScore:
     return TestScore(**fields)  # type: ignore[arg-type]
 
 
+def build_attempt_progress(**overrides: object) -> AttemptProgress:
+    """Canonical valid AttemptProgress; a test overrides only the field it exercises.
+
+    Defaults describe one green scored attempt whose generation ran at 100 tokens in 2.0s — a
+    50.0 tok/s rate a renderer test can assert against without doing the division itself.
+    """
+    fields: dict[str, object] = {
+        "attempt": 1,
+        "generation": build_generation_result(),
+        "score": build_test_score(),
+    }
+    fields.update(overrides)
+    return AttemptProgress(**fields)  # type: ignore[arg-type]
+
+
 def build_local_economy_record(**overrides: object) -> LocalEconomyRecord:
     """Canonical valid LocalEconomyRecord; a test overrides only the field it exercises.
 
@@ -92,6 +112,8 @@ def build_local_economy_record(**overrides: object) -> LocalEconomyRecord:
     """
     fields: dict[str, object] = {
         "model": "test/model",
+        "rules_card_digest": "0123456789ab",
+        "plan_first": False,
         "total_calls": 1,
         "total_completion_tokens": 40,
         "total_model_seconds": 2.0,

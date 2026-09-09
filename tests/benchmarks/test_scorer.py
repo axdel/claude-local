@@ -17,6 +17,11 @@ from factories import build_local_economy_record
 from benchmarks.harness import CaseResult, CaseScore, score_cases
 from claude_local import Outcome, Status
 
+# The run stamp the caller supplies. Fixed rather than read from the clock: the stamp became an
+# argument so a run's scorecard and its produced code share one, and a test can only pin a shared
+# value it knows.
+_STAMP_MS = 1_700_000_000_000
+
 
 def _case_result(
     case_id: str,
@@ -26,6 +31,8 @@ def _case_result(
     completion_tokens: int,
     model_seconds: float,
     model: str = "local/candidate-7b",
+    rules_card_digest: str = "0123456789ab",
+    plan_first: bool = False,
     fault: str | None = None,
     length_capped: int = 0,
 ) -> CaseResult:
@@ -37,6 +44,8 @@ def _case_result(
     """
     record = build_local_economy_record(
         model=model,
+        rules_card_digest=rules_card_digest,
+        plan_first=plan_first,
         total_completion_tokens=completion_tokens,
         total_model_seconds=model_seconds,
         status=status,
@@ -125,7 +134,7 @@ def test_score_cases_surfaces_each_case_fault_and_length_capped(tmp_path: Path) 
     assert by_id["02_schemas"].length_capped == 0
 
     # length_capped is always emitted (a stable numeric field); fault only on the faulted case.
-    card = json.loads(scorecard.write(tmp_path).read_text(encoding="utf-8"))
+    card = json.loads(scorecard.write(tmp_path, _STAMP_MS).read_text(encoding="utf-8"))
     assert card["cases"] == [
         {"case_id": "01_scaffold", "status": "done", "attempts": 2, "length_capped": 1},
         {
@@ -176,22 +185,116 @@ def test_score_cases_rejects_a_mixed_model_benchmark() -> None:
         score_cases(cases)
 
 
+def test_score_cases_rejects_a_benchmark_that_changed_rules_card_mid_run() -> None:
+    """One scorecard describes one rules card; two cards in one run is not a comparison.
+
+    The card is the largest span of the prompt, so a run whose cases saw different cards has no
+    single configuration to attribute its token total to. Left unchecked the reducer would label
+    the card with whichever digest the set happened to yield — a mislabelled result is worse than
+    a refused one, because nothing downstream can detect it.
+    """
+    cases = [
+        _case_result("a", Status.DONE, attempts=1, completion_tokens=10, model_seconds=1.0),
+        _case_result(
+            "b",
+            Status.DONE,
+            attempts=1,
+            completion_tokens=20,
+            model_seconds=1.0,
+            rules_card_digest="ffffffffffff",
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="one rules card"):
+        score_cases(cases)
+
+
+def test_score_cases_carries_the_rules_card_digest_onto_the_scorecard() -> None:
+    """Oracle: every record names one card, so the scorecard names that same card.
+
+    Without this the scorecard could not say which card produced it, and two benchmark-runs
+    under two cards would be indistinguishable once written to disk.
+    """
+    cases = [
+        _case_result(
+            "a",
+            Status.DONE,
+            attempts=1,
+            completion_tokens=10,
+            model_seconds=1.0,
+            rules_card_digest="abcdef012345",
+        ),
+    ]
+
+    assert score_cases(cases).rules_card_digest == "abcdef012345"
+
+
+def test_score_cases_rejects_a_benchmark_that_changed_the_planning_lever_mid_run() -> None:
+    """One scorecard describes one configuration, and the lever is part of the configuration.
+
+    The same argument as the rules card above: a run whose cases were half planned and half not
+    has no single configuration to attribute its token total to, and labelling it with whichever
+    value the set happened to yield is the mislabelling that nothing downstream can detect.
+    """
+    cases = [
+        _case_result("a", Status.DONE, attempts=1, completion_tokens=10, model_seconds=1.0),
+        _case_result(
+            "b",
+            Status.DONE,
+            attempts=1,
+            completion_tokens=20,
+            model_seconds=1.0,
+            plan_first=True,
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="one planning lever"):
+        score_cases(cases)
+
+
+def test_score_cases_carries_the_planning_lever_onto_the_scorecard() -> None:
+    """Oracle: every record names one lever, so the scorecard names that same lever.
+
+    Without it two benchmark-runs of one model under one card — one planned, one not — are
+    indistinguishable on disk, and the cross-run comparison silently keeps whichever ran last.
+    That is not hypothetical: it is what a 4436-token run and a 9858-token run of the same model
+    and card did to each other before this field existed.
+    """
+    cases = [
+        _case_result(
+            "a",
+            Status.DONE,
+            attempts=1,
+            completion_tokens=10,
+            model_seconds=1.0,
+            plan_first=True,
+        ),
+    ]
+
+    assert score_cases(cases).plan_first is True
+
+
 def test_scorecard_write_round_trips_to_json(tmp_path: Path) -> None:
     """The written JSON reloads to the hand-derived mapping, under a scorecard-prefixed name."""
     scorecard = score_cases(_mixed_cases())
 
-    path = scorecard.write(tmp_path)
+    path = scorecard.write(tmp_path, _STAMP_MS)
 
     assert path.parent == tmp_path
     assert path.name.startswith("scorecard-local-candidate-7b-")
     assert path.suffix == ".json"
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "model": "local/candidate-7b",
+        "rules_card_digest": "0123456789ab",
+        "plan_first": False,
         "cases_passed": 2,
         "cases_total": 3,
         "total_completion_tokens": 400,
         "total_model_seconds": 8.0,
         "mean_tokens_per_second": 50.0,
+        # Not measured: score_cases reduces records already in memory, while counting style
+        # findings means linting files on disk. The benchmark runner supplies it.
+        "style_findings": None,
         "cases": [
             {"case_id": "01_scaffold", "status": "done", "attempts": 1, "length_capped": 0},
             {"case_id": "02_schemas", "status": "done", "attempts": 2, "length_capped": 0},
@@ -210,7 +313,7 @@ def test_scorecard_write_creates_the_directory_when_absent(tmp_path: Path) -> No
     scorecard = score_cases(_mixed_cases())
     destination = tmp_path / "nested" / "scorecards"
 
-    path = scorecard.write(destination)
+    path = scorecard.write(destination, _STAMP_MS)
 
     assert path.parent == destination
     assert path.is_file()

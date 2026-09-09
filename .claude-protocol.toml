@@ -1,0 +1,16 @@
+# claude-protocol project configuration.
+#
+# PATH presence alone never authorizes dispatch: a backend is surfaced as *available* when its
+# CLI resolves, but claude-protocol will only dispatch to one named here.
+
+[repo]
+trunk = "main"
+forge = "github"
+
+[implementers]
+# `local` is claude-local itself — this repo, dogfooding its own loop. Dispatch to it is gated
+# twice over: claude-protocol probes `claude-local --contract-version` and fails closed on a
+# mismatch, and the ceremony classifier withholds `untrusted_implementer_allowed` for sensitive
+# or ambiguous changes, so auth, payments, PII, migrations, and anything it cannot confidently
+# place stay with claude.
+enabled = ["claude", "local"]

@@ -17,13 +17,14 @@ that composes a `TaskSpec` and drives one bounded red→green loop.
 
 ### Prerequisite
 
-An already-running OpenAI-compatible server for a model under `models/`. claude-local infers
-against it over HTTP; it never downloads or serves a model itself.
+An already-running OpenAI-compatible server for a model under `models/`. The loop infers against
+it over HTTP and never downloads or serves a model itself — though claude-local does ship an
+optional `model_server` you can start one with.
 
 ### Run it
 
 ```bash
-uv run python examples/quicksort/run.py --base-url http://localhost:8080 --model <model-name>
+uv run python examples/quicksort/run.py --base-url http://localhost:8081 --model <model-name>
 ```
 
 Capture just the produced code with a redirect:

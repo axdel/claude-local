@@ -8,6 +8,8 @@ command in macOS ``sandbox-exec`` under a deny-by-default SBPL profile, so the s
 
 - read the task worktree, disposable write box, and active Python runtime,
 - write *inside the write box* where the JUnit report and bounded stream captures land,
+- never read another process's argv or exec-time environment, which on a developer machine
+  is where the orchestrator's own API keys sit,
 - and never use the network or ambient host files as an indirect feedback-egress channel.
 
 Layered on top: a hard CPU/file-size ``setrlimit`` cap (Layer 1), bounded file-backed
@@ -19,7 +21,7 @@ type — so it stays decoupled and reusable.
 
 Fail-closed: if ``sandbox-exec`` is absent the spawn raises rather than running untrusted
 code unconfined. Since the local models are Apple-silicon MLX, the real path is always
-macOS; a missing front-end means a broken host, not a fallback to run without a cage.
+macOS; a missing front-end means a broken host, not a fallback to run without the sandbox.
 """
 
 from __future__ import annotations
@@ -54,9 +56,22 @@ _PROFILE_TEMPLATE = """\
 (version 1)
 (deny default)
 (import "system.sb")
-(allow process*)
+; The import grants classes this file never names, so withholding a grant here does not deny it —
+; only an explicit (deny ...) after the import binds. Measured: deleting the former blanket
+; (allow sysctl-read) changed nothing, because system.sb already grants that class.
+(allow process-exec* process-fork)
 (allow sysctl-read)
-(allow mach-lookup)
+; Another process's argv and exec-time environment — the orchestrator's API keys among them — is
+; admitted by EITHER of two classes, so closing that read takes both denies. Measured: with only
+; one of them denied a confined child still read a same-uid victim's whole environment. Each is
+; then allowed back along the axis that reaches no other process: introspecting yourself, and
+; every sysctl that is not a per-pid process query. See D-SANDBOX-011.
+(deny process-info*)
+(allow process-info* (target self))
+(deny sysctl-read (sysctl-name-prefix "kern.proc"))
+; No mach-lookup grant: (deny network*) does not cover Mach IPC, so an unscoped one is a side
+; channel out of the sandbox. Measured — a confined pbpaste read the developer's clipboard through
+; it. The oracle needs none beyond what system.sb already scopes; see D-SANDBOX-008.
 {metadata_rules}
 {read_rules}
 (allow file-write* (subpath "{box}"))
@@ -71,8 +86,17 @@ class SandboxUnavailable(RuntimeError):
     """Raised when ``sandbox-exec`` is absent — untrusted code is never run unconfined."""
 
 
-class SandboxTimeout(TimeoutError):
-    """A killed oracle command's timeout fact and bounded diagnostic stream tails."""
+class SandboxKilled(RuntimeError):
+    """A confined command died before producing a verdict, with bounded diagnostic tails.
+
+    Two deaths reach here and the loop treats both the same way — as a repairable failed attempt,
+    never a broken oracle. One is ours: the wall clock we set expired and we killed the group. The
+    other is the kernel's: a resource cap fired (``RLIMIT_CPU`` is deliberately below the wall
+    clock, so a busy loop exits this way) or the child faulted. The message names which.
+
+    They are one class because nothing branches on the difference — both mean pytest wrote no
+    report through no fault of the harness, so the verdict is zero and the tails are the feedback.
+    """
 
     def __init__(
         self,
@@ -104,11 +128,12 @@ def sandboxed_spawn(
         cmd: The command to execute (orchestrator-supplied; no model input on argv).
         cwd: Working directory for the child (the read-only worktree in production).
         write_box: The one directory the child may write to (the disposable report dir).
-        timeout_s: Wall-clock budget; on overrun the whole process group is SIGKILLed.
+        timeout_s: The oracle deadline; on overrun the whole process group is SIGKILLed.
 
     Raises:
         SandboxUnavailable: ``sandbox-exec`` is not present on this host.
-        SandboxTimeout: the command exceeded ``timeout_s`` and was killed.
+        SandboxKilled: the command exceeded ``timeout_s``, or the kernel killed it with a signal —
+            a CPU-cap overrun or a fault. Either way it produced no verdict.
     """
     if not sandbox_available():
         raise SandboxUnavailable(
@@ -151,12 +176,29 @@ def sandboxed_spawn(
         stdout = _read_tail(stdout_file)
         stderr = _read_tail(stderr_file)
         if timeout_error is not None:
-            raise SandboxTimeout(
-                f"oracle exceeded the {timeout_s:g}s wall-clock budget",
+            raise SandboxKilled(
+                f"oracle exceeded its {timeout_s:g}s deadline",
                 stdout=stdout,
                 stderr=stderr,
             ) from timeout_error
+        # A signal death returns from communicate() NORMALLY, with no TimeoutExpired to catch, so
+        # the negative returncode is the only evidence it happened. Left unread, the caller sees a
+        # completed run that wrote no report and calls the oracle broken — aborting a whole
+        # benchmark-run over one impl that merely failed to terminate.
+        if proc.returncode is not None and proc.returncode < 0:
+            raise SandboxKilled(_signal_death(-proc.returncode), stdout=stdout, stderr=stderr)
         return stdout, stderr
+
+
+def _signal_death(signum: int) -> str:
+    """Describe a signal death, attributing the cause when the limit that killed it is ours."""
+    try:
+        name = signal.Signals(signum).name
+    except ValueError:
+        name = f"signal {signum}"
+    if signum == signal.SIGXCPU:
+        return f"oracle was killed by {name}: it exceeded the {_MAX_CPU_SECONDS}s CPU-time cap"
+    return f"oracle was killed by {name} before producing a verdict"
 
 
 def _read_tail(stream: BinaryIO) -> bytes:
@@ -182,7 +224,8 @@ def _build_profile(cwd: Path, write_box: Path, cmd: Sequence[str]) -> str:
     }
     executable = shutil.which(cmd[0], path=_sandbox_path())
     if executable is not None:
-        read_roots.update((executable, os.path.realpath(executable)))
+        read_roots.update(_symlink_chain(executable))
+        read_roots.add(os.path.realpath(executable))
     metadata_rules = "\n".join(
         f'(allow file-read-metadata file-test-existence (literal "{_sbpl_quote(path)}"))'
         for path in _path_ancestors(read_roots)
@@ -201,6 +244,62 @@ def _build_profile(cwd: Path, write_box: Path, cmd: Sequence[str]) -> str:
 def _sbpl_quote(path: str) -> str:
     """Escape a path for embedding in an SBPL double-quoted string literal."""
     return path.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _canonicalize_parents(path: str) -> str:
+    """Resolve every directory above ``path`` while leaving its final component intact.
+
+    ``os.path.realpath`` cannot be used on the whole path here: it would collapse the very
+    symlink this module exists to name, reducing the chain back to its endpoints. Only the
+    parents are resolved, so the link is still named individually — under the name the kernel
+    will actually match it by.
+    """
+    return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+
+
+def _symlink_chain(path: str) -> tuple[str, ...]:
+    """Return every path the kernel visits while resolving ``path``, hop by hop.
+
+    ``os.path.realpath`` reports only the destination, because it collapses every component
+    at once. Path resolution instead walks each name a symlink points at, and an intermediate
+    hop can sit outside the resolved runtime root entirely: uv installs a *version-alias
+    directory* symlink (``cpython-3.14-...`` -> ``cpython-3.14.7-...``) and points the venv
+    launcher through it, so the traversed middle is a sibling of ``sys.base_prefix`` rather
+    than a child. Granting the chain's endpoints alone leaves that middle ungranted and the
+    deny-default profile refuses the spawn.
+
+    Each hop is reported **twice** when the two spellings differ — as written, and with its
+    parents resolved — because crossing a symlink rewrites the remainder of the path and the
+    kernel needs both halves. It reads the link under the name that points at it (``/tmp``,
+    the version alias), then matches every component below under the resolved name
+    (``/private/tmp``). Naming only the first leaves the components beneath ungranted; naming
+    only the resolved form leaves the link itself untraversable, so the walk stops at the very
+    hop it exists to reach. Emitting one spelling and not the other is a denied spawn either
+    way, and the failure hides in the common case — a missing grant is silently covered
+    whenever another root's subpath happens to span the same tree.
+
+    Yielding the traversed paths keeps the profile *narrower* than granting the alias
+    directory's subtree would: each hop is one file, so its grant covers only that file.
+    The walk terminates on a symlink cycle by construction, having visited each path once.
+    """
+    chain: list[str] = []
+    visited: set[str] = set()
+    current = os.path.abspath(path)
+    while current not in visited:
+        visited.add(current)
+        chain.append(current)
+        resolved_parents = _canonicalize_parents(current)
+        if resolved_parents != current:
+            chain.append(resolved_parents)
+        if not os.path.islink(current):
+            break
+        target = os.readlink(current)
+        current = (
+            target
+            if os.path.isabs(target)
+            else os.path.normpath(os.path.join(os.path.dirname(current), target))
+        )
+    return tuple(chain)
 
 
 def _path_ancestors(paths: set[str]) -> tuple[str, ...]:
@@ -222,6 +321,11 @@ def _sandbox_env(write_box: Path) -> dict[str, str]:
     HOME is the disposable box, never the developer's real home, so a credential reader keyed on
     ``$HOME`` (``~/.ssh``, ``~/.aws``, ``~/.netrc``, ``~/.config/gh``) resolves into an empty
     directory rather than the operator's secrets. No parent API tokens are forwarded at all.
+
+    ``PYTHONHASHSEED`` is pinned because the child's diagnostics are read back as model feedback:
+    an unpinned interpreter draws a fresh hash seed per process, so a failing set or dict renders
+    its elements in a different order every run and one unchanged failure asks a different question
+    each time it is fed back (D-ORACLE-005).
     """
     box = str(write_box)
     parent = os.environ
@@ -231,6 +335,7 @@ def _sandbox_env(write_box: Path) -> dict[str, str]:
         "LANG": parent.get("LANG", "en_US.UTF-8"),
         "TMPDIR": box,
         "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONHASHSEED": "0",
     }
 
 

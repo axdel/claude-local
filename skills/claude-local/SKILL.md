@@ -12,24 +12,31 @@ same loop at your own task.
 
 ## What claude-local is (and is not)
 
-- **A loop, not an agent.** It hands the model a rules card, the spec, and the immutable oracle
-  test; applies the whole-file implementation the model returns to one permitted path; runs the
-  test; and feeds any failure back — all under a hard token/attempt budget with a derail guard.
+<!-- prefix-enumeration -->
+- **A loop, not an agent.** It hands the model a rules card, the spec, any optional ordered
+  read-only context files, and the immutable oracle test — optionally spending one generation
+  first on a plan the model writes itself, then frozen into the prefix; applies the whole-file
+  implementation the model returns to one permitted path; runs the test; and feeds any failure
+  back — all under a hard token/attempt budget with a derail guard.
+<!-- /prefix-enumeration -->
 - **Test-first and supervised.** *You* (the orchestrator) author the oracle test; the model
   never writes or edits it. That is what makes green trustworthy — the model could not have
   changed the test to pass it.
-- **Inference only.** claude-local never touches the network or the filesystem outside the one
-  implementation path, and it never downloads or serves a model. It just infers against a
-  server you point it at.
+- **Inference only.** The loop never touches the network or the filesystem outside the one
+  implementation path, never downloads a model, and never serves one — it just infers against a
+  server you point it at. Serving is a separate, optional capability claude-local *does* own
+  (`model_server`, and `model_session` for an interactive turn); the loop simply never calls it.
 
 ## Prerequisite: a running model server
 
-claude-local talks to an already-running **OpenAI-compatible** server; standing one up is the
-orchestrator's job, not claude-local's. Before running the example:
+The loop talks to an already-running **OpenAI-compatible** server. Standing one up is a choice,
+not a prerequisite you must satisfy elsewhere: claude-local ships `model_server` for it (opt-in,
+`uv sync --group serve`), and starting one yourself works equally well. Before running the
+example:
 
 1. Put a model's weights under `models/` (downloads are explicit and user-initiated).
 2. Start an OpenAI-compatible server for it — for MLX weights, for example, `mlx_lm.server`;
-   any OpenAI-compatible server works. Note its base URL (e.g. `http://localhost:8080`) and
+   any OpenAI-compatible server works. Note its base URL (e.g. `http://localhost:8081`) and
    the model name it serves.
 
 ## Recipe — the quicksort example
@@ -39,7 +46,7 @@ orchestrator's job, not claude-local's. Before running the example:
    may never edit).
 2. **Run the loop:**
    ```bash
-   uv run python examples/quicksort/run.py --base-url http://localhost:8080 --model <model-name>
+   uv run python examples/quicksort/run.py --base-url http://localhost:8081 --model <model-name>
    ```
    Or set `CLAUDE_LOCAL_BASE_URL` / `CLAUDE_LOCAL_MODEL` and drop the flags.
 3. **Surface the result.** The produced implementation prints to stdout; the outcome and the

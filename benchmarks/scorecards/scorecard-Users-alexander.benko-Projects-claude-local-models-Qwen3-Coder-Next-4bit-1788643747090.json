@@ -1,0 +1,52 @@
+{
+  "model": "/Users/alexander.benko/Projects/claude-local/models/Qwen3-Coder-Next-4bit",
+  "cases_passed": 3,
+  "cases_total": 7,
+  "total_completion_tokens": 8082,
+  "total_model_seconds": 174.79619004111737,
+  "mean_tokens_per_second": 46.23670572052439,
+  "cases": [
+    {
+      "case_id": "01_scaffold",
+      "status": "blocked",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "02_schemas",
+      "status": "blocked",
+      "attempts": 2,
+      "length_capped": 0
+    },
+    {
+      "case_id": "03_repositories",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "04_auth_service",
+      "status": "blocked",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "05_rbac",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "06_schedule_service",
+      "status": "done",
+      "attempts": 2,
+      "length_capped": 0
+    },
+    {
+      "case_id": "07_routers",
+      "status": "exhausted",
+      "attempts": 4,
+      "length_capped": 0
+    }
+  ]
+}

@@ -31,14 +31,21 @@ from sse_wire import sse_frame_json
 
 from claude_local.backend import BackendUnavailable, ReplayBackend
 from claude_local.client import ModelClient
-from claude_local.loop import _ORACLE_TEST_FILENAME, Loop, LoopResult, _classify_terminal
+from claude_local.derail import DerailReason
+from claude_local.loop import (
+    ORACLE_TEST_FILENAME,
+    AttemptProgress,
+    Loop,
+    LoopResult,
+    _classify_terminal,
+)
 from claude_local.prompt import PromptBuilder
 from claude_local.runner import OracleError, TestRunner
 from claude_local.snapshot import SnapshotStore
 from claude_local.types import Status
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from claude_local.runner import TestScore
     from claude_local.types import Budget
@@ -83,12 +90,6 @@ def _finished_sse_script(text: str, reason: str) -> bytes:
 def _edit_script(body: str, target: str = "src/widget.py") -> bytes:
     """An SSE stream carrying one canonical whole-file frame for ``target``."""
     return _sse_script(build_whole_file_reply(target, body))
-
-
-def _forbidden_edit_script(target: str, body: str) -> bytes:
-    """An independently framed reply whose target ``apply_file`` must refuse."""
-    forbidden_reply = f"FILE: {target}\nUTF8-BYTES: {len(body.encode('utf-8'))}\n\n{body}"
-    return _sse_script(forbidden_reply)
 
 
 def _error_script(message: str) -> bytes:
@@ -154,9 +155,9 @@ class CountingPromptBuilder(PromptBuilder):
         super().__init__(card_path)
         self.prefix_calls = 0
 
-    def stable_prefix(self, spec: object) -> str:  # type: ignore[override]
+    def stable_prefix(self, spec: object, plan: str = "") -> str:  # type: ignore[override]
         self.prefix_calls += 1
-        return super().stable_prefix(spec)  # type: ignore[arg-type]
+        return super().stable_prefix(spec, plan)  # type: ignore[arg-type]
 
 
 def _setup_worktree(tmp_path: Path) -> Path:
@@ -172,13 +173,14 @@ def _make_loop(
     *,
     prompt_builder: PromptBuilder | None = None,
     model: str = "mlx-community/test-coder",
+    on_attempt: Callable[[AttemptProgress], None] | None = None,
 ) -> tuple[Loop, ModelClient]:
     """Assemble a Loop over real collaborators, the two seams doubled; return it and the client."""
     client = ModelClient(backend)  # type: ignore[arg-type]
     prompt = prompt_builder if prompt_builder is not None else PromptBuilder(RULES_CARD)
     runner = TestRunner(spawn=spawn)  # type: ignore[arg-type]
     snapshots = SnapshotStore(worktree, "src")
-    return Loop(client, prompt, runner, snapshots, model), client
+    return Loop(client, prompt, runner, snapshots, model, on_attempt=on_attempt), client
 
 
 def _widget(worktree: Path) -> str:
@@ -212,49 +214,52 @@ def test_loop_result_has_scored_edit_derives_from_best_score(
 # --- Terminal precedence: the pure classifier, pinned exhaustively (the spine's core) ----
 
 
+# Columns run in the same precedence order the classifier declares them, so the table reads
+# top-to-bottom as the rule does — three same-typed booleans in any other order is exactly the
+# confusion that made them keyword-only.
 @pytest.mark.parametrize(
-    ("best_score", "derailed", "blocked", "faulted", "expected"),
+    ("best_score", "faulted", "derailed", "blocked", "expected"),
     [
         # Best is green -> DONE, regardless of any later flag (an earlier green wins outright).
         (build_test_score(passed=3, collected=3, expected=3), False, False, False, Status.DONE),
-        (build_test_score(passed=3, collected=3, expected=3), True, False, False, Status.DONE),
         (build_test_score(passed=3, collected=3, expected=3), False, True, False, Status.DONE),
         (build_test_score(passed=3, collected=3, expected=3), False, False, True, Status.DONE),
+        (build_test_score(passed=3, collected=3, expected=3), True, False, False, Status.DONE),
         # Not green: an upstream server fault outranks every model-side cause beneath it.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
-            False,
-            False,
             True,
+            False,
+            False,
             Status.FAULTED,
         ),
+        (None, True, True, False, Status.FAULTED),
         (None, True, False, True, Status.FAULTED),
-        (None, False, True, True, Status.FAULTED),
         # Not green, no fault: a derail outranks a block and plain exhaustion.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
-            True,
             False,
+            True,
             False,
             Status.DERAILED,
         ),
-        (None, True, False, False, Status.DERAILED),
+        (None, False, True, False, Status.DERAILED),
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
-            True,
-            True,
             False,
+            True,
+            True,
             Status.DERAILED,
         ),
         # Not green, no fault, no derail: a structural block outranks plain exhaustion.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
             False,
-            True,
             False,
+            True,
             Status.BLOCKED,
         ),
-        (None, False, True, False, Status.BLOCKED),
+        (None, False, False, True, Status.BLOCKED),
         # Not green, nothing set: the loop simply ran out of attempts.
         (
             build_test_score(passed=2, failed=1, collected=3, expected=3),
@@ -266,13 +271,16 @@ def test_loop_result_has_scored_edit_derives_from_best_score(
     ],
 )
 def test_classify_terminal_precedence(
-    best_score: object, derailed: bool, blocked: bool, faulted: bool, expected: Status
+    best_score: TestScore | None,
+    faulted: bool,
+    derailed: bool,
+    blocked: bool,
+    expected: Status,
 ) -> None:
     # Expected is hand-derived from the rule "DONE(best green) > FAULTED > DERAILED > BLOCKED >
     # EXHAUSTED", never from running _classify_terminal — so a reordered branch is caught.
-    assert (
-        _classify_terminal(best_score, derailed, blocked, faulted) is expected  # type: ignore[arg-type]
-    )
+    verdict = _classify_terminal(best_score, faulted=faulted, derailed=derailed, blocked=blocked)
+    assert verdict is expected
 
 
 # --- Integration: each terminal path wired end-to-end through run() ----------------
@@ -298,75 +306,60 @@ def test_sse_deltas_extract_and_write_byte_identical_payload(tmp_path: Path) -> 
     assert (worktree / "src" / "widget.py").read_bytes() == payload.encode("utf-8")
 
 
-def test_stop_finished_short_frame_reaches_blocked_without_write_or_score(tmp_path: Path) -> None:
-    worktree = _setup_worktree(tmp_path)
-    partial = "# widget v0\nVALUE ="
-    short_frame = f"FILE: src/widget.py\nUTF8-BYTES: {len(_V0.encode('utf-8'))}\n\n{partial}"
-    backend = ReplayBackend([_finished_sse_script(short_frame, "stop")])
-    loop, _ = _make_loop(worktree, backend, ScriptedSpawn())
-    spec = build_task_spec(
-        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
-    )
-
-    result = loop.run(spec, worktree)
-
-    assert result.status is Status.BLOCKED
-    assert result.best_score is None
-    assert result.record.attempts == 1
-    assert not (worktree / "src" / "widget.py").exists()
-
-
-def test_other_finished_short_frame_reaches_blocked_without_write_or_score(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "finish_reason",
+    [
+        pytest.param(None, id="no-finish"),
+        pytest.param("stop", id="clean-stop"),
+        pytest.param("length", id="length-cap"),
+        pytest.param("tool_calls", id="other-terminal-reason"),
+    ],
+)
+def test_a_cut_off_reply_is_written_and_scored_whatever_the_finish_reason(
+    tmp_path: Path, finish_reason: str | None
 ) -> None:
+    """A short payload is a file the oracle judges — extraction never reads the finish reason.
+
+    Oracle: the frame grammar declares no length, so nothing in the reply text distinguishes a
+    complete short file from a cut-off long one, and the four terminal reasons must therefore be
+    indistinguishable here. The declared byte count this replaced *did* branch on them, and bought
+    nothing for it: measured against gpt-oss-20b it refused payloads whose own oracle passed 7/7
+    (D-EDITS-002). Truncation now reaches the oracle, which reports the syntax error with its line
+    — repairable feedback, where the parser could only say BLOCKED.
+    """
     worktree = _setup_worktree(tmp_path)
     partial = "# widget v0\nVALUE ="
-    short_frame = f"FILE: src/widget.py\nUTF8-BYTES: {len(_V0.encode('utf-8'))}\n\n{partial}"
-    backend = ReplayBackend([_finished_sse_script(short_frame, "tool_calls")])
-    loop, _ = _make_loop(worktree, backend, ScriptedSpawn())
+    short_frame = build_whole_file_reply("src/widget.py", partial)
+    script = (
+        _sse_script(short_frame)
+        if finish_reason is None
+        else _finished_sse_script(short_frame, finish_reason)
+    )
+    spawn = ScriptedSpawn(_junit("one_failure.xml"))
+    loop, _ = _make_loop(worktree, ReplayBackend([script]), spawn)
     spec = build_task_spec(
-        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=1),
     )
 
     result = loop.run(spec, worktree)
 
-    assert result.status is Status.BLOCKED
-    assert result.best_score is None
-    assert result.record.attempts == 1
-    assert not (worktree / "src" / "widget.py").exists()
+    assert result.status is Status.EXHAUSTED
+    assert _widget(worktree) == partial
+    assert result.best_score is not None
+    assert not result.best_score.is_green
 
 
-def test_no_finish_short_frame_is_scored_then_repaired(tmp_path: Path) -> None:
+def test_a_cut_off_reply_is_scored_then_repaired(tmp_path: Path) -> None:
+    """The red short file feeds back as pytest diagnostics and the retry lands green."""
     worktree = _setup_worktree(tmp_path)
     partial = "# widget v0\nVALUE ="
-    short_frame = f"FILE: src/widget.py\nUTF8-BYTES: {len(_V0.encode('utf-8'))}\n\n{partial}"
-    repaired_frame = build_whole_file_reply("src/widget.py", _V1)
-    backend = ReplayBackend(
-        [_sse_script(short_frame), _finished_sse_script(repaired_frame, "stop")]
-    )
-    spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("all_pass.xml"))
-    loop, client = _make_loop(worktree, backend, spawn)
-    spec = build_task_spec(
-        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
-    )
-
-    result = loop.run(spec, worktree)
-
-    assert result.status is Status.DONE
-    assert client.total_calls == 2
-    assert result.record.attempts == 2
-    assert _widget(worktree) == _V1
-
-
-def test_length_finished_short_frame_is_scored_then_repaired(tmp_path: Path) -> None:
-    worktree = _setup_worktree(tmp_path)
-    partial = "# widget v0\nVALUE ="
-    short_frame = f"FILE: src/widget.py\nUTF8-BYTES: {len(_V0.encode('utf-8'))}\n\n{partial}"
-    repaired_frame = build_whole_file_reply("src/widget.py", _V1)
     backend = ReplayBackend(
         [
-            _finished_sse_script(short_frame, "length"),
-            _finished_sse_script(repaired_frame, "stop"),
+            _sse_script(build_whole_file_reply("src/widget.py", partial)),
+            _finished_sse_script(build_whole_file_reply("src/widget.py", _V1), "stop"),
         ]
     )
     spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("all_pass.xml"))
@@ -383,24 +376,33 @@ def test_length_finished_short_frame_is_scored_then_repaired(tmp_path: Path) -> 
     assert _widget(worktree) == _V1
 
 
-def test_two_concatenated_frames_reach_blocked_without_writes(tmp_path: Path) -> None:
+def test_a_second_concatenated_frame_never_reaches_its_named_path(tmp_path: Path) -> None:
+    """A second frame is payload text of the first, so the path it names is never written.
+
+    Oracle: the keep-only boundary (D-KEEP-001) — only the permitted impl path may be written.
+    Retiring the byte count means a second frame is no longer refused at the parser, which moves
+    this guarantee to the layer that actually owns it: whatever a reply concatenates,
+    ``src/other.py`` must not exist. The stray ``FILE:`` line lands inside ``src/widget.py``,
+    where the oracle reports it.
+    """
     worktree = _setup_worktree(tmp_path)
-    reply = (
-        f"FILE: src/widget.py\nUTF8-BYTES: {len(_V1.encode('utf-8'))}\n\n{_V1}"
-        f"FILE: src/other.py\nUTF8-BYTES: {len(_V2.encode('utf-8'))}\n\n{_V2}"
+    reply = build_whole_file_reply("src/widget.py", _V1) + build_whole_file_reply(
+        "src/other.py", _V2
     )
     backend = ReplayBackend([_sse_script(reply)])
-    loop, _ = _make_loop(worktree, backend, ScriptedSpawn())
+    loop, _ = _make_loop(worktree, backend, ScriptedSpawn(_junit("one_failure.xml")))
     spec = build_task_spec(
-        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=1),
     )
 
     result = loop.run(spec, worktree)
 
-    assert result.status is Status.BLOCKED
-    assert result.best_score is None
-    assert not (worktree / "src" / "widget.py").exists()
+    assert result.status is Status.EXHAUSTED
     assert not (worktree / "src" / "other.py").exists()
+    assert _widget(worktree) == f"{_V1}FILE: src/other.py\n\n{_V2}"
 
 
 def test_red_then_green_reaches_done_in_two_attempts(tmp_path: Path) -> None:
@@ -417,7 +419,7 @@ def test_red_then_green_reaches_done_in_two_attempts(tmp_path: Path) -> None:
     # Oracle: attempt 0 scores 2/3 (one_failure), attempt 1 scores 3/3 (all_pass) and stops.
     assert result.status is Status.DONE
     assert result.best_score is not None and result.best_score.is_green
-    assert client.total_calls == 2  # exactly two logical generations, no wasted third
+    assert client.total_calls == 2  # exactly two logical calls, no wasted third
     assert result.record.status is Status.DONE
     assert result.record.attempts == 2
     assert _widget(worktree) == "# widget v1\nVALUE = 1\n"  # the green attempt's whole-file body
@@ -444,6 +446,379 @@ def test_all_partial_reaches_exhausted(tmp_path: Path) -> None:
     assert result.best_score.passed == 2 and not result.best_score.is_green
 
 
+def test_a_repeated_generation_is_nudged_rather_than_ending_the_run(tmp_path: Path) -> None:
+    """A verbatim repeat means the question must change, not that the run is over.
+
+    Oracle: a byte-identical regeneration proves the prompt is an absorbing state — the same file
+    scores the same, distils to the same brief, and so regenerates forever (INV-004). Stopping was
+    the right response while the prompt was the only thing we could not change. It is the wrong one
+    now that the tail can carry a different question, and the cost of the old rule is measured: on
+    the standing benchmark with the repair brief, four of seven cases ended on a repeat with budget
+    unspent, one of them holding six of seven oracle tests already passing, and two of them cases
+    that had passed on a later attempt before.
+
+    The fixture is the general shape of that loss: the third reply repeats the second, and the
+    FOURTH is a different implementation the old rule threw away unread. Spending it is the point.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = ReplayBackend(
+        [_edit_script(_V0), _edit_script(_V1), _edit_script(_V1), _edit_script(_V2)]
+    )
+    spawn = ScriptedSpawn(*([_junit("one_failure.xml")] * 4))
+    loop, client = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=4),
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert backend.served == 4  # the fourth generation — a DIFFERENT file — is now reached
+    assert client.total_calls == 4
+    assert result.record.attempts == 4
+    # The repeat is still a real attempt: scored, counted, and left holding the partial best.
+    assert result.status is Status.EXHAUSTED
+    assert result.best_score is not None
+    assert result.best_score.passed == 2 and not result.best_score.is_green
+
+
+def test_a_repeat_and_the_nudge_that_answers_it_are_both_reported_live(tmp_path: Path) -> None:
+    """The live view shows both halves: which attempt repeated, and which was asked differently.
+
+    Oracle: the two facts have different consumers. ``repeats_previous`` explains why the model
+    produced nothing new; ``nudged`` explains why the loop kept paying anyway. A watcher given only
+    the first sees a loop stubbornly re-buying a known answer; given only the second, an escalation
+    with no trigger. Each attempt is also still a real scored attempt — reporting ``blocked`` for a
+    perfectly usable file would name the wrong cause entirely.
+
+    The ladder is walked to its end here: three consecutive repeats, so the run stops when the
+    escalation runs out rather than when the budget does.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    backend = ReplayBackend([_edit_script(_V1)] * 4)
+    spawn = ScriptedSpawn(*([_junit("one_failure.xml")] * 4))
+    loop, _ = _make_loop(worktree, backend, spawn, on_attempt=seen.append)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=4),
+    )
+
+    loop.run(spec, worktree)
+
+    assert [progress.attempt for progress in seen] == [1, 2, 3, 4]
+    # Attempt 1 has nothing to repeat; every later one repeats it verbatim.
+    assert [progress.repeats_previous for progress in seen] == [False, True, True, True]
+    # A nudge is a response to a repeat, so it can only appear on the attempt AFTER one.
+    assert [progress.nudged for progress in seen] == [False, False, True, True]
+    final = seen[-1]
+    assert final.blocked is False
+    assert final.score is not None
+    assert final.score.passed == 2
+
+
+# --- Plan-first: one plan per task, frozen into the prefix -------------------------
+
+
+_PLAN_TEXT = "1. Define VALUE at module scope. 2. Set it to 2."
+
+
+def _plan_first_run(tmp_path: Path) -> tuple[RecordingReplayBackend, LoopResult]:
+    """One plan-first run: a plan reply, then two failing attempts. Returns the backend and result.
+
+    Two failing attempts, not one, because the property under test is about what stays constant
+    ACROSS attempts — a single attempt makes every "identical across the loop" claim vacuous.
+    """
+    worktree = tmp_path / "wt"
+    (worktree / "src").mkdir(parents=True)
+    backend = RecordingReplayBackend(
+        [_sse_script(_PLAN_TEXT), _edit_script(_V1), _edit_script(_V2)]
+    )
+    spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("one_failure.xml"))
+    loop, _ = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        budget=build_budget(max_attempts=2),
+        plan_first=True,
+    )
+
+    return backend, loop.run(spec, worktree)
+
+
+def test_plan_first_spends_one_call_on_a_plan_before_the_first_attempt(tmp_path: Path) -> None:
+    """The plan is computed once per TASK, never once per attempt.
+
+    Oracle: the lever's whole design constraint. A plan recomputed per attempt would mutate the
+    prefix and discard the server's prefill cache — reversing the guarantee the stable prefix
+    exists to provide. One plan call, then one call per attempt: three in total for a two-attempt
+    run, and the plan is the FIRST of them because later ones must carry it.
+    """
+    backend, _ = _plan_first_run(tmp_path)
+
+    assert len(backend.calls) == 3  # 1 plan + 2 attempts
+    plan_prefix, plan_tail = backend.calls[0]
+    assert _PLAN_TEXT not in plan_prefix  # nothing to carry yet
+    assert plan_tail  # the plan is requested in the tail, not baked into the prefix
+
+
+def test_plan_first_freezes_the_plan_into_a_prefix_identical_across_attempts(
+    tmp_path: Path,
+) -> None:
+    """The frozen plan rides in the prefix, byte-identical for every attempt (D-PROMPT-001).
+
+    Oracle: derived from the cache invariant, not from running the loop. Two things must hold at
+    once and neither implies the other — the attempts' prefixes are equal to each other (so the
+    prefill is reused across the loop), and they actually CONTAIN the plan (so the lever does
+    something). Asserting only equality would pass against a build that silently dropped the plan.
+    """
+    backend, _ = _plan_first_run(tmp_path)
+    attempt_prefixes = [prefix for prefix, _ in backend.calls[1:]]
+
+    assert len(set(attempt_prefixes)) == 1  # byte-identical across attempts
+    assert _PLAN_TEXT in attempt_prefixes[0]  # and the plan is really in there
+
+
+def test_the_plan_call_prefix_is_a_byte_prefix_of_the_attempt_prefix(tmp_path: Path) -> None:
+    """The plan section is appended LAST, so the plan call warms the cache the attempts reuse.
+
+    Oracle: prefix reuse is a property of shared leading bytes. Placing the plan anywhere but the
+    end would leave the plan call's prefix diverging from the attempts' at that point, so the
+    server could reuse only the head before it. Appending last makes the shorter prefix a strict
+    byte-prefix of the longer, which is the maximum reuse the arrangement permits.
+    """
+    backend, _ = _plan_first_run(tmp_path)
+    plan_prefix, _ = backend.calls[0]
+    attempt_prefix, _ = backend.calls[1]
+
+    assert attempt_prefix.startswith(plan_prefix)
+    assert attempt_prefix != plan_prefix  # the plan section really was appended
+
+
+def test_the_plan_step_is_paid_for_in_the_record_without_inflating_attempts(
+    tmp_path: Path,
+) -> None:
+    """One record per task, counting the plan's tokens — but the plan is not an attempt.
+
+    Oracle: the plan burns real decode, so a record omitting it would understate what the task
+    cost and corrupt the net-savings comparison the orchestrator makes. It is not an attempt at
+    the implementation, so counting it as one would misreport how many attempts the model needed.
+    Both halves are asserted; either alone passes against the bug the other catches.
+    """
+    _, result = _plan_first_run(tmp_path)
+
+    assert result.record.attempts == 2  # the plan is not an attempt
+    # 3 calls' tokens are aggregated, so the total exceeds any single generation's.
+    assert result.record.total_calls == 3
+    assert result.record.total_completion_tokens > 0
+
+
+def test_the_record_says_which_configuration_produced_its_token_total(tmp_path: Path) -> None:
+    """The sibling of the test above: the record states the cost AND what was bought with it.
+
+    Oracle: the record already names its model and its rules card because a total measured under
+    one is not comparable to a total measured under another, and the planning lever is a third such
+    variable — measured on one model under one card, it moved a benchmark-run from 4436 completion
+    tokens to 9858. A record carrying the larger number with no way to say a plan was bought reads
+    exactly like the smaller configuration performing badly.
+
+    Both runs are driven because only the pair falsifies a constant: a wiring hardcoded to either
+    value satisfies one half and fails the other.
+    """
+    _, planned = _plan_first_run(tmp_path)
+
+    worktree = tmp_path / "unplanned"
+    (worktree / "src").mkdir(parents=True)
+    loop, _ = _make_loop(
+        worktree,
+        RecordingReplayBackend([_edit_script(_V1)]),
+        ScriptedSpawn(_junit("all_pass.xml")),
+    )
+    unplanned = loop.run(
+        build_task_spec(
+            impl_path="src/widget.py", expected_tests=3, budget=build_budget(max_attempts=1)
+        ),
+        worktree,
+    )
+
+    assert planned.record.plan_first is True
+    assert unplanned.record.plan_first is False
+
+
+_TRUNCATED_PLAN_DELTAS = (
+    "<|channel|>",
+    "analysis",
+    "<|message|>",
+    "Let me think about step one. ",
+)
+
+
+def test_a_planning_reply_resolving_to_no_message_is_paid_for_and_freezes_nothing(
+    tmp_path: Path,
+) -> None:
+    """The plan budget can be spent in full for no plan at all, and the run is unaffected.
+
+    Oracle: derived from the two transforms a planning reply passes through, never from running
+    the loop. Reasoning deltas are metered but never appended to the reply, and a leaked
+    channel transcript cut before its ``final`` channel resolves to the empty string — so a
+    reasoning model whose plan cap runs out mid-analysis burns the whole cap and yields nothing to
+    freeze. The delta framing below is the real wire's, not a guess: the capture in
+    ``tests/fixtures/sse/harmony_channel_stream.bytes`` emits that opener as three separate
+    content deltas exactly as scripted here.
+
+    Three things must hold together and no two imply the third — the call was made and paid for,
+    no plan section reached the prefix, and the run still completed. The prefix assertion is the
+    exact inverse of the well-formed case above: with nothing to freeze the attempt prefix is
+    byte-identical to the plan call's, where a real plan makes it strictly longer. So a build that
+    skipped the planning call fails the first pair, and one that froze the raw markup fails this.
+    """
+    worktree = tmp_path / "wt"
+    (worktree / "src").mkdir(parents=True)
+    backend = RecordingReplayBackend(
+        [_sse_script_parts(*_TRUNCATED_PLAN_DELTAS), _edit_script(_V2)]
+    )
+    spawn = ScriptedSpawn(_junit("all_pass.xml"))
+    loop, _ = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        budget=build_budget(max_attempts=1),
+        plan_first=True,
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert len(backend.calls) == 2  # the plan call was made
+    assert result.record.total_calls == 2
+    assert result.record.total_completion_tokens > 0  # and it burned real decode
+    plan_prefix, _ = backend.calls[0]
+    attempt_prefix, _ = backend.calls[1]
+    assert attempt_prefix == plan_prefix  # yet no plan section was appended
+    assert result.status is Status.DONE  # and the run finished regardless
+
+
+def test_plan_first_is_off_by_default_and_spends_no_extra_call(tmp_path: Path) -> None:
+    """The lever is opt-in: an unchanged spec produces the unchanged prompt and call count.
+
+    Oracle: every measurement taken against this harness so far ran without a plan step. If the
+    default changed, those numbers would silently describe a prompt nobody runs, and the first
+    call would be a plan rather than an implementation.
+    """
+    worktree = tmp_path / "wt"
+    (worktree / "src").mkdir(parents=True)
+    backend = RecordingReplayBackend([_edit_script(_V1)])
+    spawn = ScriptedSpawn(_junit("all_pass.xml"))
+    loop, _ = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, budget=build_budget(max_attempts=1)
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert len(backend.calls) == 1  # no plan call
+    assert result.record.attempts == 1
+    assert result.status is Status.DONE
+
+
+def test_a_score_plateau_escalates_through_the_same_ladder_as_a_repeat(tmp_path: Path) -> None:
+    """Different words that never score better are a stall too — and the commoner one.
+
+    Oracle: verbatim repetition is the rare shape. The measured common one is a plateau — on
+    Qwen3-Coder-Next-4bit case 07, four attempts of 558/711/649/589 tokens, every one a different
+    implementation and every one scoring 3 of 13. Nothing detected that, so the loop spent its
+    whole budget re-deriving the same wrong answer in new words and never reached the ladder.
+
+    Four distinct files here, none improving on the first. The escalation must therefore arrive
+    without a single byte-identical reply to trigger it.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    backend = ReplayBackend([_edit_script(v) for v in (_V0, _V1, _V2, _V0 + "\n# again\n")])
+    spawn = ScriptedSpawn(*([_junit("one_failure.xml")] * 4))
+    loop, _ = _make_loop(worktree, backend, spawn, on_attempt=seen.append)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=4),
+    )
+
+    loop.run(spec, worktree)
+
+    # No reply repeats another, so the old detector sees nothing at all.
+    assert [progress.repeats_previous for progress in seen] == [False, False, False, False]
+    # Attempt 1 sets the bar. Attempt 2 fails to clear it, which alone is noise — one bad sample
+    # between two good ones must not nudge a model that was about to succeed. Attempt 3 is the
+    # second consecutive miss, which is the plateau, so attempt 4 is the one asked differently.
+    assert [progress.plateaued for progress in seen] == [False, False, True, True]
+    assert [progress.nudged for progress in seen] == [False, False, False, True]
+
+
+def test_one_bad_sample_between_two_good_ones_is_not_a_plateau(tmp_path: Path) -> None:
+    """A dip that recovers is noise, not a stall — the detector must not fire on it.
+
+    Oracle: the plateau bar is *consecutive* non-improvement. An attempt that scores worse and is
+    followed by one that improves describes a model still searching, which is exactly the model a
+    nudge would interrupt. Scores here run 2 → 0 → 3, so the middle attempt is a miss and the
+    third clears the bar; nothing may escalate.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    backend = ReplayBackend([_edit_script(v) for v in (_V0, _V1, _V2)])
+    spawn = ScriptedSpawn(
+        _junit("one_failure.xml"),  # 2 passed
+        _junit("import_error.xml"),  # a dip
+        _junit("one_failure.xml"),  # back to 2 — but never above the bar
+    )
+    loop, _ = _make_loop(worktree, backend, spawn, on_attempt=seen.append)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=3),
+    )
+
+    loop.run(spec, worktree)
+
+    # The dip is one miss; the recovery does not clear the bar either, so it is the second
+    # consecutive miss and the plateau is real by attempt 3 — but never on attempt 2 alone.
+    assert [progress.plateaued for progress in seen] == [False, False, True]
+
+
+def test_the_run_ends_when_the_nudge_ladder_is_spent_not_when_the_budget_is(
+    tmp_path: Path,
+) -> None:
+    """A model that repeats verbatim through every rung has been asked everything the card can ask.
+
+    Oracle: the ladder is finite by design, so the run has to end somewhere other than the budget —
+    otherwise a persistently deterministic model would spend every remaining attempt re-buying one
+    answer, which is the exact waste the original stop-on-repeat rule existed to prevent. This
+    keeps that saving and narrows it to the case where it is actually true: after the escalation is
+    exhausted, not on the first sign of a stall. The budget here is six and the ladder ends it at
+    four, so nothing but the ladder can be what stopped it.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = ReplayBackend([_edit_script(_V1)] * 6)
+    spawn = ScriptedSpawn(*([_junit("one_failure.xml")] * 6))
+    loop, client = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=6),
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert client.total_calls == 4  # two unspent attempts the ladder had no new question for
+    assert result.record.attempts == 4
+    assert result.status is Status.EXHAUSTED
+
+
 def test_first_attempt_derail_reaches_derailed(tmp_path: Path) -> None:
     worktree = _setup_worktree(tmp_path)
     # A 200-char delta under a 2-token (8-char) cap trips the derail guard on the first attempt.
@@ -460,7 +835,10 @@ def test_first_attempt_derail_reaches_derailed(tmp_path: Path) -> None:
 
     assert result.status is Status.DERAILED
     assert result.best_score is None  # nothing was ever scored
-    assert client.total_calls == 1  # stopped on the derail, did not exhaust the attempt budget
+    # Stopped on the derail, did not exhaust the attempt budget — and was not re-asked either: an
+    # unscorable reply earns one correction, but a guard kill is not a reply the model chose, so
+    # there is nothing to quote back and re-asking would buy the same derail under the same bounds.
+    assert client.total_calls == 1
     assert result.record.status is Status.DERAILED
     # The aborted call still cost decode time — its tokens are counted, never dropped.
     assert result.record.tokens_estimated is True
@@ -468,8 +846,20 @@ def test_first_attempt_derail_reaches_derailed(tmp_path: Path) -> None:
 
 
 def test_reply_without_a_frame_reaches_blocked(tmp_path: Path) -> None:
+    """Prose reaches BLOCKED — after one correction, and after exactly one.
+
+    The two scripted replies are also the bound: the budget allows four attempts, so an unbounded
+    correction would ask for a third stream and the replay would raise rather than pass. The run
+    ends on the second unscorable answer because a model told plainly what to return and answering
+    the same way again has given its answer.
+    """
     worktree = _setup_worktree(tmp_path)
-    backend = ReplayBackend([_sse_script("Here is an explanation, but no valid file frame.")])
+    backend = ReplayBackend(
+        [
+            _sse_script("Here is an explanation, but no valid file frame."),
+            _sse_script("Still explaining, still no frame."),
+        ]
+    )
     loop, client = _make_loop(worktree, backend, ScriptedSpawn())
     spec = build_task_spec(
         impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
@@ -480,14 +870,95 @@ def test_reply_without_a_frame_reaches_blocked(tmp_path: Path) -> None:
     # Prose with no valid frame is structurally BLOCKED, with nothing written or scored.
     assert result.status is Status.BLOCKED
     assert result.best_score is None
-    assert client.total_calls == 1
+    # Two calls, not one: the first reply earned a correction, and the replay had nothing further
+    # to give it, so the run ended on a second unscorable answer rather than on the first.
+    assert client.total_calls == 2
     assert result.record.status is Status.BLOCKED
+
+
+_TOOL_CALL_REPLY = (
+    "Let me read the existing files.\n"
+    "<tool_call><function=Read><parameter=file_path>app/schemas.py</parameter></function>"
+    "</tool_call>"
+)
+"""A real blocked reply, shortened: the model asked to read files instead of writing one.
+
+Captured from Qwen3.8-27B driven through the standing benchmark's ``04_auth_service`` case, not
+composed here — an agentic coding model mistaking the loop for a tool-using harness is the reply
+shape this correction exists for, and a hand-invented one would only test the parser's own idea of
+prose.
+"""
+
+
+def test_an_unscorable_reply_earns_one_corrective_re_ask(tmp_path: Path) -> None:
+    """A reply that wrote no file is re-asked once, so the case is not lost to a protocol slip.
+
+    Oracle: the budget declares how many attempts a task may spend, and a reply that produced no
+    file consumed a generation without consuming an oracle verdict — nothing has been learned that
+    rules out the next attempt succeeding. Terminating there spends 1 of 4 and discards a case over
+    a correctable answer, which is what the measured ``04_auth_service`` block actually was.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = ReplayBackend([_sse_script(_TOOL_CALL_REPLY), _edit_script(_V1)])
+    loop, client = _make_loop(worktree, backend, ScriptedSpawn(_junit("all_pass.xml")))
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert client.total_calls == 2  # the block was corrected, not accepted as the verdict
+    assert result.status is Status.DONE
+
+
+def test_the_correction_carries_the_reply_that_earned_it(tmp_path: Path) -> None:
+    """The re-ask shows the model its own reply, then states what to do instead.
+
+    Oracle: the nudge contract is counterevidence followed by the imperative it leads — the same
+    shape the stall ladder uses (``_stall_escalation``). Without the evidence the model is told
+    it did something wrong and cannot see what, so the correction reads as a repetition of the
+    instructions it has already failed to follow once.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = RecordingReplayBackend([_sse_script(_TOOL_CALL_REPLY), _edit_script(_V1)])
+    loop, _ = _make_loop(worktree, backend, ScriptedSpawn(_junit("all_pass.xml")))
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    loop.run(spec, worktree)
+
+    first_tail, second_tail = (tail for _prefix, tail in backend.calls)
+    assert first_tail == ""  # the opening attempt carries no tail; only the prefix is sent
+    assert "<tool_call>" in second_tail  # its own words, quoted back to it
+
+
+def test_the_prefix_is_unchanged_by_a_correction(tmp_path: Path) -> None:
+    """The correction rides in the tail, so the cached prefill survives it.
+
+    Oracle: the prefix is byte-identical across a task's attempts by design (D-PROMPT-001) — a
+    server reuses its prefill cache only while that holds. A correction written into the prefix
+    would discard the cache on the attempt that most needs to be cheap.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = RecordingReplayBackend([_sse_script(_TOOL_CALL_REPLY), _edit_script(_V1)])
+    loop, _ = _make_loop(worktree, backend, ScriptedSpawn(_junit("all_pass.xml")))
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    loop.run(spec, worktree)
+
+    first_prefix, second_prefix = (prefix for prefix, _tail in backend.calls)
+    assert first_prefix == second_prefix
 
 
 def test_forbidden_target_reaches_blocked(tmp_path: Path) -> None:
     worktree = _setup_worktree(tmp_path)
-    # The model names a path other than the permitted impl -> apply_file refuses the edit.
-    backend = ReplayBackend([_forbidden_edit_script("src/other.py", _V1)])
+    # The model names a path other than the permitted impl -> apply_file refuses the edit. Twice,
+    # because a refused edit wrote no file and so earns the same one correction prose does — the
+    # path IS part of the frame, and a reply aimed outside it is misframed rather than unframed.
+    backend = ReplayBackend([_edit_script(_V1, "src/other.py")] * 2)
     loop, _ = _make_loop(worktree, backend, ScriptedSpawn())
     spec = build_task_spec(
         impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
@@ -576,14 +1047,28 @@ def test_writes_the_frozen_oracle_test_before_running(tmp_path: Path) -> None:
     loop.run(spec, worktree)
 
     # The loop owns writing the immutable oracle, verbatim, to its loop-owned path outside src.
-    oracle = worktree / _ORACLE_TEST_FILENAME
+    oracle = worktree / ORACLE_TEST_FILENAME
     assert oracle.read_text(encoding="utf-8") == _ORACLE_TEXT
     assert not oracle.is_relative_to(worktree / "src")  # never inside the snapshot subtree
 
 
-def test_prefix_is_stable_and_retry_tail_uses_oracle_output_not_prior_source(
+def test_prefix_is_stable_and_the_retry_tail_carries_the_file_that_failed(
     tmp_path: Path,
 ) -> None:
+    """The prefix never moves; the tail carries both the failure AND the source that caused it.
+
+    Oracle: ``rules_card.md`` tells the model to "return the corrected complete file. Change what
+    the failure points to; keep what already passed." Both clauses name the previous file, so a
+    tail without it asks for a repair of an artifact the model was never given — it must re-derive
+    the whole implementation from the spec each attempt and guess which part of its own unseen code
+    produced the failure.
+
+    This overturns an earlier assertion that the prior source stays OUT of the tail. That assertion
+    carried no rationale and no decision record; the shipped card is the stronger authority,
+    because it is the instruction actually sent to the model. The prefix half of the guarantee is
+    unchanged and still asserted here: the source rides in the tail, so KV-cache reuse is untouched
+    (D-PROMPT-001).
+    """
     worktree = _setup_worktree(tmp_path)
     recording = RecordingReplayBackend([_edit_script(_V0), _edit_script(_V1)])
     assertion_failure = (
@@ -607,7 +1092,7 @@ def test_prefix_is_stable_and_retry_tail_uses_oracle_output_not_prior_source(
     assert prefixes[0] == prefixes[1]  # the KV-cacheable prefix never mutates between attempts
     assert tails[0] == ""  # attempt 0 has no feedback to distil
     assert "AssertionError: assert 0 == 1" in tails[1]
-    assert _V0 not in tails[1]
+    assert _V0 in tails[1]  # the file attempt 0 wrote — the artifact the card asks it to correct
 
 
 def test_prefix_is_built_once_per_task(tmp_path: Path) -> None:
@@ -624,6 +1109,40 @@ def test_prefix_is_built_once_per_task(tmp_path: Path) -> None:
 
     # Two attempts, one prefix build: the prefix is assembled once and reused (D-PROMPT-001).
     assert counting.prefix_calls == 1
+
+
+def test_plan_first_builds_the_prefix_twice_per_task_never_once_per_attempt(
+    tmp_path: Path,
+) -> None:
+    """Planning costs exactly one extra build for the whole task, however many attempts run.
+
+    Oracle: hand-derived from the two prefixes a plan-first task needs — one without the plan, to
+    ask for it, and one with the plan frozen in, for every attempt. Two, and two regardless of
+    attempt count: this run makes three attempts, so a build-per-attempt implementation would
+    count four. The sibling test above asserts the resulting bytes are identical; this asserts the
+    assembly itself does not repeat, which byte-identity alone would not catch — rebuilding the
+    same string every attempt is cache-safe but pays the assembly cost N times over.
+    """
+    worktree = _setup_worktree(tmp_path)
+    counting = CountingPromptBuilder(RULES_CARD)
+    backend = ReplayBackend(
+        [_sse_script(_PLAN_TEXT), _edit_script(_V0), _edit_script(_V1), _edit_script(_V2)]
+    )
+    spawn = ScriptedSpawn(
+        _junit("one_failure.xml"), _junit("one_failure.xml"), _junit("all_pass.xml")
+    )
+    loop, _ = _make_loop(worktree, backend, spawn, prompt_builder=counting)
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=3),
+        plan_first=True,
+    )
+
+    loop.run(spec, worktree)
+
+    assert counting.prefix_calls == 2  # one to ask for the plan, one carrying it — not four
 
 
 def test_broken_oracle_propagates_and_is_not_masked(tmp_path: Path) -> None:
@@ -652,3 +1171,322 @@ def test_backend_unavailable_propagates_and_is_not_masked(tmp_path: Path) -> Non
     # *reachable* server's error frame; a server that never answered is a missing prerequisite.
     with pytest.raises(BackendUnavailable):
         loop.run(spec, worktree)
+
+
+# --- Live attempt progress: each attempt is reported as it resolves ----------------
+
+
+def test_each_attempt_is_reported_while_the_run_is_still_in_flight(tmp_path: Path) -> None:
+    """A progress report must arrive DURING the run, not be re-emitted after it.
+
+    Oracle: the impl file's on-disk text is loop-external state that changes between attempts —
+    attempt 1 writes _V1 and attempt 2 writes _V2. Reading it inside each report therefore
+    distinguishes live reporting (_V1 then _V2) from a run that collected events and announced
+    them at the end, which would read the restored best (_V2) both times. Attempt numbering is
+    1-based because that is what a reader counts; the JUnit fixtures pin 2-of-3 then 3-of-3.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = ReplayBackend([_edit_script(_V1), _edit_script(_V2)])
+    spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("all_pass.xml"))
+    seen: list[tuple[int, int, str]] = []
+
+    def observe(progress: AttemptProgress) -> None:
+        assert progress.score is not None  # both attempts reached the oracle
+        seen.append((progress.attempt, progress.score.passed, _widget(worktree)))
+
+    loop, _ = _make_loop(worktree, backend, spawn, on_attempt=observe)
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DONE
+    assert seen == [(1, 2, _V1), (2, 3, _V2)]
+
+
+def test_a_reported_attempt_carries_the_generation_that_produced_it(tmp_path: Path) -> None:
+    """The report composes the existing owners rather than restating their fields.
+
+    Oracle: the generation's own text is the framed whole-file reply the script carried, and the
+    score's counts are the captured all_pass report's 3 of 3. Both are read through the value
+    objects that already own them, so neither can drift from a copy.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_edit_script(_V1)]),
+        ScriptedSpawn(_junit("all_pass.xml")),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    loop.run(spec, worktree)
+
+    assert len(seen) == 1
+    assert seen[0].generation.text == build_whole_file_reply("src/widget.py", _V1)
+    assert seen[0].score == build_test_score(passed=3, collected=3, expected=3)
+    assert seen[0].blocked is False
+
+
+def test_an_attempt_that_never_reached_the_oracle_is_reported_as_blocked(tmp_path: Path) -> None:
+    """Prose with no usable frame still gets a report — that silence is the thing to watch.
+
+    Oracle: BLOCKED means the attempt produced no verdict for a STRUCTURAL reason, which is
+    exactly "no score, and neither the guard nor the server stopped it". An unreported blocked
+    attempt would leave a watcher staring at a run that had already given up.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_sse_script("Here is an explanation, but no valid file frame.")] * 2),
+        ScriptedSpawn(),  # spawn is never called: nothing was applied to score
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.BLOCKED
+    # Both attempts are reported, not just the one that ended the run. The correction spends a
+    # real generation, so a watcher shown only the last reads a two-call run as a one-call one.
+    assert len(seen) == 2
+    assert all(attempt.score is None for attempt in seen)
+    assert all(attempt.blocked for attempt in seen)
+
+
+def test_a_derailed_attempt_is_reported_as_derailed_rather_than_blocked(tmp_path: Path) -> None:
+    """A derail and a structural block both score nothing; a watcher must still tell them apart.
+
+    Oracle: the derail's cause has a single owner — ``GenerationResult.derail_reason`` — so
+    ``blocked`` is the residue after the guard and the server have both been ruled out. Collapsing
+    the two would report the bounded-decode kill as the model failing to answer.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_sse_script("x" * 200)]),  # 200 chars under an 8-char cap
+        ScriptedSpawn(),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_tokens=2),
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DERAILED
+    assert len(seen) == 1
+    assert seen[0].generation.derail_reason is not None
+    assert seen[0].blocked is False
+
+
+def test_a_server_fault_is_reported_as_faulted_rather_than_blocked(tmp_path: Path) -> None:
+    """An upstream error frame is the host failing, and the report must say so.
+
+    Oracle: the fault message has a single owner — ``GenerationResult.fault`` — and D-FAULT-001
+    keeps a reachable server's error frame distinct from the model producing nothing usable.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_error_script("overloaded")]),
+        ScriptedSpawn(),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.FAULTED
+    assert len(seen) == 1
+    assert seen[0].generation.fault == "overloaded"
+    assert seen[0].blocked is False
+
+
+def test_an_unobserved_run_reaches_the_same_terminal_result(tmp_path: Path) -> None:
+    """Observation is optional and must not alter the loop's outcome.
+
+    Oracle: the two-attempt REPAIR path already pinned above — one_failure then all_pass reaches
+    DONE with _V1 restored — asserted here with no observer attached.
+    """
+    worktree = _setup_worktree(tmp_path)
+    backend = ReplayBackend([_edit_script(_V0), _edit_script(_V1)])
+    spawn = ScriptedSpawn(_junit("one_failure.xml"), _junit("all_pass.xml"))
+    loop, client = _make_loop(worktree, backend, spawn)
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DONE
+    assert client.total_calls == 2
+    assert _widget(worktree) == _V1
+
+
+def test_classify_terminal_refuses_positionally_passed_flags() -> None:
+    """Oracle: three same-typed booleans in an order that does not match the documented precedence.
+
+    The docstring ranks the causes fault > derail > block, and the parameters used to arrive
+    derailed-blocked-faulted — so a caller who typed them in the order the docstring states
+    inverted two flags, and every call still type-checked because all three are ``bool``. Nothing
+    in the signature could catch it. Keyword-only makes that call a ``TypeError`` at the call
+    site, which is the only thing that distinguishes the flags from each other.
+    """
+    with pytest.raises(TypeError):
+        _classify_terminal(None, True, False, False)  # type: ignore[misc]
+
+
+def test_a_refused_edit_names_the_path_it_aimed_at(tmp_path: Path) -> None:
+    """Oracle: the refusal already knows the path and the reason; both were being discarded.
+
+    A model writing to the wrong path and a model returning prose both surface as ``blocked``,
+    yet they are different problems — one is a targeting failure, the other a formatting one. An
+    operator watching attempts scroll past cannot act on the first without being told which it is,
+    and the string that says so exists at the moment the write is refused.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    backend = ReplayBackend([_edit_script(_V1, "src/other.py")] * 2)
+    loop, _ = _make_loop(worktree, backend, ScriptedSpawn(), on_attempt=seen.append)
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    loop.run(spec, worktree)
+
+    assert seen, "the refused attempt was never reported"
+    assert seen[0].blocked is True
+    assert seen[0].blocked_reason is not None
+    assert "src/other.py" in seen[0].blocked_reason
+
+
+def test_a_reply_carrying_no_frame_is_blocked_for_a_different_reason(tmp_path: Path) -> None:
+    """The sibling structural cause, so the two are pinned apart rather than merely non-empty."""
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_sse_script("I would need to read the existing file first.")] * 2),
+        ScriptedSpawn(),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py", expected_tests=3, test_text=_ORACLE_TEXT, budget=build_budget()
+    )
+
+    loop.run(spec, worktree)
+
+    assert seen[0].blocked is True
+    assert seen[0].blocked_reason is not None
+    assert "src/other.py" not in seen[0].blocked_reason
+
+
+def test_a_derail_is_reported_with_no_block_reason(tmp_path: Path) -> None:
+    """``blocked_reason`` names a STRUCTURAL cause, so a derail — already named — must not set it.
+
+    Oracle: ``blocked`` is the residue after the guard and the server are ruled out, so a value
+    that disagreed with it would be a second, drifting classification of the same attempt.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend([_sse_script("x" * 200)]),
+        ScriptedSpawn(),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_tokens=2),
+    )
+
+    loop.run(spec, worktree)
+
+    assert seen[0].blocked is False
+    assert seen[0].blocked_reason is None
+
+
+def test_a_derailed_run_names_the_bound_that_cut_it(tmp_path: Path) -> None:
+    """Oracle: the guard latches exactly one reason and the result reports the run — so it must
+    carry that reason out, exactly as a fault carries its message out.
+
+    ``DERAILED`` alone says a bound fired; it does not say which, and the four bounds call for
+    four different responses (raise the cap, raise the timeout, fix a repetitive prompt). The
+    reason has a single owner on the generation and was simply not being propagated.
+    """
+    worktree = _setup_worktree(tmp_path)
+    loop, _ = _make_loop(worktree, ReplayBackend([_sse_script("x" * 200)]), ScriptedSpawn())
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_tokens=2),
+    )
+
+    result = loop.run(spec, worktree)
+
+    assert result.status is Status.DERAILED
+    assert result.derail_reason is DerailReason.TOKEN_CAP
+
+
+def test_an_attempt_reframed_rather_than_escalated_is_not_reported_as_nudged(
+    tmp_path: Path,
+) -> None:
+    """Oracle: ``nudged`` claims the attempt's PROMPT carried an escalation, and the tail is
+    built a line above the report — so the claim is checkable against the expression that built it.
+
+    A correction replaces the tail outright with a reframe, and the escalation variable is not
+    cleared on that path (it is only reassigned on the repair path). So an attempt reframed after
+    an earlier stall reported ``nudged`` for a prompt that carried no nudge at all — telling a
+    watcher the loop paid for an escalation it never sent.
+
+    The run: two identical scored attempts (the second stalls, setting the escalation), then an
+    reply carrying no frame (which spends the one correction), then the reframed attempt under
+    test.
+    """
+    worktree = _setup_worktree(tmp_path)
+    seen: list[AttemptProgress] = []
+    loop, _ = _make_loop(
+        worktree,
+        ReplayBackend(
+            [
+                _edit_script(_V0),
+                _edit_script(_V0),
+                _sse_script("Let me know which file to change."),
+                _edit_script(_V0),
+            ]
+        ),
+        # Three scored attempts: the reply carrying no frame never reaches the oracle.
+        ScriptedSpawn(*([_junit("one_failure.xml")] * 3)),
+        on_attempt=seen.append,
+    )
+    spec = build_task_spec(
+        impl_path="src/widget.py",
+        expected_tests=3,
+        test_text=_ORACLE_TEXT,
+        budget=build_budget(max_attempts=4),
+    )
+
+    loop.run(spec, worktree)
+
+    assert len(seen) == 4
+    assert seen[1].nudged is False  # the stall is detected ON this attempt, not applied to it
+    assert seen[2].nudged is True  # escalated: its tail was a repair brief carrying the nudge
+    assert seen[3].nudged is False  # reframed: its tail was the correction, not the escalation

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
-from claude_local.sandbox import SandboxTimeout, sandboxed_spawn
+from claude_local.sandbox import SandboxKilled, sandboxed_spawn
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -113,10 +113,10 @@ class TestRunner:
     The ``spawn`` seam is the pytest-subprocess boundary (a true-external tool): the default runs
     the process under kernel confinement (``sandbox.sandboxed_spawn`` — writable only within the
     disposable report dir, no network, no inherited secrets), and tests inject a fake that writes a
-    captured report to the requested path and returns diagnostic byte streams. A spawn signals a
-    non-terminating impl by raising ``SandboxTimeout``, which ``run`` maps to a zero-verdict run
-    carrying bounded pre-timeout diagnostics and the timeout fact as repair feedback. JUnit remains
-    the sole verdict source.
+    captured report to the requested path and returns diagnostic byte streams. A spawn signals an
+    impl that died without a verdict by raising ``SandboxKilled`` — a wall-clock hang, a CPU-cap
+    overrun, or a fault — which ``run`` maps to a zero-verdict run carrying the bounded pre-death
+    diagnostics and the cause as repair feedback. JUnit remains the sole verdict source.
     """
 
     __test__ = False
@@ -130,13 +130,15 @@ class TestRunner:
     def run(self, test_path: Path, worktree: Path, expected: int) -> OracleRun:
         """Run ``test_path`` and return its JUnit verdict with captured diagnostics.
 
-        The command runs under kernel confinement; a non-terminating impl raises ``SandboxTimeout``
-        with bounded stream tails, which map to a zero-verdict (non-green, invalid) run — the loop
-        treats a hang as a repairable failed attempt, never a harness fault.
+        The command runs under kernel confinement; an impl that never terminates — whether the
+        wall clock or the CPU cap ends it — raises ``SandboxKilled`` with bounded stream tails,
+        which map to a zero-verdict (non-green, invalid) run. The loop treats every such death as
+        a repairable failed attempt, never a harness fault: the impl misbehaved, not the oracle.
 
         Raises:
             OracleError: the run produced no JUnit report, or an unparseable one — a broken
-                oracle, not a failing impl.
+                oracle, not a failing impl. The message carries the child's captured output,
+                since this error ends the run and is the last thing an operator sees.
         """
         with tempfile.TemporaryDirectory() as tmp:
             report = Path(tmp) / "oracle.xml"
@@ -144,16 +146,17 @@ class TestRunner:
                 sys.executable,
                 "-m",
                 "pytest",
-                str(test_path),
+                _oracle_argument(test_path, worktree),
                 f"--junit-xml={report}",
                 "-o",
                 "junit_family=xunit2",
                 "-p",
                 "no:cacheprovider",
+                "--no-header",  # the header is pure run metadata: platform, versions, rootdir
             ]
             try:
                 stdout, stderr = self._spawn(cmd, worktree, Path(tmp))
-            except SandboxTimeout as exc:
+            except SandboxKilled as exc:
                 diagnostics = _decode_output(exc.stdout, exc.stderr)
                 separator = "\n" if diagnostics and not diagnostics.endswith("\n") else ""
                 return OracleRun(
@@ -167,13 +170,48 @@ class TestRunner:
                     ),
                     output=f"{diagnostics}{separator}{exc}",
                 )
+            diagnostics = _decode_output(stdout, stderr)
             if not report.is_file():
-                raise OracleError(f"pytest produced no JUnit report at {report}")
+                raise OracleError(_broken_oracle("pytest produced no JUnit report", diagnostics))
             try:
                 score = score_junit(report.read_text(encoding="utf-8"), expected)
             except ET.ParseError as exc:
-                raise OracleError(f"pytest wrote a malformed JUnit report at {report}") from exc
-            return OracleRun(score=score, output=_decode_output(stdout, stderr))
+                raise OracleError(
+                    _broken_oracle("pytest wrote a malformed JUnit report", diagnostics)
+                ) from exc
+            return OracleRun(score=score, output=diagnostics)
+
+
+def _broken_oracle(reason: str, diagnostics: str) -> str:
+    """Compose a broken-oracle message carrying the child's own account of why it broke.
+
+    Deliberately omits the report path: it lives in a ``TemporaryDirectory`` that is already gone
+    by the time anyone reads the message, so naming it points an operator at nothing. The captured
+    streams are the real evidence, and an empty pair is itself evidence — pytest died before it
+    could write a word, which is an interpreter or exec failure rather than a collection one.
+    """
+    if not diagnostics.strip():
+        return f"{reason}, and wrote nothing to stdout or stderr"
+    return f"{reason}. Its output was:\n{diagnostics}"
+
+
+def _oracle_argument(test_path: Path, worktree: Path) -> str:
+    """Name the oracle the way the child will print it — relative to its own cwd where it can be.
+
+    pytest renders every node id and traceback location relative to the process cwd, which is the
+    worktree. Handing it an ABSOLUTE path makes that rendering depend on how the two spell one
+    directory: on macOS the worktree arrives as ``/var/folders/...`` while the child's resolved cwd
+    is ``/private/var/folders/...``, so pytest emits a seven-level ``../`` climb that carries the
+    disposable worktree's random name into every node id — a run fact the model then reads as if it
+    were part of the failure. Naming the oracle relative to the cwd removes the spelling question
+    and the name with it. An oracle outside the worktree has no relative spelling, so it stays
+    absolute and the caller keeps a working run.
+    """
+    resolved_test = test_path.resolve()
+    resolved_worktree = worktree.resolve()
+    if not resolved_test.is_relative_to(resolved_worktree):
+        return str(test_path)
+    return str(resolved_test.relative_to(resolved_worktree))
 
 
 def _decode_output(stdout: bytes, stderr: bytes) -> str:

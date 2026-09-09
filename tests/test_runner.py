@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from claude_local.runner import OracleError, TestRunner, TestScore, score_junit
-from claude_local.sandbox import SandboxTimeout
+from claude_local.sandbox import SandboxKilled
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -163,6 +163,38 @@ def test_run_raises_oracle_error_when_no_report_is_written(tmp_path: Path) -> No
         runner.run(tmp_path / "test_oracle.py", tmp_path, expected=1)
 
 
+def test_a_broken_oracle_carries_the_output_that_explains_why_it_broke(tmp_path: Path) -> None:
+    """Oracle: this error aborts the whole run, so it is the last thing an operator will see.
+
+    The child's streams are already in scope at the raise — pytest's own reason for writing no
+    report (a plugin that failed to load, an interpreter that could not start, a conftest that
+    raised) is in them. Discarding them leaves "produced no JUnit report at /tmp/.../oracle.xml",
+    naming a path that no longer exists, for a run that may have been hours in.
+    """
+
+    def crashing_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> tuple[bytes, bytes]:
+        del cmd, cwd, write_box
+        return b"collecting ...\n", b"ImportError: no module named 'pytest_gremlins'\n"
+
+    runner = TestRunner(spawn=crashing_spawn)
+
+    with pytest.raises(OracleError) as excinfo:
+        runner.run(tmp_path / "test_oracle.py", tmp_path, expected=1)
+
+    assert "ImportError" in str(excinfo.value)
+    assert "collecting ..." in str(excinfo.value)
+
+
+def test_a_malformed_report_carries_the_output_that_explains_it(tmp_path: Path) -> None:
+    """Same obligation on the sibling failure: a half-written report has a reason in the tails."""
+    runner = TestRunner(spawn=_writing_spawn("<not junit <<<", stderr=b"MemoryError\n"))
+
+    with pytest.raises(OracleError) as excinfo:
+        runner.run(tmp_path / "test_oracle.py", tmp_path, expected=1)
+
+    assert "MemoryError" in str(excinfo.value)
+
+
 def test_run_wraps_a_malformed_report_in_oracle_error(tmp_path: Path) -> None:
     # A present-but-malformed report (pytest killed mid-write, disk full) is a broken oracle, not a
     # failing impl. run() unifies it into OracleError so the loop catches a single failure type,
@@ -173,12 +205,12 @@ def test_run_wraps_a_malformed_report_in_oracle_error(tmp_path: Path) -> None:
 
 
 def test_run_maps_a_sandbox_timeout_to_a_zero_verdict_with_feedback(tmp_path: Path) -> None:
-    # A non-terminating impl: the spawn kills it and raises SandboxTimeout. run() maps that to a
+    # A non-terminating impl: the spawn kills it and raises SandboxKilled. run() maps that to a
     # non-green, invalid score (zero verdicts reached) so the loop retries a hang, never crashes.
     def hanging_spawn(cmd: Sequence[str], cwd: Path, write_box: Path) -> tuple[bytes, bytes]:
         del cmd, cwd, write_box
-        raise SandboxTimeout(
-            "oracle exceeded its wall-clock budget",
+        raise SandboxKilled(
+            "oracle exceeded its deadline",
             stdout=b"setup reached\n",
             stderr=b"waiting forever\n",
         )
@@ -188,6 +220,4 @@ def test_run_maps_a_sandbox_timeout_to_a_zero_verdict_with_feedback(tmp_path: Pa
     assert oracle_run.score == TestScore(0, 0, 0, 0, 0, 3)
     assert oracle_run.score.is_valid is False
     assert oracle_run.score.is_green is False
-    assert oracle_run.output == (
-        "setup reached\nwaiting forever\noracle exceeded its wall-clock budget"
-    )
+    assert oracle_run.output == ("setup reached\nwaiting forever\noracle exceeded its deadline")

@@ -2,10 +2,27 @@
 
 claude-local writes only the local half; the orchestrator half and the shared correlation keys are
 owned by the driving orchestrator (D-TELEMETRY-001). ``LocalEconomyRecord`` is that half: which
-model ran, how many logical calls and loop attempts it took, how many completion tokens it decoded
-over how many model-seconds, the mean decode rate, whether any count was estimated, how many
-generations the server capped at its own token limit, and the final status. The telemetry module is
-its single writer (RESOURCE_OWNERSHIP).
+model ran under which rules card, how many logical calls and loop attempts it took, how many
+completion tokens it decoded over how many model-seconds, the mean decode rate, whether any count
+was estimated, how many generations the server capped at its own token limit, and the final status.
+The telemetry module is its single writer (RESOURCE_OWNERSHIP).
+
+``rules_card_digest`` makes the card a named variable of the run rather than an unstated constant.
+The card is the largest single span of the prompt and ``implement`` accepts an override for it, so
+two records are comparable only when they agree on it — a token total measured under one card says
+nothing about a run under another. The digest is carried from ``PromptBuilder``, the only reader of
+the card bytes, and never re-derived from a path here: a path identifies a card only until someone
+repoints it.
+
+``plan_first`` is the second such variable, and it is here for the same reason rather than a
+different one: a run that spends a generation planning burns tokens a run without one never spends,
+so the two are not comparable either. Measured on one model under one card, the lever moved a
+benchmark-run from 4436 completion tokens to 9858 — which, left unrecorded, is one
+configuration's number standing in for another's with nothing downstream able to tell
+(D-TELEMETRY-003). It is carried from the caller like the model and the card above, never
+inferred from whether the timeline happens
+to contain a planning generation: that would make the record's account of how a run was CONFIGURED
+depend on how the plan call happened to go.
 
 ``from_run`` AGGREGATES a timeline of per-attempt ``GenerationResult`` (client token usage
 and timing) into those scalars. Two counts are deliberately NOT derived from the timeline.
@@ -32,6 +49,8 @@ import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from claude_local.types import mean_tokens_per_second
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,6 +87,8 @@ class LocalEconomyRecord:
     """
 
     model: str
+    rules_card_digest: str
+    plan_first: bool
     total_calls: int
     total_completion_tokens: int
     total_model_seconds: float
@@ -82,6 +103,8 @@ class LocalEconomyRecord:
         cls,
         *,
         model: str,
+        rules_card_digest: str,
+        plan_first: bool,
         results: Sequence[GenerationResult],
         total_calls: int,
         attempts: int,
@@ -94,9 +117,11 @@ class LocalEconomyRecord:
         """
         total_completion_tokens = sum(r.completion_tokens for r in results)
         total_model_seconds = sum((r.seconds for r in results), 0.0)
-        mean = total_completion_tokens / total_model_seconds if total_model_seconds > 0 else None
+        mean = mean_tokens_per_second(total_completion_tokens, total_model_seconds)
         return cls(
             model=model,
+            rules_card_digest=rules_card_digest,
+            plan_first=plan_first,
             total_calls=total_calls,
             total_completion_tokens=total_completion_tokens,
             total_model_seconds=total_model_seconds,
@@ -122,6 +147,8 @@ class LocalEconomyRecord:
         """JSON-ready mapping of the record; ``status`` becomes its lowercase value."""
         return {
             "model": self.model,
+            "rules_card_digest": self.rules_card_digest,
+            "plan_first": self.plan_first,
             "total_calls": self.total_calls,
             "total_completion_tokens": self.total_completion_tokens,
             "total_model_seconds": self.total_model_seconds,

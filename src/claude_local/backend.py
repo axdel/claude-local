@@ -26,14 +26,39 @@ if TYPE_CHECKING:
 
     from claude_local.types import Budget
 
+HTTP_CONNECT_TIMEOUT_S = 10.0
+"""Connect-phase cap for a client built here — reaching a local server is fast or it is down."""
+
+HTTP_READ_TIMEOUT_S = 600.0
+"""The first-byte deadline, and the DerailGuard's backstop for the one gap it cannot see.
+
+Twelve times the 50.1s a cold 24 GB model took to answer at the benchmark's own token budget, of
+which 9.1s was prefill and the rest a lazy weight load (``scripts/measure_first_byte.py``). The
+margin is not padding: that figure is a floor, measured with the page cache evicted but nothing
+else contending, and the same load exceeded 180s outright under the memory pressure of a sweep
+that had already cycled three models through the host.
+
+Both constants live here, in the module that owns the HTTP transport, because every caller that
+builds a client is describing the same server's behaviour — so there is one number to re-measure
+when that behaviour changes. They were declared twice, identically, with the measurement above
+recorded in only one copy; the other read as an arbitrary 600.0, which is how two writers to one
+fact start to drift.
+"""
+
+CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+"""The OpenAI-compatible generation endpoint, appended to whatever base URL a caller was given.
+
+Public because a probe that drives the transport by hand still has to reach the same path this
+backend does, and a path spelled at two callers is two claims about where the server listens.
+"""
+
 
 class Backend(Protocol):
     """A source of raw SSE byte chunks for one generation.
 
-    ``prefix`` is the byte-identical KV-cacheable head (rules card + spec + optional
-    ordered context files + immutable test); ``tail`` is the per-attempt feedback.
-    Splitting them lets a caller hold the prefix constant across a task's iterations
-    so the server can reuse its prefill cache.
+    ``prefix`` is the byte-identical KV-cacheable head that ``PromptBuilder.stable_prefix``
+    assembles; ``tail`` is the per-attempt feedback. Splitting them lets a caller hold the
+    prefix constant across a task's attempts so the server can reuse its prefill cache.
     """
 
     def generate(self, prefix: str, tail: str, budget: Budget) -> Iterator[bytes]:
@@ -86,9 +111,10 @@ class ReplayBackend:
 class BackendUnavailable(RuntimeError):
     """The model server at ``base_url`` could not be reached, or answered with an error status.
 
-    A precondition failure, not a task outcome: claude-local requires an already-running
-    OpenAI-compatible server at ``base_url`` (it never serves one), so a server that is down,
-    unreachable, or returning a non-2xx status means the prerequisite is unmet. Carries the URL
+    A precondition failure, not a task outcome: this transport requires an already-listening
+    OpenAI-compatible server at ``base_url`` — it never starts one, though ``model_server`` can
+    (D-SERVE-002) — so a server that is down, unreachable, or returning a non-2xx status means
+    the prerequisite is unmet. Carries the URL
     and model for diagnosis and chains the originating ``httpx`` error as ``__cause__``. Like
     ``SandboxUnavailable`` (D-SANDBOX-001), it propagates as a harness fault — never mapped to a
     ``Status`` — so a missing server fails loud instead of masquerading as a failed task. Distinct
@@ -101,18 +127,37 @@ class BackendUnavailable(RuntimeError):
         super().__init__(f"model server unavailable at {url} (model {model!r}): {reason}")
 
 
+class GenerationSilent(RuntimeError):
+    """A reachable server took the request and then sent nothing within the first-byte deadline.
+
+    A task outcome, not a precondition failure, and the distinction is the whole point of the
+    class. The first-byte deadline is only reachable *after* a connection succeeded and the
+    request went out, so the prerequisite ``BackendUnavailable`` reports — a server that is down,
+    unreachable, or answering non-2xx — was demonstrably met. Raising that here made one model's
+    slow first generation abort every remaining task in the run.
+
+    The client translates this into the same ``SILENT`` verdict the DerailGuard reaches on a
+    silence it *can* see. Both describe one thing — a generation that produced nothing — and the
+    only reason two layers report it is that the guard's clock advances on chunk arrival, so a
+    stretch with no chunks in it is the one gap the guard is structurally unable to observe.
+    """
+
+    def __init__(self, url: str, model: str, reason: str) -> None:
+        self.url = url
+        self.model = model
+        super().__init__(f"model server sent nothing at {url} (model {model!r}): {reason}")
+
+
 class HttpxBackend:
     """POSTs the OpenAI-compatible streaming request to a local server, yielding bytes.
 
     The client is injected and kept warm across generations (one resident connection,
-    not one per iteration). The request always streams with usage accounting on and the
+    not one per attempt). The request always streams with usage accounting on and the
     budget's token cap applied; ``generation_params`` supplies server-specific sampling
     knobs (non-thinking, repetition penalty) but can never countermand those core
     invariants. Real-run only — construction and request shape are unit-tested against a
     mock transport, never a live server.
     """
-
-    _ENDPOINT = "/v1/chat/completions"
 
     def __init__(
         self,
@@ -121,7 +166,7 @@ class HttpxBackend:
         model: str,
         generation_params: Mapping[str, object] | None = None,
     ) -> None:
-        self._url = base_url.rstrip("/") + self._ENDPOINT
+        self._url = base_url.rstrip("/") + CHAT_COMPLETIONS_PATH
         self._client = client
         self._model = model
         self._generation_params = dict(generation_params or {})
@@ -130,11 +175,24 @@ class HttpxBackend:
         """Stream the chat-completions response bytes for one generation under ``budget``.
 
         Raises:
-            BackendUnavailable: the server was unreachable (a transport failure) or answered with a
-                non-2xx status. The underlying ``httpx`` error is translated at this transport
-                boundary so a missing prerequisite server surfaces as a domain fault the caller can
-                act on, not a raw ``httpx`` exception (clients translate infra errors to domain
-                errors); the original error is preserved as ``__cause__``.
+            BackendUnavailable: the server answered with a non-2xx status, or a transport failure
+                struck *before* it produced a response. The underlying ``httpx`` error is
+                translated at this transport boundary so a missing prerequisite server surfaces as
+                a domain fault the caller can act on, not a raw ``httpx`` exception (clients
+                translate infra errors to domain errors); the original is preserved as
+                ``__cause__``.
+            GenerationSilent: the server took the request and then failed to finish answering —
+                it sent no bytes within the first-byte deadline, or the stream broke after
+                the response had started. Split from the fault above because the two demand
+                opposite responses: a missing prerequisite is fatal to the whole run, while a
+                met one leaves the run going with this single task recorded as silent.
+
+        The split therefore turns on *whether the response started*, not on which transport error
+        carried the failure. A server killed mid-decode raises the same ``RequestError`` family as
+        one that was never listening, but it had already answered — so treating the two alike
+        throws away every task a benchmark-run has finished because one connection reset. When
+        the server really is gone, the next task discovers it at connect time and aborts there,
+        costing one wasted task instead of the run.
         """
         body: dict[str, object] = {
             **self._generation_params,
@@ -147,13 +205,24 @@ class HttpxBackend:
             "stream_options": {"include_usage": True},
             "max_tokens": budget.max_tokens,
         }
+        response_started = False
         try:
             with self._client.stream("POST", self._url, json=body) as response:
                 response.raise_for_status()
+                response_started = True
                 yield from response.iter_bytes()
         except httpx.HTTPStatusError as exc:
             reason = f"HTTP {exc.response.status_code}"
             raise BackendUnavailable(self._url, self._model, reason) from exc
+        except httpx.ReadTimeout as exc:
+            # Checked before RequestError, which it subclasses, and regardless of how far the
+            # response got: the first-byte deadline expiring means the server took the request
+            # and then went quiet, which is this generation failing rather than the server
+            # missing.
+            reason = f"{type(exc).__name__}: {exc}"
+            raise GenerationSilent(self._url, self._model, reason) from exc
         except httpx.RequestError as exc:
             reason = f"{type(exc).__name__}: {exc}"
+            if response_started:
+                raise GenerationSilent(self._url, self._model, reason) from exc
             raise BackendUnavailable(self._url, self._model, reason) from exc

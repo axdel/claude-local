@@ -15,17 +15,24 @@ a macOS-kernel fact, so there is nothing meaningful to assert without the kernel
 
 from __future__ import annotations
 
+import ctypes
+import os
+import re
+import shutil
 import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import pytest
 
+from claude_local import sandbox
 from claude_local.sandbox import (
-    SandboxTimeout,
+    SandboxKilled,
     SandboxUnavailable,
+    _build_profile,
     sandbox_available,
     sandboxed_spawn,
 )
@@ -36,9 +43,32 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+_CTL_KERN = 1
+_KERN_PROCARGS2 = 49
+"""The per-pid sysctl that returns a process's argv followed by its exec-time environment.
+
+Numeric because it is only reachable that way: the pid is the third MIB element, so there is no
+``sysctlbyname`` spelling of it — which is why the profile denies it by name PREFIX rather than by
+exact name, the exact-name filter having no full name to match against (D-SANDBOX-011).
+"""
+
+
 def _run(payload: str, box: Path, *, timeout_s: float = 30.0) -> None:
     """Execute a Python payload under the sandbox, with ``box`` as the writable root."""
     sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box, timeout_s=timeout_s)
+
+
+def _read_process_arguments(pid: int) -> bytes:
+    """Return one process's argv-and-environment blob, or empty bytes if the kernel refuses."""
+    libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+    mib = (ctypes.c_int * 3)(_CTL_KERN, _KERN_PROCARGS2, pid)
+    size = ctypes.c_size_t(0)
+    if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
+        return b""
+    buffer = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+        return b""
+    return buffer.raw[: size.value]
 
 
 def test_write_outside_the_box_is_denied(tmp_path: Path) -> None:
@@ -58,7 +88,13 @@ def test_write_outside_the_box_is_denied(tmp_path: Path) -> None:
 
 
 def test_read_outside_the_worktree_and_box_is_denied(tmp_path: Path) -> None:
-    """Captured diagnostics cannot relay arbitrary host-file contents to the model request."""
+    """Captured diagnostics cannot relay host files from OUTSIDE the worktree to the model.
+
+    Outside is the whole of what this proves. Files INSIDE the worktree are readable by design and
+    their contents do reach the next prompt — pinned by the test below, and disclosed in
+    D-SANDBOX-010. Reading this test as "diagnostics cannot relay file contents" is the over-claim
+    that decision exists to correct.
+    """
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     box = tmp_path / "box"
@@ -79,6 +115,48 @@ def test_read_outside_the_worktree_and_box_is_denied(tmp_path: Path) -> None:
 
     assert stdout.startswith(b"blocked:")
     assert b"credential-sentinel" not in stdout
+
+
+def test_a_worktree_file_is_readable_and_its_content_returns_to_the_parent(
+    tmp_path: Path,
+) -> None:
+    """Executed model code CAN read the worktree and hand what it read back through diagnostics.
+
+    A characterization of an accepted limitation, not a wish: the grant is deliberate (the impl
+    must import its neighbours, so the worktree has to be readable), and the captured tail is
+    deliberate (it is how the loop tells the model what failed). Together they form a read-and-
+    return channel that ``(deny network*)`` does not close, because nothing leaves the host — the
+    parent carries it out, into the next prompt and thence into the file it admits.
+
+    Oracle: the SBPL profile renders ``(allow file-read* (subpath "<cwd>"))`` for the worktree
+    root, so a read under it is permitted by the profile's own text — derived from the grant, not
+    from running the sandbox. Pinned as a test so the disclosure in D-SANDBOX-010 and README cannot
+    drift from the behavior: narrow the read root later and this goes red, which is the prompt to
+    correct all three at once rather than leave a stale reassurance behind.
+    """
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    box = tmp_path / "box"
+    box.mkdir()
+    # A credential fixture of the kind a real checkout carries — under dispatch the worktree is a
+    # working copy of the TARGET repository, not of claude-local.
+    (worktree / ".env").write_text("API_KEY=worktree-sentinel", encoding="utf-8")
+    payload = (
+        "import pathlib\n"
+        "try:\n"
+        f"    print(pathlib.Path({str(worktree / '.env')!r}).read_text())\n"
+        "except OSError as exc:\n"
+        "    print('blocked:' + type(exc).__name__)\n"
+    )
+
+    stdout, _ = sandboxed_spawn(
+        [sys.executable, "-c", payload], cwd=worktree, write_box=box, timeout_s=30.0
+    )
+
+    assert b"worktree-sentinel" in stdout, (
+        "the worktree read grant no longer reaches the worktree — if that is intended, "
+        "D-SANDBOX-010 and the README disclosure it backs are now stale"
+    )
 
 
 def test_network_egress_is_denied(tmp_path: Path) -> None:
@@ -106,6 +184,171 @@ def test_network_egress_is_denied(tmp_path: Path) -> None:
     assert outcome.read_text().startswith("blocked")
 
 
+def test_mach_service_lookup_beyond_the_platform_baseline_is_denied(tmp_path: Path) -> None:
+    """Oracle: the trusted parent knows the host's real ComputerName; the confined child must not.
+
+    ``(deny network*)`` does not cover Mach IPC, so an unscoped ``(allow mach-lookup)`` is a side
+    channel out of the sandbox — the child can reach any XPC service registered on the host.
+    Measured on this branch while the blanket grant was still present: a confined ``pbpaste``
+    read a sentinel straight off the developer's clipboard, and ``scutil`` returned the machine's
+    real name; with the grant removed, the clipboard came back empty and ``scutil`` fell back to a
+    generic default. That is exactly the "cannot exfiltrate secrets" claim the confinement makes.
+
+    ComputerName is read through the SystemConfiguration Mach service and is a read-only query, so
+    it gives the same signal as the pasteboard without writing to the developer's real clipboard.
+    The parent supplies ground truth by running it unconfined — the same shape as the network test
+    standing up its own listener, so the assertion never depends on a hardcoded host value.
+    """
+    scutil = shutil.which("scutil")
+    if scutil is None:
+        pytest.skip("scutil is absent, so the host has no SystemConfiguration query to compare")
+    real_name = subprocess.run(  # noqa: S603 - fixed argv, no shell, no untrusted input
+        [scutil, "--get", "ComputerName"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    if not real_name:
+        pytest.skip("this host reports no ComputerName, so there is no secret to withhold")
+
+    box = tmp_path / "box"
+    box.mkdir()
+    confined, _ = sandboxed_spawn([scutil, "--get", "ComputerName"], cwd=box, write_box=box)
+
+    assert confined.decode().strip() != real_name
+
+
+def test_the_profile_grants_no_unscoped_mach_lookup(tmp_path: Path) -> None:
+    """Every grant in the profile names what it applies to; ``mach-lookup`` is not exempt.
+
+    Oracle: SBPL semantics under ``(deny default)`` — a grant with no filter applies to every
+    service, so ``(allow mach-lookup)`` on its own line is the whole Mach namespace. This is the
+    deterministic backstop for the behavioral test above, which depends on a host having a
+    SystemConfiguration service to ask. Reading the rendered profile is reading the security
+    artifact itself, not an implementation detail: it is what the kernel is handed.
+    """
+    box = tmp_path / "box"
+    box.mkdir()
+
+    profile = _build_profile(tmp_path, box, [sys.executable])
+
+    # Grants only: a ';' comment line may name mach-lookup while granting nothing.
+    grants = [
+        stripped
+        for line in profile.splitlines()
+        if (stripped := line.strip()).startswith("(allow") and "mach-lookup" in stripped
+    ]
+    assert all("global-name" in grant or "xpc-service-name" in grant for grant in grants), (
+        f"unscoped mach-lookup grant in the oracle profile: {grants}"
+    )
+
+
+def test_the_profile_grants_a_closed_set_of_classes_without_a_filter(tmp_path: Path) -> None:
+    """The class-wide grants are a closed, argued set — and none of them reaches another process.
+
+    Oracle: INV-003, which names them. ``process-exec*`` and ``process-fork`` cover spawning, which
+    widens nothing because a child inherits this same profile (measured on this branch: the
+    confined ``pbpaste`` was itself sandboxed, and what leaked was the Mach grant, not its
+    confinement). ``sysctl-read`` is granted whole and then narrowed by the ``kern.proc`` deny
+    below it, because the runtime reads named kernel parameters at startup — ``os.uname()`` fails
+    outright without them — while every per-pid process query lives under that one prefix.
+
+    The predecessor of this test asserted a set of ``{process*, sysctl-read}`` on the reasoning
+    that neither could reach a file, socket or service. Measured, that reasoning was wrong on both
+    counts: ``process*`` includes ``process-info*``, which reads OTHER processes, and a per-pid
+    sysctl returns their argv and environment. The behavioral test below is what now holds that
+    line; this one keeps the set closed so a future blanket grant has to be argued here first.
+    """
+    box = tmp_path / "box"
+    box.mkdir()
+
+    profile = _build_profile(tmp_path, box, [sys.executable])
+
+    unfiltered = {
+        operation
+        for line in profile.splitlines()
+        if (match := re.fullmatch(r"\(allow ([\w*\- ]+)\)", line.strip()))
+        for operation in match.group(1).split()
+    }
+    assert unfiltered == {"process-exec*", "process-fork", "sysctl-read"}, (
+        f"the oracle profile's class-wide grants changed: {sorted(unfiltered)}"
+    )
+
+
+def test_another_process_environment_is_unreadable_from_inside_the_box(tmp_path: Path) -> None:
+    """A confined child cannot read a same-uid process's argv or exec-time environment.
+
+    This is the credential boundary. ``_sandbox_env`` scrubs what the CHILD is handed, but that
+    cannot scrub what the child reads back out of the kernel about everyone else — on a developer
+    machine the orchestrator's own process carries the API keys its shell exported.
+
+    Oracle: the parent supplies ground truth by making the identical read unconfined, the same
+    shape as the network test standing up its own listener. That is what makes a vacuous pass
+    impossible — an empty blob returned for some unrelated reason would look like a pass, so the
+    sentinel is proven readable from OUTSIDE the box in the same breath it is denied inside.
+
+    The sentinel is passed at spawn, never assigned afterwards: KERN_PROCARGS2 returns the
+    environment a process was EXEC'd with, so a variable set later never appears in the blob and
+    would make this test pass against a wide-open profile.
+    """
+    sentinel = f"sentinel-{uuid.uuid4().hex}"
+    victim = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        env=dict(os.environ, CLAUDE_LOCAL_TEST_SECRET=sentinel),
+    )
+    try:
+        # Ground truth: unconfined, this read returns the victim's environment, sentinel included.
+        # Without it an empty confined result proves nothing about the profile.
+        deadline = time.monotonic() + 10.0
+        while sentinel.encode() not in _read_process_arguments(victim.pid):
+            if time.monotonic() > deadline:
+                pytest.fail("the victim's environment never became readable even unconfined")
+            time.sleep(0.05)
+
+        box = tmp_path / "box"
+        box.mkdir()
+        outcome = box / "procargs.bin"
+        payload = (
+            "import ctypes, pathlib\n"
+            "libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)\n"
+            f"mib = (ctypes.c_int * 3)({_CTL_KERN}, {_KERN_PROCARGS2}, {victim.pid})\n"
+            "size = ctypes.c_size_t(0)\n"
+            "blob = b''\n"
+            "if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) == 0:\n"
+            "    buffer = ctypes.create_string_buffer(size.value)\n"
+            "    if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) == 0:\n"
+            "        blob = buffer.raw[:size.value]\n"
+            f"pathlib.Path({str(outcome)!r}).write_bytes(blob)\n"
+        )
+        _run(payload, box)
+
+        leaked = outcome.read_bytes()
+    finally:
+        victim.kill()
+        victim.wait()
+
+    assert sentinel.encode() not in leaked, (
+        "the confined child read another process's environment out of the kernel"
+    )
+    assert leaked == b"", f"the per-pid process query was answered at all: {len(leaked)} bytes"
+
+
+def test_two_spawns_agree_on_a_string_hash(tmp_path: Path) -> None:
+    """The child's hash seed is pinned, so any set or dict it renders orders identically.
+
+    Oracle: CPython randomizes ``hash(str)`` per process from a seed it draws at startup, and
+    ``PYTHONHASHSEED=0`` is the documented way to disable that. Two unpinned interpreters agree on
+    a string's hash only by a 1-in-2**64 coincidence, so equality here is evidence of the pin and
+    of nothing else. The oracle run needs it because pytest renders a failing set comparison in
+    iteration order, and that order is fed back to the model as repair feedback (INV-004).
+    """
+    box = tmp_path / "box"
+    box.mkdir()
+    payload = "print(hash('claude-local'))"
+
+    first, _ = sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box)
+    second, _ = sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box)
+
+    assert first == second
+
+
 def test_write_inside_the_box_is_allowed(tmp_path: Path) -> None:
     box = tmp_path / "box"
     box.mkdir()
@@ -114,6 +357,84 @@ def test_write_inside_the_box_is_allowed(tmp_path: Path) -> None:
     _run(payload, box)
     # Oracle: the single file-write allow rule (subpath box) — the sandbox must not over-restrict.
     assert report.read_text() == "<ok/>"
+
+
+def test_an_interpreter_reached_through_a_directory_symlink_still_runs(tmp_path: Path) -> None:
+    """A runtime named *through* a symlinked directory still launches under confinement.
+
+    Reproduces the layout uv installs: a version-alias directory symlink (``cpython-3.14-...``
+    -> ``cpython-3.14.7-...``) beside the real runtime, with the launcher pointing through the
+    alias. ``realpath`` collapses every component and so reports only the destination, while the
+    kernel resolves the path the launcher literally names — so a profile granting just the
+    chain's endpoints leaves the traversed middle ungranted and the spawn is refused with
+    ``Operation not permitted``.
+
+    Oracle: the sandbox must permit the very runtime it was handed (the capability half of
+    D-SANDBOX-004), and POSIX path resolution visits every component of every hop. Both facts
+    are independent of this module — neither was read off the profile builder. Grant only the
+    endpoints and this goes red, which is the F2P proof it bites.
+    """
+    runtime_root = Path(sys.base_prefix)
+    real_interpreter = Path(os.path.realpath(sys.executable))
+    alias = tmp_path / "runtime-version-alias"
+    alias.symlink_to(runtime_root)  # a DIRECTORY symlink, as uv publishes
+    launcher = tmp_path / "python3"
+    launcher.symlink_to(alias / real_interpreter.relative_to(runtime_root))
+
+    box = tmp_path / "box"
+    box.mkdir()
+    ran = box / "ran.txt"
+    payload = f"import pathlib; pathlib.Path({str(ran)!r}).write_text('ok')"
+
+    _stdout, stderr = sandboxed_spawn(
+        [str(launcher), "-c", payload], cwd=box, write_box=box, timeout_s=30.0
+    )
+
+    assert ran.exists(), f"the runtime never ran: {stderr.decode(errors='replace')}"
+    assert ran.read_text() == "ok"
+
+
+def test_an_interpreter_reached_through_a_symlinked_parent_directory_still_runs(
+    tmp_path: Path,
+) -> None:
+    """A runtime whose path *descends through* a symlinked directory still launches.
+
+    The sibling test above puts the symlink at the hop's final component. This puts one in the
+    middle of the hop's directory portion, with further levels beneath it — the shape ``/tmp ->
+    /private/tmp`` has, built explicitly here so the platform's own symlink is not the fixture.
+
+    Oracle: POSIX resolution rewrites the remainder of the path once it crosses a symlink, so
+    the kernel matches every component below ``gateway`` under its canonical ``inner`` name. A
+    profile that names those components by the pre-resolution name grants nothing the kernel
+    will ever match — the rules are present and dead, which is why this fails as a *denied
+    spawn* rather than a missing rule. Neither fact was read off the profile builder.
+
+    The launcher points outside the fixture on purpose: were it a real file, the endpoint grant
+    derived from ``realpath`` would cover the very directories under test and mask the defect —
+    which is exactly how the production layout hides it, since ``realpath(sys.base_prefix)``
+    happens to cover the alias's target tree.
+    """
+    inner = tmp_path / "inner"
+    (inner / "nested/bin").mkdir(parents=True)
+    launcher = inner / "nested/bin/python3"
+    launcher.symlink_to(os.path.realpath(sys.executable))
+    gateway = tmp_path / "gateway"
+    gateway.symlink_to(inner)  # crossing this rewrites every component after it
+
+    box = tmp_path / "box"
+    box.mkdir()
+    ran = box / "ran.txt"
+    payload = f"import pathlib; pathlib.Path({str(ran)!r}).write_text('ok')"
+
+    _stdout, stderr = sandboxed_spawn(
+        [str(gateway / "nested/bin/python3"), "-c", payload],
+        cwd=box,
+        write_box=box,
+        timeout_s=30.0,
+    )
+
+    assert ran.exists(), f"the runtime never ran: {stderr.decode(errors='replace')}"
+    assert ran.read_text() == "ok"
 
 
 def test_spawn_returns_captured_stdout_and_stderr(tmp_path: Path) -> None:
@@ -164,12 +485,42 @@ def test_a_hanging_command_is_killed_at_the_timeout_with_bounded_diagnostics(
     )
     started = time.monotonic()
 
-    with pytest.raises(SandboxTimeout) as excinfo:
+    with pytest.raises(SandboxKilled) as excinfo:
         sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box, timeout_s=2.0)
 
     assert time.monotonic() - started < 15.0
     assert excinfo.value.stdout == b"started\n"
     assert excinfo.value.stderr == b"still-running\n"
+
+
+def test_a_cpu_burning_command_dies_through_the_signal_path_not_the_wall_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Oracle: RLIMIT_CPU is set strictly below the wall clock, so a busy loop cannot reach it.
+
+    A busy loop burns ~1 CPU-second per wall-second, so the CPU cap fires first and the kernel
+    kills the child outright — ``communicate`` then returns normally with a negative returncode and
+    raises no ``TimeoutExpired``. That is a different exit from the sleeping-hang test above, and
+    is the one a weak model actually produces (``while True:`` in the impl). Both must surface as a
+    repairable attempt; a silent normal return makes the caller see a missing report and abort the
+    whole run as a broken oracle.
+
+    The cap is patched down so this costs a second rather than a minute. ``_apply_rlimits`` reads
+    the constant post-fork inside ``preexec_fn``, so the forked child inherits the patched value.
+    """
+    box = tmp_path / "box"
+    box.mkdir()
+    monkeypatch.setattr(sandbox, "_MAX_CPU_SECONDS", 1)
+    payload = "import sys\nprint('burning', flush=True)\nwhile True:\n    pass\n"
+    started = time.monotonic()
+
+    with pytest.raises(SandboxKilled) as excinfo:
+        sandboxed_spawn([sys.executable, "-c", payload], cwd=box, write_box=box, timeout_s=60.0)
+
+    # Well under the wall clock: proof the CPU cap is what fired, not the timeout we did not reach.
+    assert time.monotonic() - started < 30.0
+    assert "SIGXCPU" in str(excinfo.value)
+    assert excinfo.value.stdout == b"burning\n"
 
 
 def test_home_points_into_the_box_not_the_developer_home(tmp_path: Path) -> None:

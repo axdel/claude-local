@@ -44,8 +44,15 @@ def test_status_values_are_stable_lowercase(member: Status, value: str) -> None:
 
 
 def test_budget_exposes_its_bounds() -> None:
-    budget = build_budget(max_attempts=5, max_tokens=1000, timeout_s=12.5)
-    assert (budget.max_attempts, budget.max_tokens, budget.timeout_s) == (5, 1000, 12.5)
+    budget = build_budget(
+        max_attempts=5, max_tokens=1000, generation_timeout_s=12.5, oracle_timeout_s=7.5
+    )
+    assert (
+        budget.max_attempts,
+        budget.max_tokens,
+        budget.generation_timeout_s,
+        budget.oracle_timeout_s,
+    ) == (5, 1000, 12.5, 7.5)
 
 
 def test_budget_is_frozen() -> None:
@@ -54,7 +61,9 @@ def test_budget_is_frozen() -> None:
         budget.max_attempts = 9  # type: ignore[misc]
 
 
-@pytest.mark.parametrize("field", ["max_attempts", "max_tokens", "timeout_s"])
+@pytest.mark.parametrize(
+    "field", ["max_attempts", "max_tokens", "generation_timeout_s", "oracle_timeout_s"]
+)
 @pytest.mark.parametrize("bad", [0, -1])
 def test_budget_rejects_non_positive_bounds(field: str, bad: int) -> None:
     # Oracle: hard caps must be strictly positive; zero or negative is invalid.
@@ -64,7 +73,9 @@ def test_budget_rejects_non_positive_bounds(field: str, bad: int) -> None:
 
 def test_budget_accepts_minimal_positive_bounds() -> None:
     # Boundary: 1 and a small positive float are valid (kills always-raise mutants).
-    budget = build_budget(max_attempts=1, max_tokens=1, timeout_s=0.001)
+    budget = build_budget(
+        max_attempts=1, max_tokens=1, generation_timeout_s=0.001, oracle_timeout_s=0.001
+    )
     assert budget.max_attempts == 1
 
 
@@ -139,3 +150,30 @@ def test_task_spec_rejects_empty_impl_path(bad: str) -> None:
     # Oracle: an empty or whitespace-only impl path names no writable target.
     with pytest.raises(ValueError):
         build_task_spec(impl_path=bad)
+
+
+# --- mean_tokens_per_second -----------------------------------------------
+
+
+def test_mean_tokens_per_second_divides_tokens_by_seconds() -> None:
+    # Oracle: pencil-and-paper — 100 tokens over 4 seconds is 25/s.
+    assert shared_types.mean_tokens_per_second(100, 4.0) == 25.0
+
+
+@pytest.mark.parametrize("elapsed", [0.0, -1.0])
+def test_mean_tokens_per_second_is_none_when_no_time_elapsed(elapsed: float) -> None:
+    # Oracle: the guard's whole purpose — a span with no positive duration has no rate,
+    # and must not raise ZeroDivisionError. A negative span is not a duration either.
+    assert shared_types.mean_tokens_per_second(100, elapsed) is None
+
+
+def test_mean_tokens_per_second_distinguishes_a_zero_rate_from_no_measurement() -> None:
+    # Oracle: 0 tokens over a real 2 seconds IS a measured rate of 0.0, which must stay
+    # distinct from the None a zero-elapsed span returns. Kills a falsy-guard mutant
+    # (`if seconds` / `if completion_tokens and seconds`) that collapses the two.
+    assert shared_types.mean_tokens_per_second(0, 2.0) == 0.0
+
+
+def test_mean_tokens_per_second_is_available_from_the_public_package() -> None:
+    # The benchmark harness reaches it through the top-level API, never the submodule.
+    assert claude_local.mean_tokens_per_second is shared_types.mean_tokens_per_second

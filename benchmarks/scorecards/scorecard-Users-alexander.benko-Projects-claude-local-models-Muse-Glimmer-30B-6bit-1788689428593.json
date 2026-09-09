@@ -1,0 +1,53 @@
+{
+  "model": "/Users/alexander.benko/Projects/claude-local/models/Muse-Glimmer-30B-6bit",
+  "cases_passed": 7,
+  "cases_total": 7,
+  "total_completion_tokens": 26734,
+  "total_model_seconds": 2337.9766658322187,
+  "mean_tokens_per_second": 11.43467357510339,
+  "cases": [
+    {
+      "case_id": "01_scaffold",
+      "status": "done",
+      "attempts": 2,
+      "length_capped": 0
+    },
+    {
+      "case_id": "02_schemas",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "03_repositories",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "04_auth_service",
+      "status": "done",
+      "attempts": 2,
+      "length_capped": 0
+    },
+    {
+      "case_id": "05_rbac",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "06_schedule_service",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "07_routers",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    }
+  ],
+  "style_findings": 49
+}

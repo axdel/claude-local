@@ -19,7 +19,16 @@ from hypothesis import given
 from hypothesis import strategies as st
 from sse_wire import sse_frame, sse_frame_json
 
-from claude_local.sse import _MAX_FRAME_BYTES, Delta, Error, Finish, SSEEvent, Usage, decode_sse
+from claude_local.sse import (
+    _MAX_FRAME_BYTES,
+    Delta,
+    Error,
+    Finish,
+    Reasoning,
+    SSEEvent,
+    Usage,
+    decode_sse,
+)
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "sse"
 
@@ -150,6 +159,11 @@ def test_non_string_finish_reason_becomes_error_without_finish(fixture_name: str
             "content",
             id="non-string-content",
         ),
+        pytest.param(
+            {"choices": [{"delta": {"reasoning_content": 42}}]},
+            "reasoning_content",
+            id="non-string-reasoning-content",
+        ),
         pytest.param({"choices": [], "usage": 7}, "usage", id="scalar-usage"),
         pytest.param(
             {"choices": [], "usage": {"completion_tokens": {}}},
@@ -186,6 +200,47 @@ def test_role_chunk_with_empty_content_yields_no_delta() -> None:
     events = feed(stream, chunk_size=4096)
     # The opening role chunk carries content == "" — it must produce no Delta.
     assert events == []
+
+
+# --- Reasoning deltas: a second text field on the same delta ----------------------
+
+
+def test_reasoning_content_decodes_as_reasoning_not_as_content() -> None:
+    """A thinking frame carries its text beside the reply, and both facts matter.
+
+    The delta shape is copied from a real recorded session
+    (``tests/fixtures/sse/reasoning_channel_stream.bytes``), null fields included: mlx_vlm's
+    ``ChatMessage`` puts chain-of-thought on ``reasoning_content`` and leaves ``content`` null.
+    Dropping it makes a decoding model look like a dead socket; promoting it to ``Delta`` feeds
+    chain-of-thought to the file parser as source. It is therefore its own event — and the
+    ``reasoning`` alias the server sends alongside must not double-count it.
+    """
+    stream = sse_frame(
+        '{"choices":[{"index":0,"finish_reason":null,"delta":{"role":"assistant",'
+        '"content":null,"reasoning_content":"We","reasoning":"We"}}]}'
+    )
+
+    events = feed(stream, chunk_size=4096)
+
+    assert events == [Reasoning("We")]
+
+
+def test_a_delta_carrying_both_channels_yields_both_events_in_wire_order() -> None:
+    """Reasoning precedes content within one delta, because that is the order it was thought in.
+
+    A server may close its thinking and open its answer in the same frame. Both must survive —
+    the reasoning so the guard sees the cost and the arrival, the content so the reply is whole —
+    and reasoning must come first, since ordering the pair by anything but the wire would put
+    part of the answer before the thought that produced it.
+    """
+    stream = sse_frame(
+        '{"choices":[{"index":0,"finish_reason":null,'
+        '"delta":{"content":"OK","reasoning_content":"done"}}]}'
+    )
+
+    events = feed(stream, chunk_size=4096)
+
+    assert events == [Reasoning("done"), Delta("OK")]
 
 
 # --- Robustness: a boundary decoder never crashes the loop it feeds ---------------

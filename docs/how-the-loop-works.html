@@ -127,11 +127,15 @@ are the one optional input:</p>
       so it can never be overwritten.</li>
   <li><strong>expected_tests</strong> &mdash; the exact collected-node count the oracle must expose; fewer
       tests is an invalid verdict, not green.</li>
-  <li><strong>budget</strong> &mdash; three hard caps: <code>max_attempts</code> (how many tries),
-      <code>max_tokens</code> (how long each decode may run), <code>timeout_s</code> (wall-clock). All strictly positive.</li>
+  <li><strong>budget</strong> &mdash; four hard caps: <code>max_attempts</code> (how many attempts),
+      <code>max_tokens</code> (how long each decode may run), and two wall-clock deadlines that answer
+      opposite questions &mdash; <code>generation_timeout_s</code> bounds one producing decode and is set
+      generously, because a slow model streaming steadily is healthy and a hang is caught by silence
+      instead; <code>oracle_timeout_s</code> bounds one sandboxed test run and stays tight, because
+      nothing legitimate takes long there. All strictly positive.</li>
   <li><strong>context_files</strong> &mdash; optional neighbor files, kept in caller order and shown to the
-      model as read-only context. Their content enters the prompt, but the path guard still permits
-      writes only to <code>impl_path</code>.</li>
+      model as read-only context. Their content enters the prompt, but <code>keep_only</code> still
+      permits writes only to <code>impl_path</code>.</li>
 </ul>
 
 <hr>
@@ -191,19 +195,19 @@ then repeats a tight cycle until the test passes or the budget runs out.</p>
   <line x1="252" y1="194" x2="252" y2="256" stroke="#6b7280" stroke-width="1.4" marker-end="url(#ar-b)"/>
   <text x="252" y="274" text-anchor="middle" font-size="11.5" fill="#6b7280">no usable file &rarr; BLOCKED</text>
 </svg>
-<figcaption>Only the tail of the prompt changes between tries. Green ends the loop; a red run feeds its own failure back.</figcaption>
+<figcaption>Only the tail of the prompt changes between attempts. Green ends the loop; a red run feeds its own failure back.</figcaption>
 </figure>
 
 <p>In order, each attempt does exactly this:</p>
 
 <ul class="clean">
-  <li><strong>Generate.</strong> Send the stable prefix plus (after the first try) a distilled feedback
+  <li><strong>Generate.</strong> Send the stable prefix plus (after the first attempt) a distilled feedback
       tail. Stream the tokens back.</li>
   <li><strong>Guard the decode.</strong> If the derail guard trips mid-stream (see &sect;6), abort and stop &mdash; this run is <em>DERAILED</em>.</li>
-  <li><strong>Extract the whole file.</strong> Pull the complete file block out of the raw text. If the
-      model returned only prose with no usable block, stop &mdash; <em>BLOCKED</em>.</li>
+  <li><strong>Extract the whole file.</strong> Pull the whole-file reply out of the raw text. If the
+      model returned only prose with no usable reply, stop &mdash; <em>BLOCKED</em>.</li>
   <li><strong>Apply it &mdash; to one path only.</strong> Write it to <code>impl_path</code>. If the extracted
-      edit aims anywhere else, the path guard refuses it and the run stops &mdash; <em>BLOCKED</em>.</li>
+      edit aims anywhere else, <code>keep_only</code> refuses it and the run stops &mdash; <em>BLOCKED</em>.</li>
   <li><strong>Run the oracle.</strong> Execute the frozen test in a subprocess and read a structured score.</li>
   <li><strong>Snapshot.</strong> Capture the attempt and its score (see &sect;5).</li>
   <li><strong>Decide.</strong> Green &rarr; break, we&rsquo;re <em>DONE</em>. Otherwise loop again with the failure as feedback.</li>
@@ -270,7 +274,7 @@ def test_add_two_negatives():  assert add(-4, -6) == -10</code></pre>
 <ul class="clean">
   <li><strong>Attempt 1 &mdash; <code>abs(a) + abs(b)</code>.</strong> Passes the two non-negative cases, fails the
       negatives (it returns +10, not &minus;10). Score: <strong>2/3</strong>. The failure &mdash; the failing test&rsquo;s
-      name and a slice of the traceback &mdash; becomes the feedback for the next try.</li>
+      name and a slice of the traceback &mdash; becomes the feedback for the next attempt.</li>
   <li><strong>Attempt 2 &mdash; <code>a - b</code>.</strong> The model over-corrects and <em>regresses</em> to
       <strong>1/3</strong>. This is the exact trap the loop is built to survive: repair feedback can make
       things worse. The loop keeps attempt&nbsp;1 as the best-so-far and moves on.</li>
@@ -280,7 +284,7 @@ def test_add_two_negatives():  assert add(-4, -6) == -10</code></pre>
 
 <hr>
 
-<h2><span class="n">5</span>The safety net: never end worse than your best</h2>
+<h2><span class="n">5</span>The best-passing snapshot: never end worse than your best</h2>
 
 <p>Because a repair can regress (attempt&nbsp;2 above), the loop treats every attempt as a candidate and
 keeps a <strong>snapshot</strong> of each. After the loop ends &mdash; for <em>any</em> reason &mdash; it restores the
@@ -302,38 +306,42 @@ you always walk away holding the best implementation the model produced, byte-fo
 <p>Local inference is bound by memory bandwidth, and the most expensive part of a call is re-reading a
 long prompt. Model servers cache that work &mdash; the <em>prefill KV cache</em> &mdash; but only for a prefix that
 is <strong>byte-for-byte identical</strong> to a previous call. So the loop makes the front of the prompt a hard
-invariant: the rules card, the spec, any optional context files in their supplied order, and the
-immutable test, in a fixed layout, with no builder-generated timestamps, run ids, or absolute
+invariant: <!-- prefix-enumeration -->the rules card, the spec, any optional context files in their supplied order, the
+immutable test, and &mdash; when plan-first is on &mdash; the plan the model wrote before it started
+implementing<!-- /prefix-enumeration -->, in a fixed layout, with no builder-generated timestamps, run ids, or absolute
 worktree paths. Context files sit between the spec and test; when none are supplied, that segment
 disappears completely, preserving
-the original empty-context prefix bytes. Only the small feedback tail differs between tries.</p>
+the original empty-context prefix bytes. The plan is appended <em>last</em>, so the planning call's
+own prefix &mdash; built before there is a plan &mdash; stays a strict byte-prefix of every
+attempt's, and that call warms the cache the attempts then reuse. Only the small feedback tail
+differs between attempts.</p>
 
 <figure>
-<svg viewBox="0 0 760 232" role="img" aria-label="Byte-identical prefix reused across iterations">
-  <text x="14" y="40" font-size="13" fill="#6b7280">try&nbsp;1</text>
+<svg viewBox="0 0 760 232" role="img" aria-label="Byte-identical prefix reused across attempts">
+  <text x="8" y="40" font-size="11.5" fill="#6b7280">attempt&nbsp;1</text>
   <rect x="70" y="24" width="470" height="30" rx="5" fill="#e9f7ee" stroke="#1a7f37"/>
-  <text x="305" y="44" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; optional context &middot; immutable test</text>
+  <text x="305" y="44" text-anchor="middle" font-size="11.5" fill="#12591f">rules card &middot; spec &middot; optional context &middot; immutable test &middot; optional plan</text>
   <rect x="546" y="24" width="150" height="30" rx="5" fill="#f2f4f7" stroke="#9aa2ac" stroke-dasharray="4 3"/>
   <text x="621" y="44" text-anchor="middle" font-size="11.5" fill="#6b7280">(no feedback yet)</text>
 
-  <text x="14" y="98" font-size="13" fill="#6b7280">try&nbsp;2</text>
+  <text x="8" y="98" font-size="11.5" fill="#6b7280">attempt&nbsp;2</text>
   <rect x="70" y="82" width="470" height="30" rx="5" fill="#e9f7ee" stroke="#1a7f37"/>
-  <text x="305" y="102" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; optional context &middot; immutable test</text>
+  <text x="305" y="102" text-anchor="middle" font-size="11.5" fill="#12591f">rules card &middot; spec &middot; optional context &middot; immutable test &middot; optional plan</text>
   <rect x="546" y="82" width="150" height="30" rx="5" fill="#fff8e6" stroke="#bf8700"/>
   <text x="621" y="102" text-anchor="middle" font-size="11.5" fill="#8a6400">feedback tail</text>
 
-  <text x="14" y="156" font-size="13" fill="#6b7280">try&nbsp;3</text>
+  <text x="8" y="156" font-size="11.5" fill="#6b7280">attempt&nbsp;3</text>
   <rect x="70" y="140" width="470" height="30" rx="5" fill="#e9f7ee" stroke="#1a7f37"/>
-  <text x="305" y="160" text-anchor="middle" font-size="12.5" fill="#12591f">rules card &middot; spec &middot; optional context &middot; immutable test</text>
+  <text x="305" y="160" text-anchor="middle" font-size="11.5" fill="#12591f">rules card &middot; spec &middot; optional context &middot; immutable test &middot; optional plan</text>
   <rect x="546" y="140" width="150" height="30" rx="5" fill="#fff8e6" stroke="#bf8700"/>
   <text x="621" y="160" text-anchor="middle" font-size="11.5" fill="#8a6400">feedback tail</text>
 
   <line x1="70" y1="188" x2="540" y2="188" stroke="#1a7f37" stroke-width="1.4"/>
-  <text x="305" y="210" text-anchor="middle" font-size="12" fill="#12591f">identical every try &rarr; served from the prefill cache, not recomputed</text>
+  <text x="305" y="210" text-anchor="middle" font-size="12" fill="#12591f">identical every attempt &rarr; served from the prefill cache, not recomputed</text>
   <line x1="546" y1="188" x2="696" y2="188" stroke="#bf8700" stroke-width="1.4"/>
   <text x="621" y="210" text-anchor="middle" font-size="12" fill="#8a6400">the only bytes that change</text>
 </svg>
-<figcaption>Keeping the prefix stable turns every retry after the first into a cheap, warm call.</figcaption>
+<figcaption>Keeping the prefix stable turns every attempt after the first into a cheap, warm call.</figcaption>
 </figure>
 
 <p>The feedback tail is deliberately small &mdash; a one-line score, the failing test names, and the last

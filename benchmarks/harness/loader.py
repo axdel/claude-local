@@ -37,7 +37,8 @@ def load_case(case_dir: Path, *, golden_app_root: Path) -> BenchmarkCase:
         budget=Budget(
             max_attempts=budget["max_attempts"],
             max_tokens=budget["max_tokens"],
-            timeout_s=budget["timeout_s"],
+            generation_timeout_s=budget["generation_timeout_s"],
+            oracle_timeout_s=budget["oracle_timeout_s"],
         ),
     )
 

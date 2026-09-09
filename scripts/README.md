@@ -11,6 +11,12 @@ multi-step procedure from memory, or dumping a snapshot by hand, script it here 
 **Graduation from the scratchpad.** One-shot exploration stays in the harness scratchpad.
 The second need — or the first if it must stay in sync with code — moves it here, committed.
 
+**Naming.** `snake_case.py`, always — never kebab-case. These are Python modules before they
+are commands: every one of them is loaded by its test through `tests/scriptloader.py`, and a
+hyphenated name is one no `import` statement can ever spell. The directory carried both
+spellings for a while, which put the two halves of one chain — `benchmark_model.py` and its
+all-model driver — under two different conventions with nothing distinguishing them.
+
 **Housekeeping.** A script is authored source, not a build artifact: commit the generator,
 never its large output. Delete dead scripts like any dead code — VCS keeps the history.
 

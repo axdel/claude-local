@@ -1,0 +1,37 @@
+"""Immutable oracle whose VERDICT is fixed but whose failure RENDERING is volatile.
+
+Every run of this oracle against one unchanged implementation scores the same 1 passed / 2 failed.
+What differs run to run is only how pytest draws those two failures: an identity assertion prints
+CPython's default repr, which embeds an ASLR-randomized address, and a set assertion prints its
+elements in hash-randomized order. Feeding either back verbatim would make one unchanged failure
+ask the model a different question every run.
+
+The two failures are hand-derived, never read from an implementation: a fresh object is never the
+same object as another fresh one, and the sums 5/7/-10 are not the words alpha/beta/gamma.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from calculator import add
+
+
+class _Sum:
+    """A bare value holder with no __repr__, so pytest prints CPython's address-bearing default."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+
+def test_add_two_positives() -> None:
+    assert add(2, 3) == 5
+
+
+def test_each_sum_is_a_distinct_object() -> None:
+    assert _Sum(add(2, 3)) is _Sum(5)
+
+
+def test_sums_render_as_the_declared_words() -> None:
+    assert {str(add(2, 3)), str(add(7, 0)), str(add(-4, -6))} == {"alpha", "beta", "gamma"}

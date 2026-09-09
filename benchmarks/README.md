@@ -38,7 +38,7 @@ the next case starts, so no case can observe another's files or rows.
 
 ## The case ladder
 
-Seven cases, in dependency order — each builds on the layers below it:
+The cases, in dependency order — each builds on the layers below it:
 
 | Case | Hole | What it exercises |
 |-|-|-|
@@ -61,25 +61,26 @@ uv sync --group bench
 
 ## Running a model
 
-A running server is a **prerequisite**: claude-local never downloads or serves a model. Start an
-OpenAI-compatible server with your candidate model resident, then point the benchmark at it. Run
-from the repository root:
+A running server is a **prerequisite** for the benchmark: the loop never downloads or serves a
+model. Start an OpenAI-compatible server with your candidate model resident — by hand, or with
+the optional `model_server` claude-local ships — then point the benchmark at it. Run from the
+repository root:
 
 ```bash
-uv run python -m benchmarks.run --model <model-name> --base-url http://localhost:8080
+uv run python -m benchmarks.run --model <model-name> --base-url http://localhost:8081
 ```
 
 | Flag | Env fallback | Meaning |
 |-|-|-|
 | `--model` | `CLAUDE_LOCAL_MODEL` | Model name the server should serve (required) |
-| `--base-url` | `CLAUDE_LOCAL_BASE_URL` | OpenAI-compatible server base URL (default `http://localhost:8080`) |
+| `--base-url` | `CLAUDE_LOCAL_BASE_URL` | OpenAI-compatible server base URL (required) |
 | `--out DIR` | — | Also write the scorecard as JSON into `DIR` (created if absent) |
 
 The per-case table and benchmark totals print to stderr. The process exits `0` only when every case
 passed, `1` when any case failed, `2` for a usage error (no model named), and `3` when the
-benchmark harness itself faults — the prerequisite server is unreachable, the kernel sandbox is
-unavailable, or an oracle is broken. Exit `3` is a broken *host*, distinct from exit `1`'s model
-that simply failed the task.
+benchmark harness itself faults. Exit `3` is a broken *host*, distinct from exit `1`'s model that
+simply failed the task; which breaks reach it, and why none of them can discard a score the run
+already took, are `D-BENCH-017` and `INV-016`.
 
 ## The scorecard
 
@@ -89,11 +90,14 @@ One scorecard describes one model's run over the whole ladder. `--out` writes it
 ```json
 {
   "model": "candidate-7b",
+  "rules_card_digest": "<card-digest>",
+  "plan_first": false,
   "cases_passed": 5,
   "cases_total": 7,
   "total_completion_tokens": 18432,
   "total_model_seconds": 240.5,
   "mean_tokens_per_second": 76.6,
+  "style_findings": 0,
   "cases": [
     {"case_id": "01_scaffold", "status": "done", "attempts": 1, "length_capped": 0},
     {"case_id": "02_schemas", "status": "done", "attempts": 2, "length_capped": 1},
@@ -102,9 +106,19 @@ One scorecard describes one model's run over the whole ladder. `--out` writes it
 }
 ```
 
+- `model` / `rules_card_digest` / `plan_first` — the configuration the totals below belong to. All
+  three are here for one reason: a token total measured under one of them says nothing about a run
+  under another, so two scorecards are comparable only where all three agree. `plan_first` is the
+  most easily forgotten and the most expensive to forget — one model under one card measured 4436
+  completion tokens without a planning generation and 9858 with one, and a scorecard that could not
+  tell them apart let the second silently replace the first in the cross-run table
+  (`D-TELEMETRY-003`).
 - `cases_passed` / `cases_total` — the headline: how many cases reached `done`.
 - `total_completion_tokens` / `total_model_seconds` / `mean_tokens_per_second` — the economy of the
   run, summed across cases. The mean is `null` when no model-seconds elapsed.
+- `style_findings` — how many style findings the run's produced code drew, or `null` when it was
+  not measured: the run predates the field, or the host refused the linter (`D-BENCH-017`). `null`
+  and `0` are different answers: not measured, versus measured and clean.
 - `cases[]` — one line per case in ladder order: its `case_id`, terminal `status` (`done` when the
   oracle passed, otherwise the loop's failure status), how many loop `attempts` it took, and
   `length_capped` — how many of those attempts the server ended at its own token cap (a budget

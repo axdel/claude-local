@@ -153,7 +153,7 @@ def test_replay_client_emits_schema_complete_streaming_chunks() -> None:
             "choices": [
                 {
                     "index": 0,
-                    "delta": {"content": 'FILE: app/main.py\nUTF8-BYTES: 16\n\nTEXT = "世界"\n'},
+                    "delta": {"content": 'FILE: app/main.py\n\nTEXT = "世界"\n'},
                     "finish_reason": None,
                 }
             ],
@@ -305,7 +305,13 @@ def test_driver_rejects_behaviorally_wrong_scaffold_reply_and_removes_worktree(
     assert outcome.status is Status.EXHAUSTED
     assert outcome.code == wrong_main
     assert outcome.files_changed == (case.task.impl_path,)
-    assert outcome.record.attempts == case.task.budget.max_attempts
+    # The replay serves the identical wrong file every call, so every attempt after the first is a
+    # verbatim repeat. A repeat escalates rather than ending the run, so the loop walks the nudge
+    # ladder — one rung per replay — and here the ladder outlasts the budget: 1 first attempt + 1
+    # unescalated repeat + 2 nudged repeats == 4. The budget assertion keeps this honest if the
+    # case is ever re-budgeted.
+    assert case.task.budget.max_attempts == 4
+    assert outcome.record.attempts == 4
     assert list(scratch_root.iterdir()) == []
 
 
@@ -316,10 +322,15 @@ def test_driver_rejects_behaviorally_wrong_scaffold_reply_and_removes_worktree(
 def test_case_rejects_fixture_paths_outside_regular_files(
     invalid_path: str, path_source: str
 ) -> None:
-    """Case construction refuses paths that could escape or replace a directory."""
+    """Case construction refuses paths that could escape or replace a directory.
+
+    The rule is owned by ``claude_local.paths.require_nested_relative_file`` — the same one the
+    loop's own entry point applies to an impl_path — so the harness and the loop cannot disagree
+    about which fixture paths are writable.
+    """
     case = _build_scaffold_case()
 
-    with pytest.raises(ValueError, match="regular relative file"):
+    with pytest.raises(ValueError, match="nested relative file"):
         if path_source == "implementation":
             replace(case, task=replace(case.task, impl_path=invalid_path))
         else:

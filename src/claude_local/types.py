@@ -6,6 +6,10 @@ Only genuinely cross-module types live here: ``Status`` (the terminal outcome),
 ``LocalEconomyRecord`` (telemetry), ``GenerationResult`` (client), and ``LoopResult``
 (loop) — live with their owners, so this module imports nothing from the package
 and stays a leaf every other module can depend inward on.
+
+``mean_tokens_per_second`` is here for the same reason it is not a method on any one
+record: three populations need the identical guarded quotient — one generation, one task,
+one benchmark run — and a leaf is the only place all three can reach it from.
 """
 
 from __future__ import annotations
@@ -33,22 +37,32 @@ class Status(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Budget:
-    """Hard per-task bounds: generation attempts, decode tokens, wall-clock seconds.
+    """Hard per-task bounds: generation attempts, decode tokens, and two wall-clock deadlines.
 
-    All three are strictly positive; the token cap is the real decode bound.
+    The two deadlines are separate because they answer opposite questions. The generation
+    deadline bounds one producing decode, where a slow model streaming steadily is healthy and a
+    hang is caught by silence instead (the derail guard's SILENT bound), so it is set generously.
+    The oracle deadline bounds one sandboxed test run, where nothing legitimate takes long and a
+    non-terminating implementation is the failure being caught, so it stays tight. All four
+    values are strictly positive; the token cap is the real decode bound.
     """
 
     max_attempts: int
     max_tokens: int
-    timeout_s: float
+    generation_timeout_s: float
+    oracle_timeout_s: float
 
     def __post_init__(self) -> None:
         if self.max_attempts <= 0:
             raise ValueError(f"max_attempts must be positive, got {self.max_attempts}")
         if self.max_tokens <= 0:
             raise ValueError(f"max_tokens must be positive, got {self.max_tokens}")
-        if self.timeout_s <= 0:
-            raise ValueError(f"timeout_s must be positive, got {self.timeout_s}")
+        if self.generation_timeout_s <= 0:
+            raise ValueError(
+                f"generation_timeout_s must be positive, got {self.generation_timeout_s}"
+            )
+        if self.oracle_timeout_s <= 0:
+            raise ValueError(f"oracle_timeout_s must be positive, got {self.oracle_timeout_s}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +85,11 @@ class TaskSpec:
     so a reply that imports tests away fails the count check instead of passing.
     ``context_files`` carries ordered, read-only neighbors the implementation must
     integrate with and defaults to none for existing callers.
+
+    ``plan_first`` spends one generation on an implementation plan before the first
+    attempt and freezes it into the prefix for the whole task. It is a property of the
+    task rather than of the loop because it is measured per task class, and it defaults
+    off so an unchanged caller sends the prompt every prior measurement was taken against.
     """
 
     impl_path: str
@@ -79,9 +98,24 @@ class TaskSpec:
     expected_tests: int
     budget: Budget
     context_files: tuple[ContextFile, ...] = ()
+    plan_first: bool = False
 
     def __post_init__(self) -> None:
         if not self.impl_path.strip():
             raise ValueError("impl_path must name a file, got empty or whitespace")
         if self.expected_tests <= 0:
             raise ValueError(f"expected_tests must be >= 1, got {self.expected_tests}")
+
+
+def mean_tokens_per_second(completion_tokens: int, seconds: float) -> float | None:
+    """Decode rate over a span of generation, or ``None`` when no wall-clock time elapsed.
+
+    Args:
+        completion_tokens: Tokens decoded across the span.
+        seconds: Model seconds the span took.
+
+    Returns:
+        The quotient, or ``None`` for a zero-elapsed span — which keeps "never measured"
+        distinct from a rate that genuinely came out at zero.
+    """
+    return completion_tokens / seconds if seconds > 0 else None

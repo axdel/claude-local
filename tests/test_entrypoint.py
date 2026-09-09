@@ -25,7 +25,9 @@ from factories import (
     build_whole_file_reply,
 )
 
-from claude_local.backend import BackendUnavailable
+from claude_local import AttemptProgress
+from claude_local.backend import HTTP_READ_TIMEOUT_S, BackendUnavailable
+from claude_local.derail import SILENCE_TIMEOUT_S, DerailReason
 from claude_local.entrypoint import Outcome, _writable_subtree, implement
 from claude_local.sandbox import sandbox_available
 from claude_local.types import Budget, Status
@@ -96,7 +98,7 @@ def _runaway_reply(size: int = 256) -> bytes:
     return (_data(role) + _data(delta)).encode()
 
 
-def _unusable_reply() -> bytes:
+def _unscorable_reply() -> bytes:
     """A complete prose-only reply with no whole-file frame — structurally blocked."""
     return _sse(
         {**_CHUNK, "choices": [{"index": 0, "delta": {"content": "No file edit."}}]},
@@ -113,7 +115,7 @@ def _mock_client(*replies: bytes) -> httpx.Client:
     """An httpx client whose transport returns each scripted reply for successive POSTs.
 
     The mock transport is the doubled model — the one true-external seam. Exhausting the script
-    raises rather than silently replaying a response, so generation counts remain observable.
+    raises rather than silently replaying a response, so logical-call counts remain observable.
     """
     reply_script = iter(replies)
 
@@ -138,6 +140,21 @@ def _unreachable_client() -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(_handler))
 
 
+def _silent_server_client() -> httpx.Client:
+    """An httpx client whose transport accepts the request and then never answers.
+
+    ``ReadTimeout`` is only reachable *after* a connection succeeded and the request went out, so
+    this is a running server that produced no bytes — a generation that failed, not a prerequisite
+    that was never met.
+    """
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        del request
+        raise httpx.ReadTimeout("timed out")
+
+    return httpx.Client(transport=httpx.MockTransport(_handler))
+
+
 # --- Unit: the writable-subtree derivation -----------------------------------------
 
 
@@ -155,6 +172,26 @@ def test_writable_subtree_rejects_a_flat_path() -> None:
     # oracle test.
     with pytest.raises(ValueError, match="nested"):
         _writable_subtree("foo.py")
+
+
+@pytest.mark.parametrize(
+    "impl_path",
+    ["src/../test_loop_oracle.py", "../escape/x.py", "a/../../b/c.py"],
+)
+def test_writable_subtree_rejects_a_path_that_climbs_out_of_its_own_subtree(
+    impl_path: str,
+) -> None:
+    """A declared subtree means nothing if the path can climb back out of it.
+
+    Oracle: POSIX path algebra. ``src/../test_loop_oracle.py`` has ``src`` as its first
+    component and resolves to the worktree root — so the plain top-segment reading reports the
+    subtree ``src`` while the path names the immutable oracle test sitting outside it. Realpath
+    containment cannot catch this: the target stays inside the worktree root the whole way, so
+    it is contained AND wrong. The refusal has to happen on the path's shape, here, which is
+    also before any directory is created for it.
+    """
+    with pytest.raises(ValueError, match="nested relative file"):
+        _writable_subtree(impl_path)
 
 
 # --- Unit: fast-fail validation before any resource is acquired ---------------------
@@ -231,6 +268,41 @@ def test_faulted_summary_surfaces_the_upstream_error_message() -> None:
     assert "src/thing.py" in outcome.summary
 
 
+def test_derailed_summary_names_the_bound_that_cut_the_generation() -> None:
+    """The exact sibling of the FAULTED case above, and it was the one arm not doing it.
+
+    ``DERAILED`` says a bound fired; it does not say which, and the four bounds ask for four
+    different responses — raise the token cap, raise the timeout, fix a prompt the model keeps
+    repeating, chase a server streaming bytes and no content. The reason has a single owner on
+    the generation, so the summary quotes it rather than restating a class of failure.
+    """
+    outcome = Outcome(
+        status=Status.DERAILED,
+        code=None,
+        impl_path="src/thing.py",
+        files_changed=(),
+        record=build_local_economy_record(status=Status.DERAILED),
+        derail_reason=DerailReason.TOKEN_CAP,
+    )
+    assert outcome.derail_reason is DerailReason.TOKEN_CAP
+    assert DerailReason.TOKEN_CAP.value in outcome.summary
+    assert "src/thing.py" in outcome.summary
+
+
+def test_a_derailed_summary_with_no_recorded_reason_still_reads_as_a_sentence() -> None:
+    """Oracle: the field defaults to None, so the arm must not interpolate an empty bound name."""
+    outcome = Outcome(
+        status=Status.DERAILED,
+        code=None,
+        impl_path="src/thing.py",
+        files_changed=(),
+        record=build_local_economy_record(status=Status.DERAILED),
+    )
+    assert "derailed" in outcome.summary.lower()
+    assert "()" not in outcome.summary
+    assert "None" not in outcome.summary
+
+
 # --- Unit: no-edit exits ignore a caller-seeded implementation target ---------------
 
 
@@ -238,7 +310,7 @@ def test_faulted_summary_surfaces_the_upstream_error_message() -> None:
     ("reply", "budget", "expected_status"),
     [
         (_runaway_reply(size=256), build_budget(max_attempts=1, max_tokens=2), Status.DERAILED),
-        (_unusable_reply(), build_budget(max_attempts=1), Status.BLOCKED),
+        (_unscorable_reply(), build_budget(max_attempts=1), Status.BLOCKED),
         (_fault_reply("model overloaded"), build_budget(max_attempts=1), Status.FAULTED),
     ],
 )
@@ -318,7 +390,7 @@ def test_implement_closes_an_http_client_it_created(monkeypatch: pytest.MonkeyPa
         budget=build_budget(max_attempts=1, max_tokens=2),
     )
     created = _mock_client(_runaway_reply(size=256))
-    monkeypatch.setattr("claude_local.entrypoint._new_http_client", lambda timeout_s: created)
+    monkeypatch.setattr("claude_local.entrypoint._new_http_client", lambda: created)
 
     outcome = implement(spec, base_url="http://local", model=_MODEL)  # no http_client → owned
 
@@ -354,6 +426,51 @@ def test_implement_propagates_backend_unavailable_when_the_server_is_unreachable
     assert client.is_closed is False  # an injected client is the caller's — never closed
 
 
+# --- Unit: a silent server is one task's derail, not the run's fault ----------------
+
+
+def test_the_transport_read_bound_outlasts_the_guards_silence_bound() -> None:
+    """The guard must win the race it is documented to win; the transport is only its backstop.
+
+    Two bounds watch the same silent stream and they are not interchangeable. The guard's verdict
+    is a recorded per-case SILENT that the ladder moves on from; the transport's aborts the run.
+    Set equal, the transport won a whole benchmark ladder — a model whose server was healthy
+    produced no scorecard at all, having attempted zero of seven cases.
+
+    Oracle: ``_ticking`` calls ``tick`` only when a chunk arrives, so across a stretch carrying no
+    bytes the guard cannot run at all. The two therefore never actually tie, whatever the values,
+    and strict inequality is the only ordering under which the guard decides every gap it can see.
+    """
+    assert HTTP_READ_TIMEOUT_S > SILENCE_TIMEOUT_S
+
+
+def test_implement_records_a_silent_server_as_a_derail_not_a_harness_fault() -> None:
+    """A server that answers nothing failed this generation; it did not fail the prerequisite.
+
+    ``BackendUnavailable`` means the loop's precondition is unmet — nothing is listening — so it
+    propagates and the caller stops. The first-byte deadline cannot mean that: it is reachable
+    only after a connection succeeded and the request was sent. Treating the two alike is what
+    turned one slow model's first case into zero results for all seven.
+
+    Oracle: the outcome type is the same one any other bounded-decode verdict produces, and the
+    injected client stays the caller's. Deriving from the fault taxonomy in ``BackendUnavailable``
+    itself — "a server that is down, unreachable, or returning a non-2xx status" — none of which
+    this is.
+    """
+    spec = build_task_spec(
+        impl_path="src/adder.py",
+        test_text=_ADDER_ORACLE,
+        expected_tests=2,
+        budget=build_budget(max_attempts=1),
+    )
+    client = _silent_server_client()
+
+    outcome = implement(spec, base_url="http://local", model=_MODEL, http_client=client)
+
+    assert outcome.status is Status.DERAILED
+    assert client.is_closed is False  # an injected client is the caller's — never closed
+
+
 # --- E2E: the DONE front door through the real kernel sandbox -----------------------
 
 
@@ -372,7 +489,7 @@ def test_implement_e2e_reaches_done_through_the_real_sandbox() -> None:
         spec_text="Implement add(a, b) returning the integer sum of a and b.",
         test_text=_ADDER_ORACLE,
         expected_tests=2,
-        budget=build_budget(max_attempts=3, max_tokens=4096, timeout_s=120.0),
+        budget=build_budget(max_attempts=3, max_tokens=4096, oracle_timeout_s=120.0),
     )
     client = _mock_client(_clean_impl_reply(_ADDER_IMPL, "src/adder.py"))
 
@@ -402,7 +519,7 @@ def test_implement_exhausted_returns_the_restored_best_model_edit(tmp_path: Path
         impl_path="src/adder.py",
         test_text=_ADDER_ORACLE,
         expected_tests=2,
-        budget=build_budget(max_attempts=2, max_tokens=4096, timeout_s=120.0),
+        budget=build_budget(max_attempts=2, max_tokens=4096, oracle_timeout_s=120.0),
     )
     client = _mock_client(
         _clean_impl_reply(_PARTIAL_ADDER_IMPL, "src/adder.py"),
@@ -427,17 +544,17 @@ def test_implement_exhausted_returns_the_restored_best_model_edit(tmp_path: Path
     not sandbox_available(), reason="the oracle runs under the macOS kernel sandbox"
 )
 def test_implement_e2e_binds_budget_timeout_to_the_sandbox() -> None:
-    """A hanging impl with a 2s budget is killed at ~2s, not the sandbox's 120s default.
+    """A hanging impl with a 2s oracle deadline is killed at ~2s, not the sandbox's 120s default.
 
-    Proves ``spec.budget.timeout_s`` is bound into the oracle sandbox (the composition-root timeout
-    wiring): a mutant that dropped the binding and fell back to the 120s default would blow this
-    wall-clock bound. The hang → SandboxTimeout → zero verdict → budget spent → EXHAUSTED.
+    Proves ``spec.budget.oracle_timeout_s`` is bound into the oracle sandbox (the composition-root
+    timeout wiring): a mutant that dropped the binding and fell back to the 120s default would blow
+    this wall-clock bound. The hang → SandboxKilled → zero verdict → budget spent → EXHAUSTED.
     """
     spec = build_task_spec(
         impl_path="src/adder.py",
         test_text=_ADDER_ORACLE,
         expected_tests=2,
-        budget=build_budget(max_attempts=1, max_tokens=4096, timeout_s=2.0),
+        budget=build_budget(max_attempts=1, max_tokens=4096, oracle_timeout_s=2.0),
     )
     client = _mock_client(_clean_impl_reply(_HANGING_IMPL, "src/adder.py"))
 
@@ -447,3 +564,67 @@ def test_implement_e2e_binds_budget_timeout_to_the_sandbox() -> None:
 
     assert outcome.status is Status.EXHAUSTED  # the hang scored zero; the single attempt is spent
     assert elapsed < 30.0  # the 2s budget bound the sandbox, far below the 120s default
+
+
+@pytest.mark.skipif(
+    not sandbox_available(), reason="the oracle runs under the macOS kernel sandbox"
+)
+def test_implement_e2e_bounds_the_oracle_by_its_own_deadline_not_the_generation_one() -> None:
+    """A generous generation deadline does not relax the oracle sandbox: the hang still dies at 2s.
+
+    The two deadlines answer opposite questions. A slow model producing steadily is healthy, so the
+    generation deadline is generous; a non-terminating test never is, so the oracle deadline stays
+    tight. A mutant binding ``generation_timeout_s`` into the sandbox would let this hang run the
+    full 60s and blow the bound below.
+    """
+    spec = build_task_spec(
+        impl_path="src/adder.py",
+        test_text=_ADDER_ORACLE,
+        expected_tests=2,
+        budget=build_budget(
+            max_attempts=1, max_tokens=4096, generation_timeout_s=60.0, oracle_timeout_s=2.0
+        ),
+    )
+    client = _mock_client(_clean_impl_reply(_HANGING_IMPL, "src/adder.py"))
+
+    started = time.monotonic()
+    outcome = implement(spec, base_url="http://local", model=_MODEL, http_client=client)
+    elapsed = time.monotonic() - started
+
+    assert outcome.status is Status.EXHAUSTED
+    assert elapsed < 30.0  # the 2s ORACLE deadline bound the sandbox, not the 60s generation one
+
+
+# --- Live progress: each observer reaches the module that owns its event ------------
+
+
+def test_implement_routes_each_progress_observer_to_the_module_that_owns_it() -> None:
+    """Deltas come from the client's decode; attempts come from the loop's cycle.
+
+    Oracle: each prose-only reply carries exactly one content delta, "No file edit.", and produces
+    exactly one attempt that reaches no oracle — a structural block. Answering that way twice is
+    what the run costs, because an unscorable reply earns one corrective re-ask and no more, so
+    both observers see two. The two signals originate in two different modules, so a wiring that
+    handed both observers to one of them would silently drop the other: a client knows nothing of
+    attempts, and a loop never sees a delta. Importing ``AttemptProgress`` from the top-level
+    package also pins the re-export the benchmark needs, since the Boundary Map lets a downstream
+    consumer reach only the public API.
+    """
+    deltas: list[str] = []
+    attempts: list[AttemptProgress] = []
+    spec = build_task_spec(impl_path="src/adder.py", expected_tests=2, test_text=_ADDER_ORACLE)
+
+    with _mock_client(_unscorable_reply(), _unscorable_reply()) as client:
+        outcome = implement(
+            spec,
+            base_url="http://local",
+            model=_MODEL,
+            http_client=client,
+            on_delta=deltas.append,
+            on_attempt=attempts.append,
+        )
+
+    assert outcome.status is Status.BLOCKED
+    assert deltas == ["No file edit.", "No file edit."]
+    assert [attempt.attempt for attempt in attempts] == [1, 2]
+    assert all(attempt.blocked for attempt in attempts)

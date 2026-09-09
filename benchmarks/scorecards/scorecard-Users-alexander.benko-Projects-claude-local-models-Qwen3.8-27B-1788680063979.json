@@ -1,0 +1,17 @@
+{
+  "model": "/Users/alexander.benko/Projects/claude-local/models/Qwen3.8-27B",
+  "cases_passed": 0,
+  "cases_total": 1,
+  "total_completion_tokens": 164,
+  "total_model_seconds": 22.26506808400154,
+  "mean_tokens_per_second": 7.365798271142113,
+  "cases": [
+    {
+      "case_id": "04_auth_service",
+      "status": "blocked",
+      "attempts": 1,
+      "length_capped": 0
+    }
+  ],
+  "style_findings": 0
+}

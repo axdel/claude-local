@@ -13,6 +13,7 @@ paths (an unreachable server and a non-2xx status both translate to the domain
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
@@ -20,10 +21,14 @@ from factories import build_budget
 
 from claude_local.backend import (
     BackendUnavailable,
+    GenerationSilent,
     HttpxBackend,
     ReplayBackend,
     ReplayExhausted,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # --- ReplayBackend: replay determinism -------------------------------------------
 
@@ -190,6 +195,41 @@ def test_httpx_connect_failure_raises_backend_unavailable() -> None:
     assert isinstance(excinfo.value.__cause__, httpx.ConnectError)
 
 
+class _BreaksAfterFirstChunk(httpx.SyncByteStream):
+    """A 200 response whose body dies partway through — the server death nobody catches.
+
+    Faithful to the wire, not to a mental model of it: a local server killed by the OOM reaper
+    mid-decode has already sent its status line and headers, so httpx raises from inside
+    ``iter_bytes`` rather than from the request. That timing is the whole subject of the test
+    below, and it cannot be reproduced by a transport that fails before responding.
+    """
+
+    def __iter__(self) -> Iterator[bytes]:
+        yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+        raise httpx.RemoteProtocolError("peer closed connection without sending complete body")
+
+
+def test_httpx_stream_dying_after_the_response_started_raises_generation_silent() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_BreaksAfterFirstChunk())
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    backend = HttpxBackend("http://local:8080", client, model="local-model")
+    # Oracle: the two faults are separated by contract, not by exception type. BackendUnavailable
+    # means the PREREQUISITE is missing, and every caller treats it as fatal to the whole run;
+    # GenerationSilent means the prerequisite was met and this one generation failed, so the run
+    # continues with the task recorded. A server that answered 200 and streamed a chunk has
+    # demonstrably met the prerequisite, so a break after that point is the second fault --
+    # whatever transport error carries it. Classifying it as the first discards every task already
+    # completed in a benchmark-run because one connection reset.
+    with pytest.raises(GenerationSilent) as excinfo:
+        list(backend.generate("p", "t", build_budget()))
+    assert excinfo.value.url == "http://local:8080/v1/chat/completions"
+    assert excinfo.value.model == "local-model"
+    assert "RemoteProtocolError" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, httpx.RemoteProtocolError)
+
+
 def test_httpx_yields_response_bytes_verbatim() -> None:
     wire = b'data: {"choices":[{"delta":{"content":"x"}}]}\n\ndata: [DONE]\n\n'
 
@@ -209,7 +249,7 @@ def test_httpx_reuses_injected_client_without_closing_it() -> None:
     budget = build_budget()
     list(backend.generate("p", "t", budget))
     # The client is injected and warm: the backend must not close it, so it stays
-    # usable across generations (one resident connection, not one per iteration).
+    # usable across generations (one resident connection, not one per attempt).
     assert client.is_closed is False
     list(backend.generate("p", "t", budget))  # a second generation still works
     assert client.is_closed is False

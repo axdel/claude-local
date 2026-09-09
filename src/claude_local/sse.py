@@ -28,6 +28,20 @@ class Delta:
 
 
 @dataclass(frozen=True, slots=True)
+class Reasoning:
+    """A chunk of chain-of-thought — the ``choices[].delta.reasoning_content`` of one frame.
+
+    Its own event rather than a ``Delta``, because the two are read by different consumers: a
+    reasoning chunk is decode the guard must meter and time, and is never part of the reply the
+    file parser reads. Collapsing them either way loses one of those — merged into ``Delta`` it
+    feeds chain-of-thought to the parser as source, and dropped entirely it makes a model that is
+    decoding normally indistinguishable from a dead socket.
+    """
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class Finish:
     """A terminal frame — carries the ``finish_reason`` (``stop`` / ``length`` / ...)."""
 
@@ -48,7 +62,7 @@ class Error:
     message: str
 
 
-SSEEvent = Delta | Finish | Usage | Error
+SSEEvent = Delta | Reasoning | Finish | Usage | Error
 """The closed set of events the decoder emits. Every frame maps to one of these."""
 
 
@@ -161,13 +175,35 @@ def _choice_events(choices: object) -> list[SSEEvent] | Error:
         delta = choice.get("delta", {})
         if not isinstance(delta, dict):
             return _unexpected_shape("delta", "object", delta)
-        content = delta.get("content")
-        if content is not None and not isinstance(content, str):
-            return _unexpected_shape("content", "string or null", content)
-        if content:
-            events.append(Delta(content))
+        text_events = _delta_text_events(delta)
+        if isinstance(text_events, Error):
+            return text_events
+        events.extend(text_events)
         if reason is not None:
             events.append(Finish(reason))
+    return events
+
+
+def _delta_text_events(delta: dict[str, object]) -> list[SSEEvent] | Error:
+    """Translate one delta's two text channels, validating both before emitting either.
+
+    Reasoning precedes content because that is the order the model produced them, and both are
+    checked first so a delta carrying sound reasoning beside a malformed content field yields one
+    Error rather than a Reasoning followed by one — the all-or-nothing frame contract (D-SSE-002).
+    """
+    # Only `reasoning_content`, though mlx_vlm sends a `reasoning` alias carrying the same text:
+    # reading both would count one chunk of thinking twice.
+    reasoning = delta.get("reasoning_content")
+    if reasoning is not None and not isinstance(reasoning, str):
+        return _unexpected_shape("reasoning_content", "string or null", reasoning)
+    content = delta.get("content")
+    if content is not None and not isinstance(content, str):
+        return _unexpected_shape("content", "string or null", content)
+    events: list[SSEEvent] = []
+    if reasoning:
+        events.append(Reasoning(reasoning))
+    if content:
+        events.append(Delta(content))
     return events
 
 

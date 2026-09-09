@@ -1,0 +1,53 @@
+{
+  "model": "/Users/alexander.benko/Projects/claude-local/models/Gemma4-26B-A4B",
+  "cases_passed": 7,
+  "cases_total": 7,
+  "total_completion_tokens": 41751,
+  "total_model_seconds": 852.8457509170985,
+  "mean_tokens_per_second": 48.954925266501604,
+  "cases": [
+    {
+      "case_id": "01_scaffold",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "02_schemas",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "03_repositories",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "04_auth_service",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "05_rbac",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "06_schedule_service",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    },
+    {
+      "case_id": "07_routers",
+      "status": "done",
+      "attempts": 1,
+      "length_capped": 0
+    }
+  ],
+  "style_findings": 2
+}
